@@ -43,9 +43,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           ?.trim()
           .toLowerCase();
 
-        const adminPasswordHash =
-          process.env.ADMIN_PASSWORD_HASH?.trim();
+        const encodedHash =
+  process.env.ADMIN_PASSWORD_HASH_B64?.trim();
 
+const adminPasswordHash = encodedHash
+  ? Buffer.from(encodedHash, "base64").toString("utf8")
+  : "";
         console.log("AUTH DEBUG:", {
           emailRecebido: email,
           emailConfigurado: adminEmail,
