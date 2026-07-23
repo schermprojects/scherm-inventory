@@ -3,6 +3,7 @@ import {
   EquipmentStatus,
   Prisma,
 } from "@/generated/prisma/client";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -139,6 +140,20 @@ function parseCondition(value: unknown): EquipmentCondition {
 }
 
 export async function GET() {
+  const session = await auth();
+
+  if (!session?.user) {
+    return Response.json(
+      {
+        success: false,
+        message: "Não autenticado.",
+      },
+      {
+        status: 401,
+      },
+    );
+  }
+
   try {
     const equipment = await prisma.equipment.findMany({
       orderBy: {
@@ -167,6 +182,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const session = await auth();
+
+  if (!session?.user) {
+    return Response.json(
+      {
+        success: false,
+        message: "Não autenticado.",
+      },
+      {
+        status: 401,
+      },
+    );
+  }
+
   try {
     const body = (await request.json()) as EquipmentBody;
 

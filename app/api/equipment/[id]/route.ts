@@ -4,6 +4,7 @@ import {
   Prisma,
 } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,6 +189,20 @@ function duplicateResponse(error: Prisma.PrismaClientKnownRequestError) {
   );
 }
 
+const session = await auth();
+
+if (!session?.user) {
+  return Response.json(
+    {
+      success: false,
+      message: "Não autenticado.",
+    },
+    {
+      status: 401,
+    },
+  );
+}
+
 export async function GET(
   _request: Request,
   context: RouteContext,
@@ -230,6 +245,19 @@ export async function GET(
       },
     );
   }
+}
+const session = await auth();
+
+if (!session?.user) {
+  return Response.json(
+    {
+      success: false,
+      message: "Não autenticado.",
+    },
+    {
+      status: 401,
+    },
+  );
 }
 
 export async function PATCH(
@@ -376,6 +404,20 @@ export async function PATCH(
       },
     );
   }
+}
+
+const session = await auth();
+
+if (!session?.user) {
+  return Response.json(
+    {
+      success: false,
+      message: "Não autenticado.",
+    },
+    {
+      status: 401,
+    },
+  );
 }
 
 export async function DELETE(
