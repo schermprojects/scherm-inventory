@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+# Prisma Client gerado
+/generated/prisma
+
+# Ferramentas locais de desenvolvimento
+/.agents
+/.claude
+/.windsurf
+/skills-lock.json

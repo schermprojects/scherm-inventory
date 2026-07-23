@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  UNAVAILABLE
+}
+
+enum EquipmentCondition {
+  NEW
+  GOOD
+  REGULAR
+  DAMAGED
+}
+
+model Equipment {
+  id              String             @id @default(cuid())
+  patrimony       String             @unique
+  name            String
+  manufacturer    String
+  model           String
+  serialNumber    String             @unique
+  category        String
+  status          EquipmentStatus    @default(AVAILABLE)
+  condition       EquipmentCondition @default(NEW)
+  client          String
+  location        String
+  responsible     String
+  acquisitionDate DateTime
+  warrantyEndDate DateTime?
+  value           Decimal?           @db.Decimal(14, 2)
+  supplier        String?
+  invoiceNumber   String?
+  notes           String?            @db.Text
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([name])
+  @@index([category])
+  @@index([status])
+  @@index([client])
+  @@index([location])
+  @@map("equipment")
+}
