@@ -189,290 +189,65 @@ function duplicateResponse(error: Prisma.PrismaClientKnownRequestError) {
   );
 }
 
-const session = await auth();
-
-if (!session?.user) {
-  return Response.json(
-    {
-      success: false,
-      message: "Não autenticado.",
-    },
-    {
-      status: 401,
-    },
-  );
-}
-
 export async function GET(
-  _request: Request,
-  context: RouteContext,
+  request: Request,
+  context: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await context.params;
+  const session = await auth();
 
-    const equipment = await prisma.equipment.findUnique({
-      where: {
-        id,
-      },
-    });
-
-    if (!equipment) {
-      return Response.json(
-        {
-          success: false,
-          message: "Equipamento não encontrado.",
-        },
-        {
-          status: 404,
-        },
-      );
-    }
-
-    return Response.json({
-      success: true,
-      data: equipment,
-    });
-  } catch (error) {
-    console.error("Erro ao carregar equipamento:", error);
-
+  if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não foi possível carregar o equipamento.",
+        message: "Não autenticado.",
       },
       {
-        status: 500,
+        status: 401,
       },
     );
   }
-}
-const session = await auth();
 
-if (!session?.user) {
-  return Response.json(
-    {
-      success: false,
-      message: "Não autenticado.",
-    },
-    {
-      status: 401,
-    },
-  );
+  // restante do GET
 }
 
 export async function PATCH(
   request: Request,
-  context: RouteContext,
+  context: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await context.params;
-    const body = (await request.json()) as EquipmentRequestBody;
+  const session = await auth();
 
-    const existingEquipment =
-      await prisma.equipment.findUnique({
-        where: {
-          id,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-    if (!existingEquipment) {
-      return Response.json(
-        {
-          success: false,
-          message: "Equipamento não encontrado.",
-        },
-        {
-          status: 404,
-        },
-      );
-    }
-
-    const equipment = await prisma.equipment.update({
-      where: {
-        id,
-      },
-      data: {
-        patrimony: requiredText(
-          body.patrimony,
-          "Patrimônio",
-        ).toUpperCase(),
-
-        name: requiredText(
-          body.name,
-          "Nome do equipamento",
-        ),
-
-        manufacturer: requiredText(
-          body.manufacturer,
-          "Fabricante",
-        ),
-
-        model: requiredText(body.model, "Modelo"),
-
-        serialNumber: requiredText(
-          body.serialNumber,
-          "Número de série",
-        ).toUpperCase(),
-
-        category: requiredText(body.category, "Categoria"),
-
-        status: parseStatus(body.status),
-
-        condition: parseCondition(body.condition),
-
-        client: requiredText(body.client, "Cliente"),
-
-        location: requiredText(
-          body.location,
-          "Localização",
-        ),
-
-        responsible: requiredText(
-          body.responsible,
-          "Responsável",
-        ),
-
-        acquisitionDate: requiredDate(
-          body.acquisitionDate,
-          "Data de aquisição",
-        ),
-
-        warrantyEndDate: optionalDate(
-          body.warrantyEndDate,
-          "Fim da garantia",
-        ),
-
-        value: optionalDecimal(body.value),
-
-        supplier: optionalText(body.supplier),
-
-        invoiceNumber: optionalText(body.invoiceNumber),
-
-        notes: optionalText(body.notes),
-      },
-    });
-
-    return Response.json({
-      success: true,
-      message: "Equipamento atualizado com sucesso.",
-      data: equipment,
-    });
-  } catch (error) {
-    console.error("Erro ao atualizar equipamento:", error);
-
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return duplicateResponse(error);
-    }
-
-    if (error instanceof SyntaxError) {
-      return Response.json(
-        {
-          success: false,
-          message: "O conteúdo enviado não é válido.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (error instanceof Error) {
-      return Response.json(
-        {
-          success: false,
-          message: error.message,
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
+  if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não foi possível atualizar o equipamento.",
+        message: "Não autenticado.",
       },
       {
-        status: 500,
+        status: 401,
       },
     );
   }
-}
 
-const session = await auth();
-
-if (!session?.user) {
-  return Response.json(
-    {
-      success: false,
-      message: "Não autenticado.",
-    },
-    {
-      status: 401,
-    },
-  );
+  // restante do PATCH
 }
 
 export async function DELETE(
-  _request: Request,
-  context: RouteContext,
+  request: Request,
+  context: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await context.params;
+  const session = await auth();
 
-    const existingEquipment =
-      await prisma.equipment.findUnique({
-        where: {
-          id,
-        },
-        select: {
-          id: true,
-          name: true,
-          patrimony: true,
-        },
-      });
-
-    if (!existingEquipment) {
-      return Response.json(
-        {
-          success: false,
-          message: "Equipamento não encontrado.",
-        },
-        {
-          status: 404,
-        },
-      );
-    }
-
-    await prisma.equipment.delete({
-      where: {
-        id,
-      },
-    });
-
-    return Response.json({
-      success: true,
-      message: "Equipamento excluído com sucesso.",
-      data: existingEquipment,
-    });
-  } catch (error) {
-    console.error("Erro ao excluir equipamento:", error);
-
+  if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não foi possível excluir o equipamento.",
+        message: "Não autenticado.",
       },
       {
-        status: 500,
+        status: 401,
       },
     );
   }
+
+  // restante do DELETE
 }

@@ -79,7 +79,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           id: "admin",
           name: process.env.ADMIN_NAME?.trim() || "Administrador",
           email: adminEmail,
-          role: "admin",
+          role: "ADMIN",
         };
       },
     }),
@@ -89,7 +89,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = "admin";
+        token.role = "ADMIN";
       }
 
       return token;
