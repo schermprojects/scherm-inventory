@@ -39,22 +39,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             ? credentials.password
             : "";
 
-        const adminEmail = process.env.ADMIN_EMAIL
-          ?.trim()
-          .toLowerCase();
+        const adminEmail =
+          process.env.ADMIN_EMAIL?.trim().toLowerCase() ?? "";
 
         const encodedHash =
-  process.env.ADMIN_PASSWORD_HASH_B64?.trim();
+          process.env.ADMIN_PASSWORD_HASH_B64?.trim() ?? "";
 
-const adminPasswordHash = encodedHash
-  ? Buffer.from(encodedHash, "base64").toString("utf8")
-  : "";
-        console.log("AUTH DEBUG:", {
+        const rawHash =
+          process.env.ADMIN_PASSWORD_HASH
+            ?.trim()
+            .replace(/\\\$/g, "$") ?? "";
+
+        const adminPasswordHash = encodedHash
+          ? Buffer.from(encodedHash, "base64").toString("utf8")
+          : rawHash;
+
+        console.log("AUTH CONFIG:", {
           emailRecebido: email,
           emailConfigurado: adminEmail,
           possuiSenha: password.length > 0,
-          possuiHash: Boolean(adminPasswordHash),
-          tamanhoHash: adminPasswordHash?.length,
+          possuiBase64: encodedHash.length > 0,
+          possuiHashNormal: rawHash.length > 0,
+          tamanhoHashFinal: adminPasswordHash.length,
+          prefixoValido:
+            adminPasswordHash.startsWith("$2a$") ||
+            adminPasswordHash.startsWith("$2b$") ||
+            adminPasswordHash.startsWith("$2y$"),
         });
 
         if (!email || !password || !adminEmail || !adminPasswordHash) {
@@ -101,6 +111,7 @@ const adminPasswordHash = encodedHash
     async session({ session, token }) {
       if (session.user) {
         session.user.id = String(token.id ?? "admin");
+        session.user.role = "ADMIN";
       }
 
       return session;
