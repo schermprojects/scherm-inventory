@@ -15,6 +15,7 @@ type EquipmentBody = {
   manufacturer?: unknown;
   model?: unknown;
   serialNumber?: unknown;
+  quantity?: unknown;
   category?: unknown;
   status?: unknown;
   condition?: unknown;
@@ -28,6 +29,22 @@ type EquipmentBody = {
   invoiceNumber?: unknown;
   notes?: unknown;
 };
+
+function requiredQuantity(value: unknown): number {
+  const quantity = Number(value);
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > 999999
+  ) {
+    throw new Error(
+      "A quantidade deve ser um número inteiro maior que zero.",
+    );
+  }
+
+  return quantity;
+}
 
 function requiredText(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -220,6 +237,8 @@ export async function POST(request: Request) {
           "Número de série",
         ).toUpperCase(),
 
+        quantity: requiredQuantity(body.quantity),
+
         category: requiredText(body.category, "Categoria"),
 
         status: parseStatus(body.status),
@@ -254,6 +273,22 @@ export async function POST(request: Request) {
         notes: optionalText(body.notes),
       },
     });
+
+    function requiredQuantity(value: unknown): number {
+  const quantity = Number(value);
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > 999999
+  ) {
+    throw new Error(
+      "A quantidade deve ser um número inteiro maior que zero.",
+    );
+  }
+
+  return quantity;
+}
 
     return Response.json(
       {

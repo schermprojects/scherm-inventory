@@ -7,26 +7,13 @@ datasource db {
   provider = "postgresql"
 }
 
-enum EquipmentStatus {
-  AVAILABLE
-  IN_USE
-  MAINTENANCE
-  UNAVAILABLE
-}
-
-enum EquipmentCondition {
-  NEW
-  GOOD
-  REGULAR
-  DAMAGED
-}
-
 model Equipment {
   id              String             @id @default(cuid())
   patrimony       String             @unique
   name            String
   manufacturer    String
   model           String
+  quantity        Int                @default(1)
   serialNumber    String             @unique
   category        String
   status          EquipmentStatus    @default(AVAILABLE)
@@ -39,9 +26,11 @@ model Equipment {
   value           Decimal?           @db.Decimal(14, 2)
   supplier        String?
   invoiceNumber   String?
-  notes           String?            @db.Text
+  notes           String?
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
+
+  images EquipmentImage[]
 
   @@index([name])
   @@index([category])
@@ -49,4 +38,35 @@ model Equipment {
   @@index([client])
   @@index([location])
   @@map("equipment")
+}
+
+model EquipmentImage {
+  id          String   @id @default(cuid())
+  url         String
+  downloadUrl String?
+  pathname    String
+  contentType String?
+  size        Int?
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@index([equipmentId])
+  @@map("equipment_images")
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  UNAVAILABLE
+}
+
+enum EquipmentCondition {
+  NEW
+  GOOD
+  REGULAR
+  DAMAGED
 }

@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { upload } from "@vercel/blob/client";
 
 type EquipmentStatus =
   | "Disponível"
@@ -45,6 +46,7 @@ export type EquipmentFormData = {
   category: string;
   manufacturer: string;
   model: string;
+  quantity: string;
   status: EquipmentStatus;
   condition: EquipmentCondition;
   client: string;
@@ -72,7 +74,23 @@ type ImagePreview = {
   url: string;
 };
 
+type EquipmentApiResponse = {
+  success: boolean;
+  message?: string;
+  field?: keyof EquipmentFormData;
+  data?: {
+    id: string;
+  };
+};
 
+type UploadedEquipmentImage = {
+  url: string;
+  downloadUrl: string;
+  pathname: string;
+  contentType: string;
+  size: number;
+  position: number;
+};
 
 const DRAFT_STORAGE_KEY = "scherm-inventory-equipment-draft";
 
@@ -83,6 +101,7 @@ const initialFormData: EquipmentFormData = {
   category: "",
   manufacturer: "",
   model: "",
+  quantity: "1",
   status: "Disponível",
   condition: "Novo",
   client: "",
@@ -227,6 +246,7 @@ useEffect(() => {
       "category",
       "manufacturer",
       "model",
+      "quantity",
       "client",
       "location",
       "responsible",
@@ -262,71 +282,153 @@ useEffect(() => {
     setFeedback(null);
   }
 
-  function validateForm() {
-    const nextErrors: FormErrors = {};
+function validateForm() {
+  const nextErrors: FormErrors = {};
 
-    if (!formData.name.trim()) {
-      nextErrors.name = "Informe o nome do equipamento.";
-    }
-
-    if (!formData.patrimony.trim()) {
-      nextErrors.patrimony = "Informe o número de patrimônio.";
-    }
-
-    if (!formData.serialNumber.trim()) {
-      nextErrors.serialNumber = "Informe o número de série.";
-    }
-
-    if (!formData.category) {
-      nextErrors.category = "Selecione uma categoria.";
-    }
-
-    if (!formData.manufacturer) {
-      nextErrors.manufacturer = "Selecione o fabricante.";
-    }
-
-    if (!formData.model.trim()) {
-      nextErrors.model = "Informe o modelo.";
-    }
-
-    if (!formData.client) {
-      nextErrors.client = "Selecione o cliente.";
-    }
-
-    if (!formData.location) {
-      nextErrors.location = "Selecione a localização.";
-    }
-
-    if (!formData.responsible) {
-      nextErrors.responsible = "Selecione o responsável.";
-    }
-
-    if (!formData.acquisitionDate) {
-      nextErrors.acquisitionDate =
-        "Informe a data de aquisição.";
-    }
-
-    if (
-      formData.warrantyEndDate &&
-      formData.acquisitionDate &&
-      formData.warrantyEndDate < formData.acquisitionDate
-    ) {
-      nextErrors.warrantyEndDate =
-        "A garantia não pode terminar antes da aquisição.";
-    }
-
-    const numericValue = parseCurrencyValue(formData.value);
-
-    if (formData.value && numericValue < 0) {
-      nextErrors.value = "O valor deve ser maior ou igual a zero.";
-    }
-
-    setErrors(nextErrors);
-
-    return Object.keys(nextErrors).length === 0;
+  if (!formData.name.trim()) {
+    nextErrors.name = "Informe o nome do equipamento.";
   }
 
- async function handleSubmit(
+  if (!formData.patrimony.trim()) {
+    nextErrors.patrimony = "Informe o número de patrimônio.";
+  }
+
+  if (!formData.serialNumber.trim()) {
+    nextErrors.serialNumber = "Informe o número de série.";
+  }
+
+  if (!formData.category) {
+    nextErrors.category = "Selecione uma categoria.";
+  }
+
+  if (!formData.manufacturer) {
+    nextErrors.manufacturer = "Selecione o fabricante.";
+  }
+
+  if (!formData.model.trim()) {
+    nextErrors.model = "Informe o modelo.";
+  }
+
+  const quantity = Number(formData.quantity);
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > 999999
+  ) {
+    nextErrors.quantity =
+      "Informe uma quantidade inteira maior que zero.";
+  }
+
+  if (!formData.client) {
+    nextErrors.client = "Selecione o cliente.";
+  }
+
+  if (!formData.location) {
+    nextErrors.location = "Selecione a localização.";
+  }
+
+  if (!formData.responsible) {
+    nextErrors.responsible = "Selecione o responsável.";
+  }
+
+  if (!formData.acquisitionDate) {
+    nextErrors.acquisitionDate =
+      "Informe a data de aquisição.";
+  }
+
+  if (
+    formData.warrantyEndDate &&
+    formData.acquisitionDate &&
+    formData.warrantyEndDate < formData.acquisitionDate
+  ) {
+    nextErrors.warrantyEndDate =
+      "A garantia não pode terminar antes da aquisição.";
+  }
+
+  const numericValue = parseCurrencyValue(formData.value);
+
+  if (formData.value && numericValue < 0) {
+    nextErrors.value =
+      "O valor deve ser maior ou igual a zero.";
+  }
+
+  setErrors(nextErrors);
+
+  return Object.keys(nextErrors).length === 0;
+}
+
+async function uploadEquipmentImages(
+  targetEquipmentId: string,
+): Promise<UploadedEquipmentImage[]> {
+  const uploadedImages: UploadedEquipmentImage[] = [];
+
+  for (const [index, image] of images.entries()) {
+    const safeFileName = image.file.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/-+/g, "-");
+
+    const pathname = [
+      "equipment",
+      targetEquipmentId,
+      `${crypto.randomUUID()}-${safeFileName}`,
+    ].join("/");
+
+    const blob = await upload(pathname, image.file, {
+      access: "public",
+      handleUploadUrl: "/api/equipment/upload",
+    });
+
+    uploadedImages.push({
+      url: blob.url,
+      downloadUrl: blob.downloadUrl,
+      pathname: blob.pathname,
+      contentType: image.file.type,
+      size: image.file.size,
+      position: index,
+    });
+  }
+
+  return uploadedImages;
+}
+
+async function saveEquipmentImages(
+  targetEquipmentId: string,
+  uploadedImages: UploadedEquipmentImage[],
+): Promise<void> {
+  if (uploadedImages.length === 0) {
+    return;
+  }
+
+  const response = await fetch(
+    `/api/equipment/${targetEquipmentId}/images`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        images: uploadedImages,
+      }),
+    },
+  );
+
+  const result = (await response.json()) as {
+    success: boolean;
+    message?: string;
+  };
+
+  if (!response.ok || !result.success) {
+    throw new Error(
+      result.message ??
+        "As imagens foram enviadas, mas não foram salvas no banco.",
+    );
+  }
+}
+
+async function handleSubmit(
   event: FormEvent<HTMLFormElement>,
 ) {
   event.preventDefault();
@@ -379,6 +481,7 @@ useEffect(() => {
         category: formData.category,
         manufacturer: formData.manufacturer,
         model: formData.model.trim(),
+        quantity: Number(formData.quantity),
 
         status:
           formData.status === "Disponível"
@@ -414,25 +517,49 @@ useEffect(() => {
       }),
     });
 
-    const result = (await response.json()) as {
-      success: boolean;
-      message?: string;
-      field?: keyof EquipmentFormData;
-    };
+    const result =
+      (await response.json()) as EquipmentApiResponse;
 
     if (!response.ok || !result.success) {
-if (result.field) {
-  const field = result.field;
-
-  setErrors((current) => ({
-    ...current,
-    [field]: result.message ?? "Campo inválido.",
-  }));
-}
+      if (result.field) {
+        setErrors((current) => ({
+          ...current,
+          [result.field!]:
+            result.message ?? "Campo inválido.",
+        }));
+      }
 
       throw new Error(
         result.message ??
           "Não foi possível salvar o equipamento.",
+      );
+    }
+
+    const savedEquipmentId =
+      mode === "edit"
+        ? equipmentId
+        : result.data?.id;
+
+    if (!savedEquipmentId) {
+      throw new Error(
+        "O equipamento foi salvo, mas a API não retornou o ID.",
+      );
+    }
+
+    if (images.length > 0) {
+      setFeedback({
+        type: "success",
+        message: `Equipamento salvo. Enviando ${images.length} ${
+          images.length === 1 ? "imagem" : "imagens"
+        }...`,
+      });
+
+      const uploadedImages =
+        await uploadEquipmentImages(savedEquipmentId);
+
+      await saveEquipmentImages(
+        savedEquipmentId,
+        uploadedImages,
       );
     }
 
@@ -441,22 +568,21 @@ if (result.field) {
     setFeedback({
       type: "success",
       message:
-        result.message ??
-        (mode === "edit"
-          ? "Equipamento atualizado com sucesso."
-          : "Equipamento cadastrado com sucesso."),
+        images.length > 0
+          ? "Equipamento e imagens salvos com sucesso."
+          : result.message ??
+            (mode === "edit"
+              ? "Equipamento atualizado com sucesso."
+              : "Equipamento cadastrado com sucesso."),
     });
 
     window.setTimeout(() => {
-      if (mode === "edit" && equipmentId) {
-        router.push(`/inventory/${equipmentId}`);
-      } else {
-        router.push("/inventory");
-      }
-
+      router.push(`/inventory/${savedEquipmentId}`);
       router.refresh();
     }, 700);
   } catch (error) {
+    console.error("Erro ao salvar equipamento:", error);
+
     setFeedback({
       type: "error",
       message:
@@ -779,6 +905,23 @@ if (result.field) {
               className={inputClass(Boolean(errors.model))}
             />
           </FormField>
+
+          <FormField
+  label="Quantidade"
+  required
+  error={errors.quantity}
+>
+  <input
+    type="number"
+    name="quantity"
+    min={1}
+    step={1}
+    value={formData.quantity}
+    onChange={handleChange}
+    placeholder="1"
+    className={inputClass(Boolean(errors.quantity))}
+  />
+</FormField>
 
           <FormField label="Status">
             <select

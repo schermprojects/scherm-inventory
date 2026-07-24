@@ -3,6 +3,8 @@ import {
   EquipmentStatus,
   Prisma,
 } from "@/generated/prisma/client";
+import { del } from "@vercel/blob";
+
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
@@ -21,6 +23,7 @@ type EquipmentRequestBody = {
   manufacturer?: unknown;
   model?: unknown;
   serialNumber?: unknown;
+  quantity?: unknown;
   category?: unknown;
   status?: unknown;
   condition?: unknown;
@@ -214,6 +217,13 @@ export async function GET(
       where: {
         id,
       },
+      include: {
+        images: {
+          orderBy: {
+            position: "asc",
+          },
+        },
+      },
     });
 
     if (!equipment) {
@@ -290,6 +300,22 @@ export async function PATCH(
       );
     }
 
+function requiredQuantity(value: unknown): number {
+  const quantity = Number(value);
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > 999999
+  ) {
+    throw new Error(
+      "A quantidade deve ser um número inteiro maior que zero.",
+    );
+  }
+
+  return quantity;
+}
+
     const equipment = await prisma.equipment.update({
       where: {
         id,
@@ -313,6 +339,8 @@ export async function PATCH(
           body.serialNumber,
           "Número de série",
         ).toUpperCase(),
+
+        quantity: requiredQuantity(body.quantity),
 
         category: requiredText(body.category, "Categoria"),
 
@@ -421,14 +449,20 @@ export async function DELETE(
   try {
     const { id } = await context.params;
 
-    const existingEquipment = await prisma.equipment.findUnique({
-      where: {
-        id,
-      },
-      select: {
-        id: true,
-      },
-    });
+    const existingEquipment =
+      await prisma.equipment.findUnique({
+        where: {
+          id,
+        },
+        select: {
+          id: true,
+          images: {
+            select: {
+              pathname: true,
+            },
+          },
+        },
+      });
 
     if (!existingEquipment) {
       return Response.json(
@@ -442,11 +476,40 @@ export async function DELETE(
       );
     }
 
+    const imagePathnames =
+      existingEquipment.images
+        .map((image) => image.pathname)
+        .filter(Boolean);
+
+    /*
+     * Primeiro removemos o equipamento do banco.
+     *
+     * Como a relação possui onDelete: Cascade,
+     * os registros de EquipmentImage também serão removidos.
+     */
     await prisma.equipment.delete({
       where: {
         id,
       },
     });
+
+    /*
+     * Depois removemos os arquivos físicos do Vercel Blob.
+     *
+     * Se a exclusão no Blob falhar, o equipamento já terá sido
+     * removido do banco. Registramos o erro para não transformar
+     * uma exclusão concluída em falha para o usuário.
+     */
+    if (imagePathnames.length > 0) {
+      try {
+        await del(imagePathnames);
+      } catch (blobError) {
+        console.error(
+          "Equipamento excluído, mas houve erro ao remover imagens do Blob:",
+          blobError,
+        );
+      }
+    }
 
     return Response.json({
       success: true,

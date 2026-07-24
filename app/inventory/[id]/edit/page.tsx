@@ -72,6 +72,7 @@ const initialValues: EquipmentFormData = {
     category: equipment.category,
     manufacturer: equipment.manufacturer,
     model: equipment.model,
+    quantity: String(equipment.quantity),
     status: statusFromDatabase[equipment.status],
     condition: conditionFromDatabase[equipment.condition],
     client: equipment.client,

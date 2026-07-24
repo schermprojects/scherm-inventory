@@ -53,6 +53,7 @@ type ApiEquipment = {
   name: string;
   manufacturer: string;
   model: string;
+  quantity: number;
   serialNumber: string;
   category: string;
   status: ApiEquipmentStatus;
@@ -76,6 +77,7 @@ type Equipment = {
   name: string;
   manufacturer: string;
   model: string;
+  quantity: number;
   serialNumber: string;
   category: string;
   status: EquipmentStatus;
@@ -154,6 +156,7 @@ function mapApiEquipment(item: ApiEquipment): Equipment {
     name: item.name,
     manufacturer: item.manufacturer,
     model: item.model,
+    quantity: item.quantity,
     serialNumber: item.serialNumber,
     category: item.category,
     status: statusFromApi[item.status],
@@ -401,6 +404,7 @@ useEffect(() => {
       "Equipamento",
       "Fabricante",
       "Modelo",
+      "Quantidade",
       "Número de série",
       "Categoria",
       "Status",
@@ -416,6 +420,7 @@ useEffect(() => {
       equipment.name,
       equipment.manufacturer,
       equipment.model,
+      equipment.quantity,
       equipment.serialNumber,
       equipment.category,
       equipment.status,
@@ -749,36 +754,58 @@ function InventorySummary({
 }: {
   equipment: Equipment[];
 }) {
+  const totalQuantity = equipment.reduce(
+    (total, item) => total + item.quantity,
+    0,
+  );
+
+  const availableQuantity = equipment
+    .filter((item) => item.status === "Disponível")
+    .reduce(
+      (total, item) => total + item.quantity,
+      0,
+    );
+
+  const inUseQuantity = equipment
+    .filter((item) => item.status === "Em uso")
+    .reduce(
+      (total, item) => total + item.quantity,
+      0,
+    );
+
+  const attentionQuantity = equipment
+    .filter(
+      (item) =>
+        item.status === "Em manutenção" ||
+        item.status === "Indisponível",
+    )
+    .reduce(
+      (total, item) => total + item.quantity,
+      0,
+    );
+
   const summary = [
     {
-      label: "Equipamentos encontrados",
-      value: equipment.length,
+      label: "Unidades encontradas",
+      value: totalQuantity,
       color: "text-zinc-900",
       background: "bg-zinc-100",
     },
     {
       label: "Disponíveis",
-      value: equipment.filter(
-        (item) => item.status === "Disponível",
-      ).length,
+      value: availableQuantity,
       color: "text-emerald-700",
       background: "bg-emerald-50",
     },
     {
       label: "Em uso",
-      value: equipment.filter(
-        (item) => item.status === "Em uso",
-      ).length,
+      value: inUseQuantity,
       color: "text-blue-700",
       background: "bg-blue-50",
     },
     {
       label: "Exigem atenção",
-      value: equipment.filter(
-        (item) =>
-          item.status === "Em manutenção" ||
-          item.status === "Indisponível",
-      ).length,
+      value: attentionQuantity,
       color: "text-amber-700",
       background: "bg-amber-50",
     },
@@ -891,6 +918,7 @@ function EquipmentTable({
             <TableHeader>Equipamento</TableHeader>
             <TableHeader>Patrimônio</TableHeader>
             <TableHeader>Categoria</TableHeader>
+            <TableHeader>Quantidade</TableHeader>
             <TableHeader>Status</TableHeader>
             <TableHeader>Cliente</TableHeader>
             <TableHeader>Localização</TableHeader>
@@ -938,6 +966,11 @@ function EquipmentTable({
               <td className="px-5 py-4 text-sm text-zinc-600">
                 {item.category}
               </td>
+
+            <td className="whitespace-nowrap px-5 py-4 text-sm font-semibold text-zinc-700">
+              {item.quantity}{" "}
+              {item.quantity === 1 ? "unidade" : "unidades"}
+            </td>
 
               <td className="px-5 py-4">
                 <StatusBadge status={item.status} />
@@ -1031,6 +1064,14 @@ function EquipmentCards({
               label="Condição"
               value={item.condition}
             />
+
+            <CardDetail
+          label="Quantidade"
+          value={`${item.quantity} ${
+          item.quantity === 1 ? "unidade" : "unidades"
+          }`}
+          />
+
             <CardDetail label="Cliente" value={item.client} />
             <CardDetail
               label="Valor"

@@ -228,6 +228,16 @@ export default async function EquipmentDetailsPage({
                 value={equipment.model}
               />
 
+               <DetailItem
+    label="Quantidade"
+    value={`${equipment.quantity} ${
+      equipment.quantity === 1
+        ? "unidade"
+        : "unidades"
+    }`}
+  />
+
+
               <DetailItem
                 label="Status"
                 value={statusLabels[equipment.status]}
