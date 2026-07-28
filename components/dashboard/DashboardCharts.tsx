@@ -17,10 +17,10 @@ import {
 } from "recharts";
 
 import {
-  categoryChartData,
   clientEquipmentData,
   monthlyMovementData,
-  statusChartData,
+  type CategoryChartItem,
+  type StatusChartItem,
 } from "@/data/dashboard";
 
 const tooltipStyle = {
@@ -61,7 +61,15 @@ function ChartCard({
   );
 }
 
-export function DashboardCharts() {
+type DashboardChartsProps = {
+  categoryChartData: CategoryChartItem[];
+  statusChartData: StatusChartItem[];
+};
+
+export function DashboardCharts({
+  categoryChartData,
+  statusChartData,
+}: DashboardChartsProps) {
   return (
     <section className="grid gap-6 xl:grid-cols-2">
       <ChartCard
@@ -193,9 +201,12 @@ export function DashboardCharts() {
                   Total
                 </span>
 
-                <span className="text-base font-bold text-zinc-900">
-                  654
-                </span>
+<span className="text-base font-bold text-zinc-900">
+  {statusChartData.reduce(
+    (total, item) => total + item.value,
+    0,
+  )}
+</span>
               </div>
             </div>
           </div>

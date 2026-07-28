@@ -6,14 +6,31 @@ import {
   LogOut,
   Menu,
   Plus,
-  Search,
+  UserRound,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { GlobalSearch } from "@/components/layout/GlobalSearch";
 
 type HeaderProps = {
   onMenuClick?: () => void;
+};
+
+type SessionUser = {
+  name?: string | null;
+  username?: string | null;
+  role?: "ADMIN" | "COMMERCIAL" | "VIEWER";
+};
+
+const roleLabels: Record<
+  NonNullable<SessionUser["role"]>,
+  string
+> = {
+  ADMIN: "Administrador",
+  COMMERCIAL: "Comercial",
+  VIEWER: "Consulta",
 };
 
 function getInitials(name?: string | null): string {
@@ -32,17 +49,27 @@ function getInitials(name?: string | null): string {
 }
 
 export function Header({ onMenuClick }: HeaderProps) {
+  const pathname = usePathname();
   const { data: session, status } = useSession();
+
   const [isAccountMenuOpen, setIsAccountMenuOpen] =
     useState(false);
 
-  const userName =
-    session?.user?.name ?? "Administrador";
+  const user = session?.user as SessionUser | undefined;
 
-  const userEmail =
-    session?.user?.email ?? "admin@scherm.com";
+  const userName = user?.name ?? "Administrador";
+  const userUsername = user?.username ?? "usuario";
+ const userRole = user?.role ?? "VIEWER";
 
   const initials = getInitials(userName);
+
+const canCreateEquipment =
+  userRole === "ADMIN" ||
+  userRole === "COMMERCIAL";
+
+const showNewEquipmentButton =
+  canCreateEquipment &&
+  pathname === "/inventory";
 
   async function handleSignOut() {
     setIsAccountMenuOpen(false);
@@ -63,30 +90,19 @@ export function Header({ onMenuClick }: HeaderProps) {
         >
           <Menu size={20} />
         </button>
-
-        <div className="relative hidden md:block">
-          <Search
-            size={18}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-          />
-
-          <input
-            type="search"
-            placeholder="Buscar equipamentos, clientes..."
-            aria-label="Buscar equipamentos e clientes"
-            className="h-10 w-80 rounded-lg border border-zinc-200 bg-zinc-50 pl-10 pr-4 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:bg-white focus:ring-2 focus:ring-[#F57B00]/15"
-          />
-        </div>
+        <GlobalSearch />
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">
-        <Link
-          href="/inventory/new"
-          className="hidden items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] sm:inline-flex"
-        >
-          <Plus size={18} />
-          Novo equipamento
-        </Link>
+        {showNewEquipmentButton ? (
+          <Link
+            href="/inventory/new"
+            className="hidden items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] sm:inline-flex"
+          >
+            <Plus size={18} />
+            Novo equipamento
+          </Link>
+        ) : null}
 
         <button
           type="button"
@@ -125,7 +141,7 @@ export function Header({ onMenuClick }: HeaderProps) {
               <p className="max-w-48 truncate text-xs text-zinc-500">
                 {status === "loading"
                   ? "Verificando sessão"
-                  : userEmail}
+                  : `@${userUsername}`}
               </p>
             </div>
 
@@ -139,7 +155,7 @@ export function Header({ onMenuClick }: HeaderProps) {
             />
           </button>
 
-          {isAccountMenuOpen && (
+          {isAccountMenuOpen ? (
             <>
               <button
                 type="button"
@@ -160,13 +176,25 @@ export function Header({ onMenuClick }: HeaderProps) {
                   </p>
 
                   <p className="mt-1 truncate text-xs text-zinc-500">
-                    {userEmail}
+                    @{userUsername}
                   </p>
 
                   <span className="mt-3 inline-flex rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
-                    Administrador
+                    {roleLabels[userRole]}
                   </span>
                 </div>
+
+                <Link
+  href="/account"
+  role="menuitem"
+  onClick={() =>
+    setIsAccountMenuOpen(false)
+  }
+  className="flex w-full items-center gap-2 border-b border-zinc-100 px-4 py-3 text-left text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
+>
+  <UserRound size={17} />
+  Minha conta
+</Link>
 
                 <button
                   type="button"
@@ -181,7 +209,7 @@ export function Header({ onMenuClick }: HeaderProps) {
                 </button>
               </div>
             </>
-          )}
+          ) : null}
         </div>
       </div>
     </header>

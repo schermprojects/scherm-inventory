@@ -2,6 +2,26 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 
+import { prisma } from "@/lib/prisma";
+
+type UserRole = "ADMIN" | "COMMERCIAL" | "VIEWER";
+
+function isUserRole(value: unknown): value is UserRole {
+  return (
+    value === "ADMIN" ||
+    value === "COMMERCIAL" ||
+    value === "VIEWER"
+  );
+}
+
+function normalizeUsername(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().toLowerCase();
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
 
@@ -15,12 +35,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
   providers: [
     Credentials({
-      name: "Administrador",
+      name: "Scherm Inventory",
 
       credentials: {
-        email: {
-          label: "E-mail",
-          type: "email",
+        username: {
+          label: "Usuário",
+          type: "text",
         },
         password: {
           label: "Senha",
@@ -29,70 +49,75 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
 
       async authorize(credentials) {
-        const email =
-          typeof credentials?.email === "string"
-            ? credentials.email.trim().toLowerCase()
-            : "";
+        const username = normalizeUsername(
+          credentials?.username,
+        );
 
         const password =
           typeof credentials?.password === "string"
             ? credentials.password
             : "";
 
-        const adminEmail =
-          process.env.ADMIN_EMAIL?.trim().toLowerCase() ?? "";
-
-        const encodedHash =
-          process.env.ADMIN_PASSWORD_HASH_B64?.trim() ?? "";
-
-        const rawHash =
-          process.env.ADMIN_PASSWORD_HASH
-            ?.trim()
-            .replace(/\\\$/g, "$") ?? "";
-
-        const adminPasswordHash = encodedHash
-          ? Buffer.from(encodedHash, "base64").toString("utf8")
-          : rawHash;
-
-        console.log("AUTH CONFIG:", {
-          emailRecebido: email,
-          emailConfigurado: adminEmail,
-          possuiSenha: password.length > 0,
-          possuiBase64: encodedHash.length > 0,
-          possuiHashNormal: rawHash.length > 0,
-          tamanhoHashFinal: adminPasswordHash.length,
-          prefixoValido:
-            adminPasswordHash.startsWith("$2a$") ||
-            adminPasswordHash.startsWith("$2b$") ||
-            adminPasswordHash.startsWith("$2y$"),
-        });
-
-        if (!email || !password || !adminEmail || !adminPasswordHash) {
-          console.error("AUTH: configuração ou credenciais ausentes");
+        if (!username || !password) {
           return null;
         }
 
-        if (email !== adminEmail) {
-          console.error("AUTH: e-mail não corresponde");
+        const user = await prisma.user.findUnique({
+          where: {
+            username,
+          },
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            passwordHash: true,
+            role: true,
+            active: true,
+          },
+        });
+
+        console.log(
+          "USER:",
+          user
+            ? {
+                id: user.id,
+                name: user.name,
+                username: user.username,
+                role: user.role,
+                active: user.active,
+              }
+            : null,
+        );
+
+        if (!user) {
+          console.log("LOGIN BLOQUEADO: usuário não encontrado");
+          return null;
+        }
+
+        if (!user.active) {
+          console.log("LOGIN BLOQUEADO: usuário inativo");
           return null;
         }
 
         const passwordMatches = await bcrypt.compare(
           password,
-          adminPasswordHash,
+          user.passwordHash,
         );
 
-        console.log("AUTH: senha corresponde:", passwordMatches);
+        console.log("PASSWORD:", passwordMatches);
 
         if (!passwordMatches) {
+          console.log("LOGIN BLOQUEADO: senha incorreta");
           return null;
         }
 
+        console.log("LOGIN AUTORIZADO:", user.username);
+
         return {
-          id: "admin",
-          name: process.env.ADMIN_NAME?.trim() || "Administrador",
-          email: adminEmail,
-          role: "ADMIN",
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          role: user.role,
         };
       },
     }),
@@ -102,17 +127,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = "ADMIN";
+        token.username = user.username;
+        token.role = user.role;
       }
 
       return token;
     },
 
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = String(token.id ?? "admin");
-        session.user.role = "ADMIN";
+      if (!session.user) {
+        return session;
       }
+
+      session.user.id =
+        typeof token.id === "string" ? token.id : "";
+
+      session.user.username =
+        typeof token.username === "string"
+          ? token.username
+          : "";
+
+      session.user.role = isUserRole(token.role)
+        ? token.role
+        : "VIEWER";
 
       return session;
     },

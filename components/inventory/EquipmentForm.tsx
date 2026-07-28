@@ -1,72 +1,71 @@
 "use client";
-
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { upload } from "@vercel/blob/client";
 import {
   AlertCircle,
   ArrowLeft,
-  CalendarDays,
   CheckCircle2,
   FileText,
   ImagePlus,
   LoaderCircle,
-  MapPin,
   Package,
   Save,
   Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  ChangeEvent,
-  FormEvent,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { upload } from "@vercel/blob/client";
 
 type EquipmentStatus =
   | "Disponível"
   | "Em uso"
-  | "Em manutenção"
   | "Indisponível";
 
 type EquipmentCondition =
   | "Novo"
-  | "Bom"
-  | "Regular"
   | "Danificado";
 
 export type EquipmentFormData = {
   name: string;
-  patrimony: string;
   serialNumber: string;
   category: string;
   manufacturer: string;
   model: string;
   quantity: string;
+  minimumStock: string;
+  invoiceNumber: string;
   status: EquipmentStatus;
   condition: EquipmentCondition;
-  client: string;
-  location: string;
-  responsible: string;
-  acquisitionDate: string;
-  warrantyEndDate: string;
-  value: string;
-  supplier: string;
-  invoiceNumber: string;
   notes: string;
+};
+
+type EquipmentStockInfo = {
+  physicalStock: number;
+  inUse: number;
+  availableStock: number;
+  minimumStock: number;
 };
 
 type EquipmentFormProps = {
   mode?: "create" | "edit";
   equipmentId?: string;
   initialValues?: EquipmentFormData;
+  stockInfo?: EquipmentStockInfo;
 };
 
-type FormErrors = Partial<Record<keyof EquipmentFormData, string>>;
+type FormErrors = Partial<
+  Record<keyof EquipmentFormData, string>
+>;
 
 type ImagePreview = {
   id: string;
@@ -92,169 +91,207 @@ type UploadedEquipmentImage = {
   position: number;
 };
 
-const DRAFT_STORAGE_KEY = "scherm-inventory-equipment-draft";
+const DRAFT_STORAGE_KEY =
+  "scherm-inventory-equipment-draft";
+
+const MAX_IMAGES = 5;
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 
 const initialFormData: EquipmentFormData = {
   name: "",
-  patrimony: "",
   serialNumber: "",
   category: "",
   manufacturer: "",
   model: "",
   quantity: "1",
+  minimumStock: "0",
+  invoiceNumber: "",
   status: "Disponível",
   condition: "Novo",
-  client: "",
-  location: "",
-  responsible: "",
-  acquisitionDate: "",
-  warrantyEndDate: "",
-  value: "",
-  supplier: "",
-  invoiceNumber: "",
   notes: "",
 };
 
 const categories = [
-  "Servidores",
-  "Switches",
-  "Storages",
-  "GPUs",
-  "Notebooks",
-  "Firewalls",
-  "Roteadores",
-  "Energia",
-  "Acessórios",
-  "Outros",
-];
-
-const manufacturers = [
-  "Dell",
-  "HPE",
-  "Lenovo",
-  "Cisco",
-  "NVIDIA",
-  "NetApp",
-  "Juniper",
-  "Fortinet",
-  "Aruba",
-  "APC",
-  "Supermicro",
+  "Processador",
+  "Placa-mãe",
+  "Memória RAM",
+  "Armazenamento (SSD/HD)",
+  "Placa de vídeo",
+  "Fonte",
+  "Gabinete",
+  "Cooler/Refrigeração",
+  "Monitor",
+  "Teclado",
+  "Mouse",
+  "Controladora RAID",
+  "Controladora SAS",
+  "Switch de rede",
+  "Cabo de energia",
+  "Cabo de rede Ethernet",
+  "Cabo de rede Infiniband",
+  "Periférico",
+  "Rede",
   "Outro",
 ];
 
-const clients = [
-  "Scherm",
-  "Cliente Alpha",
-  "Cliente Beta",
-  "Cliente Gamma",
-  "Cliente Delta",
-  "Cliente Ômega",
-];
-
-const locations = [
-  "Estoque Central",
-  "Laboratório Técnico",
-  "Escritório Administrativo",
-  "Datacenter Alpha",
-  "Datacenter Beta",
-  "Datacenter Gamma",
-  "Datacenter Delta",
-  "Datacenter Ômega",
-];
-
-const responsibles = [
-  "Marcos Silva",
-  "Ana Souza",
-  "Lucas Pereira",
-  "Fernanda Lima",
-  "Rafael Santos",
-  "Carlos Mendes",
-  "Juliana Costa",
-  "Patrícia Alves",
-  "Eduardo Rocha",
+const manufacturers = [
+  "AMD",
+  "AOC",
+  "APC",
+  "Arista",
+  "Aruba",
+  "ASRock Rack",
+  "ASUS",
+  "Belden",
+  "Broadcom",
+  "Cisco",
+  "Cooler Master",
+  "Corsair",
+  "Crucial",
+  "Dell",
+  "Dell EMC",
+  "Eaton",
+  "Fortinet",
+  "Furukawa",
+  "Gigabyte",
+  "HPE",
+  "Huawei",
+  "Intel",
+  "Intelbras",
+  "Juniper",
+  "Kingston",
+  "Legrand",
+  "Lenovo",
+  "LG",
+  "Logitech",
+  "Micron",
+  "Microsoft",
+  "MikroTik",
+  "NetApp",
+  "Nexans",
+  "NVIDIA",
+  "Noctua",
+  "Palo Alto Networks",
+  "Panduit",
+  "Pure Storage",
+  "QNAP",
+  "Samsung",
+  "Schneider Electric",
+  "Seagate",
+  "Seasonic",
+  "Sophos",
+  "Supermicro",
+  "Synology",
+  "Toshiba",
+  "Ubiquiti",
+  "Vertiv",
+  "Western Digital",
 ];
 
 export function EquipmentForm({
   mode = "create",
   equipmentId,
   initialValues,
+  stockInfo,
 }: EquipmentFormProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [formData, setFormData] = useState<EquipmentFormData>(
-  initialValues ?? initialFormData,
-);
+const [formData, setFormData] =
+  useState<EquipmentFormData>(() => ({
+    ...initialFormData,
+    ...initialValues,
+
+    name: initialValues?.name ?? "",
+    serialNumber: initialValues?.serialNumber ?? "",
+    category: initialValues?.category ?? "",
+    manufacturer: initialValues?.manufacturer ?? "",
+    model: initialValues?.model ?? "",
+    quantity: initialValues?.quantity ?? "1",
+    minimumStock: initialValues?.minimumStock ?? "0",
+    invoiceNumber: initialValues?.invoiceNumber ?? "",
+    status: initialValues?.status ?? "Disponível",
+    condition: initialValues?.condition ?? "Novo",
+    notes: initialValues?.notes ?? "",
+  }));
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [images, setImages] = useState<ImagePreview[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmitting] =
+    useState(false);
+
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
 
-useEffect(() => {
-  if (mode === "edit") {
-    return;
-  }
-
-  const restoreDraftTimer = window.setTimeout(() => {
-    const savedDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
-
-    if (!savedDraft) {
+  useEffect(() => {
+    if (mode === "edit") {
       return;
     }
 
-    try {
-      const parsedDraft = JSON.parse(
-        savedDraft,
-      ) as Partial<EquipmentFormData>;
+    const timer = window.setTimeout(() => {
+      const savedDraft = localStorage.getItem(
+        DRAFT_STORAGE_KEY,
+      );
 
-      setFormData({
-        ...initialFormData,
-        ...parsedDraft,
-      });
+      if (!savedDraft) {
+        return;
+      }
 
-      setFeedback({
-        type: "success",
-        message:
-          "O rascunho salvo anteriormente foi restaurado.",
-      });
-    } catch {
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
-    }
-  }, 0);
+      try {
+        const parsedDraft = JSON.parse(
+          savedDraft,
+        ) as Partial<EquipmentFormData>;
 
-  return () => {
-    window.clearTimeout(restoreDraftTimer);
-  };
-}, [mode]);
+        setFormData({
+          ...initialFormData,
+          ...parsedDraft,
+        });
+
+        setFeedback({
+          type: "success",
+          message:
+            "O rascunho salvo anteriormente foi restaurado.",
+        });
+      } catch {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
+      }
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [mode]);
+
   useEffect(() => {
     return () => {
-      images.forEach((image) => URL.revokeObjectURL(image.url));
+      images.forEach((image) => {
+        URL.revokeObjectURL(image.url);
+      });
     };
   }, [images]);
 
-  const completionPercentage = useMemo(() => {
-    const requiredFields: Array<keyof EquipmentFormData> = [
-      "name",
-      "patrimony",
-      "serialNumber",
-      "category",
-      "manufacturer",
-      "model",
-      "quantity",
-      "client",
-      "location",
-      "responsible",
-      "acquisitionDate",
-    ];
+ const editedPhysicalStock =
+  Number(formData.quantity);
 
-    const completedFields = requiredFields.filter((field) =>
-      String(formData[field]).trim(),
+const projectedAvailableStock =
+  Number.isInteger(editedPhysicalStock)
+    ? Math.max(
+        editedPhysicalStock -
+          (stockInfo?.inUse ?? 0),
+        0,
+      )
+    : stockInfo?.availableStock ?? 0; 
+
+  const completionPercentage = useMemo(() => {
+    const requiredFields: Array<
+      keyof EquipmentFormData
+    > = ["name", "category", "quantity"];
+
+    const completedFields = requiredFields.filter(
+      (field) => String(formData[field]).trim(),
     ).length;
 
     return Math.round(
@@ -264,7 +301,9 @@ useEffect(() => {
 
   function handleChange(
     event: ChangeEvent<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      | HTMLInputElement
+      | HTMLSelectElement
+      | HTMLTextAreaElement
     >,
   ) {
     const { name, value } = event.target;
@@ -282,323 +321,306 @@ useEffect(() => {
     setFeedback(null);
   }
 
-function validateForm() {
+function validateForm(): boolean {
   const nextErrors: FormErrors = {};
 
   if (!formData.name.trim()) {
-    nextErrors.name = "Informe o nome do equipamento.";
-  }
-
-  if (!formData.patrimony.trim()) {
-    nextErrors.patrimony = "Informe o número de patrimônio.";
-  }
-
-  if (!formData.serialNumber.trim()) {
-    nextErrors.serialNumber = "Informe o número de série.";
+    nextErrors.name =
+      "Informe o nome do equipamento.";
   }
 
   if (!formData.category) {
-    nextErrors.category = "Selecione uma categoria.";
-  }
-
-  if (!formData.manufacturer) {
-    nextErrors.manufacturer = "Selecione o fabricante.";
-  }
-
-  if (!formData.model.trim()) {
-    nextErrors.model = "Informe o modelo.";
+    nextErrors.category =
+      "Selecione uma categoria.";
   }
 
   const quantity = Number(formData.quantity);
 
   if (
     !Number.isInteger(quantity) ||
-    quantity < 1 ||
+    quantity < 0 ||
     quantity > 999999
   ) {
     nextErrors.quantity =
-      "Informe uma quantidade inteira maior que zero.";
-  }
-
-  if (!formData.client) {
-    nextErrors.client = "Selecione o cliente.";
-  }
-
-  if (!formData.location) {
-    nextErrors.location = "Selecione a localização.";
-  }
-
-  if (!formData.responsible) {
-    nextErrors.responsible = "Selecione o responsável.";
-  }
-
-  if (!formData.acquisitionDate) {
-    nextErrors.acquisitionDate =
-      "Informe a data de aquisição.";
+      "Informe uma quantidade inteira igual ou maior que zero.";
   }
 
   if (
-    formData.warrantyEndDate &&
-    formData.acquisitionDate &&
-    formData.warrantyEndDate < formData.acquisitionDate
+    mode === "edit" &&
+    stockInfo &&
+    Number.isInteger(quantity) &&
+    quantity < stockInfo.inUse
   ) {
-    nextErrors.warrantyEndDate =
-      "A garantia não pode terminar antes da aquisição.";
+    nextErrors.quantity =
+      `O estoque físico não pode ser menor que as ${stockInfo.inUse} unidades atualmente em uso.`;
   }
 
-  const numericValue = parseCurrencyValue(formData.value);
+  const minimumStock =
+    Number(formData.minimumStock);
 
-  if (formData.value && numericValue < 0) {
-    nextErrors.value =
-      "O valor deve ser maior ou igual a zero.";
+  if (
+    !Number.isInteger(minimumStock) ||
+    minimumStock < 0 ||
+    minimumStock > 999999
+  ) {
+    nextErrors.minimumStock =
+      "Informe um estoque mínimo inteiro igual ou maior que zero.";
   }
 
   setErrors(nextErrors);
 
-  return Object.keys(nextErrors).length === 0;
-}
-
-async function uploadEquipmentImages(
-  targetEquipmentId: string,
-): Promise<UploadedEquipmentImage[]> {
-  const uploadedImages: UploadedEquipmentImage[] = [];
-
-  for (const [index, image] of images.entries()) {
-    const safeFileName = image.file.name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9._-]/g, "-")
-      .replace(/-+/g, "-");
-
-    const pathname = [
-      "equipment",
-      targetEquipmentId,
-      `${crypto.randomUUID()}-${safeFileName}`,
-    ].join("/");
-
-    const blob = await upload(pathname, image.file, {
-      access: "public",
-      handleUploadUrl: "/api/equipment/upload",
-    });
-
-    uploadedImages.push({
-      url: blob.url,
-      downloadUrl: blob.downloadUrl,
-      pathname: blob.pathname,
-      contentType: image.file.type,
-      size: image.file.size,
-      position: index,
-    });
+    return Object.keys(nextErrors).length === 0;
   }
 
-  return uploadedImages;
-}
+  async function uploadEquipmentImages(
+    targetEquipmentId: string,
+  ): Promise<UploadedEquipmentImage[]> {
+    const uploadedImages: UploadedEquipmentImage[] =
+      [];
 
-async function saveEquipmentImages(
-  targetEquipmentId: string,
-  uploadedImages: UploadedEquipmentImage[],
-): Promise<void> {
-  if (uploadedImages.length === 0) {
-    return;
+    for (const [index, image] of images.entries()) {
+      const safeFileName = image.file.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9._-]/g, "-")
+        .replace(/-+/g, "-");
+
+      const pathname = [
+        "equipment",
+        targetEquipmentId,
+        `${crypto.randomUUID()}-${safeFileName}`,
+      ].join("/");
+
+      const blob = await upload(
+        pathname,
+        image.file,
+        {
+          access: "public",
+          handleUploadUrl:
+            "/api/equipment/upload",
+        },
+      );
+
+      uploadedImages.push({
+        url: blob.url,
+        downloadUrl: blob.downloadUrl,
+        pathname: blob.pathname,
+        contentType: image.file.type,
+        size: image.file.size,
+        position: index,
+      });
+    }
+
+    return uploadedImages;
   }
 
-  const response = await fetch(
-    `/api/equipment/${targetEquipmentId}/images`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  async function saveEquipmentImages(
+    targetEquipmentId: string,
+    uploadedImages: UploadedEquipmentImage[],
+  ): Promise<void> {
+    if (uploadedImages.length === 0) {
+      return;
+    }
+
+    const response = await fetch(
+      `/api/equipment/${targetEquipmentId}/images`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          images: uploadedImages,
+        }),
       },
-      body: JSON.stringify({
-        images: uploadedImages,
-      }),
-    },
-  );
-
-  const result = (await response.json()) as {
-    success: boolean;
-    message?: string;
-  };
-
-  if (!response.ok || !result.success) {
-    throw new Error(
-      result.message ??
-        "As imagens foram enviadas, mas não foram salvas no banco.",
     );
-  }
-}
 
-async function handleSubmit(
-  event: FormEvent<HTMLFormElement>,
-) {
-  event.preventDefault();
-  setFeedback(null);
-
-  if (!validateForm()) {
-    setFeedback({
-      type: "error",
-      message:
-        "Revise os campos destacados antes de continuar.",
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-
-    return;
-  }
-
-  if (mode === "edit" && !equipmentId) {
-    setFeedback({
-      type: "error",
-      message:
-        "Não foi possível identificar o equipamento.",
-    });
-
-    return;
-  }
-
-  setIsSubmitting(true);
-
-  try {
-    const endpoint =
-      mode === "edit"
-        ? `/api/equipment/${equipmentId}`
-        : "/api/equipment";
-
-    const method = mode === "edit" ? "PATCH" : "POST";
-
-    const response = await fetch(endpoint, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: formData.name.trim(),
-        patrimony: formData.patrimony.trim(),
-        serialNumber: formData.serialNumber.trim(),
-        category: formData.category,
-        manufacturer: formData.manufacturer,
-        model: formData.model.trim(),
-        quantity: Number(formData.quantity),
-
-        status:
-          formData.status === "Disponível"
-            ? "AVAILABLE"
-            : formData.status === "Em uso"
-              ? "IN_USE"
-              : formData.status === "Em manutenção"
-                ? "MAINTENANCE"
-                : "UNAVAILABLE",
-
-        condition:
-          formData.condition === "Novo"
-            ? "NEW"
-            : formData.condition === "Bom"
-              ? "GOOD"
-              : formData.condition === "Regular"
-                ? "REGULAR"
-                : "DAMAGED",
-
-        client: formData.client,
-        location: formData.location,
-        responsible: formData.responsible,
-        acquisitionDate: formData.acquisitionDate,
-        warrantyEndDate:
-          formData.warrantyEndDate || null,
-        value: formData.value
-          ? parseCurrencyValue(formData.value)
-          : null,
-        supplier: formData.supplier.trim() || null,
-        invoiceNumber:
-          formData.invoiceNumber.trim() || null,
-        notes: formData.notes.trim() || null,
-      }),
-    });
-
-    const result =
-      (await response.json()) as EquipmentApiResponse;
+    const result = (await response.json()) as {
+      success: boolean;
+      message?: string;
+    };
 
     if (!response.ok || !result.success) {
-      if (result.field) {
-        setErrors((current) => ({
-          ...current,
-          [result.field!]:
-            result.message ?? "Campo inválido.",
-        }));
-      }
-
       throw new Error(
         result.message ??
-          "Não foi possível salvar o equipamento.",
+          "As imagens foram enviadas, mas não foram salvas.",
       );
     }
+  }
 
-    const savedEquipmentId =
-      mode === "edit"
-        ? equipmentId
-        : result.data?.id;
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setFeedback(null);
 
-    if (!savedEquipmentId) {
-      throw new Error(
-        "O equipamento foi salvo, mas a API não retornou o ID.",
-      );
-    }
-
-    if (images.length > 0) {
+    if (!validateForm()) {
       setFeedback({
-        type: "success",
-        message: `Equipamento salvo. Enviando ${images.length} ${
-          images.length === 1 ? "imagem" : "imagens"
-        }...`,
+        type: "error",
+        message:
+          "Revise os campos destacados antes de continuar.",
       });
 
-      const uploadedImages =
-        await uploadEquipmentImages(savedEquipmentId);
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
 
-      await saveEquipmentImages(
-        savedEquipmentId,
-        uploadedImages,
-      );
+      return;
     }
 
-    localStorage.removeItem(DRAFT_STORAGE_KEY);
+    if (mode === "edit" && !equipmentId) {
+      setFeedback({
+        type: "error",
+        message:
+          "Não foi possível identificar o equipamento.",
+      });
 
-    setFeedback({
-      type: "success",
-      message:
-        images.length > 0
-          ? "Equipamento e imagens salvos com sucesso."
-          : result.message ??
-            (mode === "edit"
-              ? "Equipamento atualizado com sucesso."
-              : "Equipamento cadastrado com sucesso."),
-    });
+      return;
+    }
 
-    window.setTimeout(() => {
-      router.push(`/inventory/${savedEquipmentId}`);
-      router.refresh();
-    }, 700);
-  } catch (error) {
-    console.error("Erro ao salvar equipamento:", error);
+    setIsSubmitting(true);
 
-    setFeedback({
-      type: "error",
-      message:
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o equipamento.",
-    });
+    try {
+      const endpoint =
+        mode === "edit"
+          ? `/api/equipment/${equipmentId}`
+          : "/api/equipment";
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  } finally {
-    setIsSubmitting(false);
+      const method =
+        mode === "edit" ? "PATCH" : "POST";
+      
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+
+          serialNumber:
+            formData.serialNumber.trim() || null,
+
+          category: formData.category,
+
+          manufacturer:
+            formData.manufacturer.trim() || null,
+
+          model: formData.model.trim() || null,
+
+          quantity: Number(formData.quantity),
+
+          minimumStock:
+            Number(formData.minimumStock),
+
+          invoiceNumber:
+            formData.invoiceNumber.trim() || null,
+
+          status: mapStatusToApi(formData.status),
+
+          condition: mapConditionToApi(
+            formData.condition,
+          ),
+
+          notes: formData.notes.trim() || null,
+        }),
+      });
+
+      const result =
+        (await response.json()) as EquipmentApiResponse;
+
+      if (!response.ok || !result.success) {
+        if (result.field) {
+          setErrors((current) => ({
+            ...current,
+            [result.field!]:
+              result.message ?? "Campo inválido.",
+          }));
+        }
+
+        throw new Error(
+          result.message ??
+            "Não foi possível salvar o equipamento.",
+        );
+      }
+
+      const savedEquipmentId =
+        mode === "edit"
+          ? equipmentId
+          : result.data?.id;
+
+      if (!savedEquipmentId) {
+        throw new Error(
+          "O equipamento foi salvo, mas a API não retornou o ID.",
+        );
+      }
+
+      if (images.length > 0) {
+        setFeedback({
+          type: "success",
+          message: `Equipamento salvo. Enviando ${
+            images.length
+          } ${
+            images.length === 1
+              ? "imagem"
+              : "imagens"
+          }...`,
+        });
+
+        const uploadedImages =
+          await uploadEquipmentImages(
+            savedEquipmentId,
+          );
+
+        await saveEquipmentImages(
+          savedEquipmentId,
+          uploadedImages,
+        );
+      }
+
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+
+      setFeedback({
+        type: "success",
+        message:
+          images.length > 0
+            ? "Equipamento e imagens salvos com sucesso."
+            : result.message ??
+              (mode === "edit"
+                ? "Equipamento atualizado com sucesso."
+                : "Equipamento cadastrado com sucesso."),
+      });
+
+      window.setTimeout(() => {
+        router.push(
+          `/inventory/${savedEquipmentId}`,
+        );
+        router.refresh();
+      }, 600);
+    } catch (error) {
+      console.error(
+        "Erro ao salvar equipamento:",
+        error,
+      );
+
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Não foi possível salvar o equipamento.",
+      });
+
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
-}
+
   function saveDraft() {
     localStorage.setItem(
       DRAFT_STORAGE_KEY,
@@ -625,7 +647,9 @@ async function handleSubmit(
       return;
     }
 
-    images.forEach((image) => URL.revokeObjectURL(image.url));
+    images.forEach((image) => {
+      URL.revokeObjectURL(image.url);
+    });
 
     setFormData(initialFormData);
     setImages([]);
@@ -635,17 +659,31 @@ async function handleSubmit(
     localStorage.removeItem(DRAFT_STORAGE_KEY);
   }
 
-  function handleFiles(files: FileList | File[]) {
+  function handleFiles(
+    files: FileList | File[],
+  ) {
     const selectedFiles = Array.from(files);
 
-    const validFiles = selectedFiles.filter((file) => {
-      const isImage = file.type.startsWith("image/");
-      const isWithinSizeLimit = file.size <= 5 * 1024 * 1024;
+    const validFiles = selectedFiles.filter(
+      (file) => {
+        const isAcceptedType = [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+        ].includes(file.type);
 
-      return isImage && isWithinSizeLimit;
-    });
+        const isWithinSizeLimit =
+          file.size <= MAX_IMAGE_SIZE;
 
-    if (validFiles.length !== selectedFiles.length) {
+        return (
+          isAcceptedType && isWithinSizeLimit
+        );
+      },
+    );
+
+    if (
+      validFiles.length !== selectedFiles.length
+    ) {
       setFeedback({
         type: "error",
         message:
@@ -653,20 +691,39 @@ async function handleSubmit(
       });
     }
 
-    const availableSlots = Math.max(0, 6 - images.length);
-    const filesToAdd = validFiles.slice(0, availableSlots);
+    const availableSlots = Math.max(
+      0,
+      MAX_IMAGES - images.length,
+    );
+
+    const filesToAdd = validFiles.slice(
+      0,
+      availableSlots,
+    );
 
     if (filesToAdd.length === 0) {
+      if (images.length >= MAX_IMAGES) {
+        setFeedback({
+          type: "error",
+          message: `O limite é de ${MAX_IMAGES} imagens por equipamento.`,
+        });
+      }
+
       return;
     }
 
-    const newImages = filesToAdd.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      url: URL.createObjectURL(file),
-    }));
+    const newImages = filesToAdd.map(
+      (file) => ({
+        id: crypto.randomUUID(),
+        file,
+        url: URL.createObjectURL(file),
+      }),
+    );
 
-    setImages((current) => [...current, ...newImages]);
+    setImages((current) => [
+      ...current,
+      ...newImages,
+    ]);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -680,109 +737,88 @@ async function handleSubmit(
       );
 
       if (imageToRemove) {
-        URL.revokeObjectURL(imageToRemove.url);
+        URL.revokeObjectURL(
+          imageToRemove.url,
+        );
       }
 
-      return current.filter((image) => image.id !== id);
+      return current.filter(
+        (image) => image.id !== id,
+      );
     });
   }
+
+  const backHref =
+    mode === "edit" && equipmentId
+      ? `/inventory/${equipmentId}`
+      : "/inventory";
 
   return (
     <form
       onSubmit={handleSubmit}
       noValidate
-      className="space-y-6"
+      className="space-y-4"
     >
-      <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-<Link
-  href={
-    mode === "edit" && equipmentId
-      ? `/inventory/${equipmentId}`
-      : "/inventory"
-  }
-  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
-  aria-label={
-    mode === "edit"
-      ? "Voltar aos detalhes"
-      : "Voltar ao inventário"
-  }
->
-  <ArrowLeft size={18} />
-</Link>
+      <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link
+            href={backHref}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
+            aria-label="Voltar"
+          >
+            <ArrowLeft size={18} />
+          </Link>
 
-            <div>
-              <p className="text-sm font-semibold text-zinc-900">
-                Preenchimento do cadastro
-              </p>
+          <div className="min-w-0">
+            <p className="font-semibold text-zinc-900">
+              {mode === "edit"
+                ? "Editar equipamento"
+                : "Novo equipamento"}
+            </p>
 
-              <p className="mt-0.5 text-xs text-zinc-500">
-                Campos obrigatórios preenchidos:{" "}
-                {completionPercentage}%
-              </p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Preenchimento obrigatório:{" "}
+              {completionPercentage}%
+            </p>
+
+            <div className="mt-2 h-1.5 w-52 max-w-full overflow-hidden rounded-full bg-zinc-100">
+              <div
+                className="h-full rounded-full bg-[#F57B00] transition-all duration-300"
+                style={{
+                  width: `${completionPercentage}%`,
+                }}
+              />
             </div>
-          </div>
-
-          <div className="mt-4 h-2 max-w-md overflow-hidden rounded-full bg-zinc-100">
-            <div
-              className="h-full rounded-full bg-[#F57B00] transition-all duration-300"
-              style={{
-                width: `${completionPercentage}%`,
-              }}
-            />
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-{mode === "create" && (
-  <button
-    type="button"
-    onClick={clearForm}
-    className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-  >
-    <Trash2 size={16} />
-    Limpar
-  </button>
-)}
+        <div className="flex flex-wrap gap-2">
+          {mode === "create" ? (
+            <>
+              <button
+                type="button"
+                onClick={clearForm}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 px-3 text-sm font-semibold text-zinc-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              >
+                <Trash2 size={15} />
+                Limpar
+              </button>
 
-{mode === "create" && (
-  <button
-    type="button"
-    onClick={saveDraft}
-    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-zinc-200 px-5 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#D96D00]"
-  >
-    <Save size={17} />
-    Salvar rascunho
-  </button>
-)}
+              <button
+                type="button"
+                onClick={saveDraft}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#D96D00]"
+              >
+                <Save size={15} />
+                Rascunho
+              </button>
+            </>
+          ) : null}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-{isSubmitting ? (
-  <>
-    <LoaderCircle
-      size={18}
-      className="animate-spin"
-    />
-
-    {mode === "edit"
-      ? "Salvando alterações..."
-      : "Cadastrando..."}
-  </>
-) : (
-  <>
-    <CheckCircle2 size={18} />
-
-    {mode === "edit"
-      ? "Salvar alterações"
-      : "Cadastrar equipamento"}
-  </>
-)}
-          </button>
+          <SubmitButton
+            mode={mode}
+            isSubmitting={isSubmitting}
+          />
         </div>
       </div>
 
@@ -794,53 +830,83 @@ async function handleSubmit(
         />
       ) : null}
 
+      {mode === "edit" && stockInfo ? (
+  <FormSection
+    icon={Package}
+    title="Controle de estoque"
+    description="Resumo das unidades físicas e das alocações em projetos ativos."
+  >
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <StockSummaryCard
+        label="Estoque físico"
+        value={Number(formData.quantity) || 0}
+        description="Total físico informado"
+        className="border-orange-200 bg-orange-50"
+        valueClassName="text-[#D96D00]"
+      />
+
+      <StockSummaryCard
+        label="Em uso"
+        value={stockInfo.inUse}
+        description="Alocado em projetos ativos"
+        className="border-blue-200 bg-blue-50"
+        valueClassName="text-blue-700"
+      />
+
+      <StockSummaryCard
+        label="Disponível"
+        value={projectedAvailableStock}
+        description="Disponível após salvar"
+        className={
+          projectedAvailableStock === 0
+            ? "border-red-200 bg-red-50"
+            : projectedAvailableStock <=
+                Number(formData.minimumStock)
+              ? "border-amber-200 bg-amber-50"
+              : "border-emerald-200 bg-emerald-50"
+        }
+        valueClassName={
+          projectedAvailableStock === 0
+            ? "text-red-700"
+            : projectedAvailableStock <=
+                Number(formData.minimumStock)
+              ? "text-amber-700"
+              : "text-emerald-700"
+        }
+      />
+
+      <StockSummaryCard
+        label="Estoque mínimo"
+        value={
+          Number(formData.minimumStock) || 0
+        }
+        description="Limite para alerta"
+        className="border-violet-200 bg-violet-50"
+        valueClassName="text-violet-700"
+      />
+    </div>
+  </FormSection>
+) : null}
+
       <FormSection
         icon={Package}
-        title="Identificação do equipamento"
-        description="Informações principais utilizadas para identificar o item."
+        title="Informações do item"
+        description="Dados utilizados para organizar e controlar o estoque."
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <FormField
             label="Nome do equipamento"
             required
             error={errors.name}
-            className="xl:col-span-2"
+            className="md:col-span-2"
           >
             <input
               name="name"
               value={formData.name}
               onChange={handleChange}
               placeholder="Ex.: Servidor Dell PowerEdge R760"
-              className={inputClass(Boolean(errors.name))}
-            />
-          </FormField>
-
-          <FormField
-            label="Patrimônio"
-            required
-            error={errors.patrimony}
-          >
-            <input
-              name="patrimony"
-              value={formData.patrimony}
-              onChange={handleChange}
-              placeholder="SCH-000655"
-              className={inputClass(Boolean(errors.patrimony))}
-            />
-          </FormField>
-
-          <FormField
-            label="Número de série"
-            required
-            error={errors.serialNumber}
-          >
-            <input
-              name="serialNumber"
-              value={formData.serialNumber}
-              onChange={handleChange}
-              placeholder="Número de série do fabricante"
               className={inputClass(
-                Boolean(errors.serialNumber),
+                Boolean(errors.name),
               )}
             />
           </FormField>
@@ -854,74 +920,138 @@ async function handleSubmit(
               name="category"
               value={formData.category}
               onChange={handleChange}
-              className={inputClass(Boolean(errors.category))}
+              className={inputClass(
+                Boolean(errors.category),
+              )}
             >
-              <option value="">Selecione</option>
+              <option value="">
+                Selecione
+              </option>
 
               {categories.map((category) => (
-                <option key={category} value={category}>
+                <option
+                  key={category}
+                  value={category}
+                >
                   {category}
                 </option>
               ))}
             </select>
           </FormField>
 
-          <FormField
-            label="Fabricante"
-            required
-            error={errors.manufacturer}
-          >
-            <select
-              name="manufacturer"
-              value={formData.manufacturer}
-              onChange={handleChange}
-              className={inputClass(
-                Boolean(errors.manufacturer),
-              )}
-            >
-              <option value="">Selecione</option>
+<FormField label="Fabricante">
+  <SearchableSelect
+    id="manufacturer"
+    name="manufacturer"
+    value={formData.manufacturer}
+    options={manufacturers}
+    placeholder="Digite ou selecione um fabricante"
+    emptyMessage="Nenhum fabricante encontrado."
+    allowCustomValue
+    onChange={(manufacturer) => {
+      setFormData((current) => ({
+        ...current,
+        manufacturer,
+      }));
 
-              {manufacturers.map((manufacturer) => (
-                <option
-                  key={manufacturer}
-                  value={manufacturer}
-                >
-                  {manufacturer}
-                </option>
-              ))}
-            </select>
-          </FormField>
+      setErrors((current) => ({
+        ...current,
+        manufacturer: undefined,
+      }));
 
-          <FormField
-            label="Modelo"
-            required
-            error={errors.model}
-          >
+      setFeedback(null);
+    }}
+  />
+</FormField>
+
+          <FormField label="Modelo">
             <input
               name="model"
               value={formData.model}
               onChange={handleChange}
               placeholder="Ex.: PowerEdge R760"
-              className={inputClass(Boolean(errors.model))}
+              className={inputClass(false)}
             />
           </FormField>
 
           <FormField
-  label="Quantidade"
+            label="Número de série"
+            error={errors.serialNumber}
+          >
+            <input
+              name="serialNumber"
+              value={formData.serialNumber}
+              onChange={handleChange}
+              placeholder="Opcional"
+              className={inputClass(
+                Boolean(errors.serialNumber),
+              )}
+            />
+          </FormField>
+
+<FormField
+  label="Estoque físico"
   required
   error={errors.quantity}
 >
   <input
     type="number"
     name="quantity"
-    min={1}
+    min={stockInfo?.inUse ?? 0}
+    max={999999}
     step={1}
     value={formData.quantity}
     onChange={handleChange}
-    placeholder="1"
-    className={inputClass(Boolean(errors.quantity))}
+    className={inputClass(
+      Boolean(errors.quantity),
+    )}
   />
+
+  {mode === "edit" && stockInfo ? (
+    <span className="mt-1.5 block text-xs text-zinc-500">
+      Existem {stockInfo.inUse}{" "}
+      {stockInfo.inUse === 1
+        ? "unidade alocada"
+        : "unidades alocadas"}{" "}
+      em projetos ativos.
+    </span>
+  ) : null}
 </FormField>
+
+<FormField
+  label="Estoque mínimo"
+  error={errors.minimumStock}
+>
+  <input
+    type="number"
+    name="minimumStock"
+    min={0}
+    max={999999}
+    step={1}
+    value={formData.minimumStock}
+    onChange={handleChange}
+    className={inputClass(
+      Boolean(errors.minimumStock),
+    )}
+  />
+
+  <span className="mt-1.5 block text-xs text-zinc-500">
+    O sistema emitirá um alerta quando o
+    estoque disponível atingir este valor.
+  </span>
+</FormField>
+
+          <FormField 
+            label="Número da nota fiscal">
+              <input
+              name="invoiceNumber"
+              value={formData.invoiceNumber}
+              onChange={handleChange}
+              placeholder="Ex.: NF-2026-004581"
+              maxLength={100}
+              className={inputClass(false)}
+              />
+            </FormField>
 
           <FormField label="Status">
             <select
@@ -930,10 +1060,11 @@ async function handleSubmit(
               onChange={handleChange}
               className={inputClass(false)}
             >
-              <option value="Disponível">Disponível</option>
-              <option value="Em uso">Em uso</option>
-              <option value="Em manutenção">
-                Em manutenção
+              <option value="Disponível">
+                Disponível
+              </option>
+              <option value="Em uso">
+                Em uso
               </option>
               <option value="Indisponível">
                 Indisponível
@@ -948,179 +1079,21 @@ async function handleSubmit(
               onChange={handleChange}
               className={inputClass(false)}
             >
-              <option value="Novo">Novo</option>
-              <option value="Bom">Bom</option>
-              <option value="Regular">Regular</option>
-              <option value="Danificado">Danificado</option>
+              <option value="Novo">
+                Novo
+              </option>
+              <option value="Danificado">
+                Danificado
+              </option>
             </select>
-          </FormField>
-        </div>
-      </FormSection>
-
-      <FormSection
-        icon={MapPin}
-        title="Alocação e responsabilidade"
-        description="Defina onde o equipamento está e quem responde por ele."
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <FormField
-            label="Cliente"
-            required
-            error={errors.client}
-          >
-            <select
-              name="client"
-              value={formData.client}
-              onChange={handleChange}
-              className={inputClass(Boolean(errors.client))}
-            >
-              <option value="">Selecione</option>
-
-              {clients.map((client) => (
-                <option key={client} value={client}>
-                  {client}
-                </option>
-              ))}
-            </select>
-          </FormField>
-
-          <FormField
-            label="Localização"
-            required
-            error={errors.location}
-          >
-            <select
-              name="location"
-              value={formData.location}
-              onChange={handleChange}
-              className={inputClass(Boolean(errors.location))}
-            >
-              <option value="">Selecione</option>
-
-              {locations.map((location) => (
-                <option key={location} value={location}>
-                  {location}
-                </option>
-              ))}
-            </select>
-          </FormField>
-
-          <FormField
-            label="Responsável"
-            required
-            error={errors.responsible}
-          >
-            <select
-              name="responsible"
-              value={formData.responsible}
-              onChange={handleChange}
-              className={inputClass(
-                Boolean(errors.responsible),
-              )}
-            >
-              <option value="">Selecione</option>
-
-              {responsibles.map((responsible) => (
-                <option
-                  key={responsible}
-                  value={responsible}
-                >
-                  {responsible}
-                </option>
-              ))}
-            </select>
-          </FormField>
-        </div>
-      </FormSection>
-
-      <FormSection
-        icon={CalendarDays}
-        title="Aquisição e garantia"
-        description="Informações financeiras, fiscais e de garantia."
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <FormField
-            label="Data de aquisição"
-            required
-            error={errors.acquisitionDate}
-          >
-            <input
-              type="date"
-              name="acquisitionDate"
-              value={formData.acquisitionDate}
-              onChange={handleChange}
-              className={inputClass(
-                Boolean(errors.acquisitionDate),
-              )}
-            />
-          </FormField>
-
-          <FormField
-            label="Fim da garantia"
-            error={errors.warrantyEndDate}
-          >
-            <input
-              type="date"
-              name="warrantyEndDate"
-              value={formData.warrantyEndDate}
-              onChange={handleChange}
-              className={inputClass(
-                Boolean(errors.warrantyEndDate),
-              )}
-            />
-          </FormField>
-
-          <FormField label="Valor de aquisição" error={errors.value}>
-            <input
-              name="value"
-              inputMode="decimal"
-              value={formData.value}
-              onChange={(event) => {
-                const formattedValue = formatCurrencyInput(
-                  event.target.value,
-                );
-
-                setFormData((current) => ({
-                  ...current,
-                  value: formattedValue,
-                }));
-
-                setErrors((current) => ({
-                  ...current,
-                  value: undefined,
-                }));
-              }}
-              placeholder="R$ 0,00"
-              className={inputClass(Boolean(errors.value))}
-            />
-          </FormField>
-
-          <FormField label="Fornecedor">
-            <input
-              name="supplier"
-              value={formData.supplier}
-              onChange={handleChange}
-              placeholder="Nome do fornecedor"
-              className={inputClass(false)}
-            />
-          </FormField>
-
-          <FormField label="Número da nota fiscal">
-            <input
-              name="invoiceNumber"
-              value={formData.invoiceNumber}
-              onChange={handleChange}
-              placeholder="Ex.: NF-2026-004581"
-              className={inputClass(false)}
-            />
           </FormField>
         </div>
       </FormSection>
 
       <FormSection
         icon={ImagePlus}
-        title="Imagens do equipamento"
-        description="Adicione até seis imagens em PNG, JPG ou WEBP."
+        title="Imagens"
+        description={`Adicione até ${MAX_IMAGES} imagens em PNG, JPG ou WEBP.`}
       >
         <input
           ref={fileInputRef}
@@ -1130,14 +1103,18 @@ async function handleSubmit(
           className="hidden"
           onChange={(event) => {
             if (event.target.files) {
-              handleFiles(event.target.files);
+              handleFiles(
+                event.target.files,
+              );
             }
           }}
         />
 
         <button
           type="button"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() =>
+            fileInputRef.current?.click()
+          }
           onDragEnter={(event) => {
             event.preventDefault();
             setIsDragging(true);
@@ -1153,30 +1130,33 @@ async function handleSubmit(
           onDrop={(event) => {
             event.preventDefault();
             setIsDragging(false);
-            handleFiles(event.dataTransfer.files);
+            handleFiles(
+              event.dataTransfer.files,
+            );
           }}
           className={[
-            "flex min-h-44 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition",
+            "flex min-h-32 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 py-6 text-center transition",
             isDragging
               ? "border-[#F57B00] bg-orange-50"
               : "border-zinc-300 bg-zinc-50 hover:border-orange-300 hover:bg-orange-50/50",
           ].join(" ")}
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-100 text-[#F57B00]">
-            <UploadCloud size={23} />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-[#F57B00]">
+            <UploadCloud size={20} />
           </div>
 
-          <p className="mt-4 text-sm font-semibold text-zinc-800">
-            Clique ou arraste imagens para esta área
+          <p className="mt-3 text-sm font-semibold text-zinc-800">
+            Clique ou arraste imagens
           </p>
 
           <p className="mt-1 text-xs text-zinc-500">
-            Máximo de 5 MB por arquivo · {images.length}/6 imagens
+            Até 5 MB por arquivo ·{" "}
+            {images.length}/{MAX_IMAGES}
           </p>
         </button>
 
         {images.length > 0 ? (
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {images.map((image, index) => (
               <article
                 key={image.id}
@@ -1185,7 +1165,9 @@ async function handleSubmit(
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={image.url}
-                  alt={`Imagem ${index + 1} do equipamento`}
+                  alt={`Imagem ${
+                    index + 1
+                  } do equipamento`}
                   className="h-full w-full object-cover"
                 />
 
@@ -1199,7 +1181,9 @@ async function handleSubmit(
 
                 <button
                   type="button"
-                  onClick={() => removeImage(image.id)}
+                  onClick={() =>
+                    removeImage(image.id)
+                  }
                   className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white text-red-600 opacity-0 shadow transition hover:bg-red-50 group-hover:opacity-100"
                   aria-label={`Remover ${image.file.name}`}
                 >
@@ -1214,17 +1198,19 @@ async function handleSubmit(
       <FormSection
         icon={FileText}
         title="Observações"
-        description="Registre detalhes técnicos ou administrativos importantes."
+        description="Registre detalhes técnicos ou informações relevantes."
       >
         <FormField label="Observações adicionais">
           <textarea
             name="notes"
             value={formData.notes}
             onChange={handleChange}
-            rows={5}
+            rows={4}
             maxLength={1000}
-            placeholder="Descreva configurações, acessórios, avarias, particularidades ou outras informações relevantes."
-            className={`${inputClass(false)} min-h-32 resize-y py-3`}
+            placeholder="Descreva configurações, acessórios, avarias ou particularidades."
+            className={`${inputClass(
+              false,
+            )} min-h-28 resize-y py-3`}
           />
 
           <div className="mt-1 text-right text-xs text-zinc-400">
@@ -1233,59 +1219,105 @@ async function handleSubmit(
         </FormField>
       </FormSection>
 
-      <div className="flex flex-col-reverse gap-3 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-<Link
-  href={
-    mode === "edit" && equipmentId
-      ? `/inventory/${equipmentId}`
-      : "/inventory"
-  }
->
-          <ArrowLeft size={17} />
+         <div className="flex flex-col-reverse gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <Link
+          href={backHref}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
+        >
+          <ArrowLeft size={16} />
           Cancelar
         </Link>
 
         <div className="flex flex-col gap-2 sm:flex-row">
-{mode === "create" && (
-  <button
-    type="button"
-    onClick={saveDraft}
-    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-zinc-200 px-5 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#D96D00]"
-  >
-    <Save size={17} />
-    Salvar rascunho
-  </button>
-)}
+          {mode === "create" ? (
+            <button
+              type="button"
+              onClick={saveDraft}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#D96D00]"
+            >
+              <Save size={16} />
+              Salvar rascunho
+            </button>
+          ) : null}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-6 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSubmitting ? (
-  <>
-    <LoaderCircle
-      size={17}
-      className="animate-spin"
-    />
-
-    {mode === "edit"
-      ? "Salvando alterações..."
-      : "Cadastrando..."}
-  </>
-) : (
-  <>
-    <Package size={17} />
-
-    {mode === "edit"
-      ? "Salvar alterações"
-      : "Cadastrar equipamento"}
-  </>
-)}
-          </button>
+          <SubmitButton
+            mode={mode}
+            isSubmitting={isSubmitting}
+          />
         </div>
       </div>
     </form>
+  );
+}
+
+function StockSummaryCard({
+  label,
+  value,
+  description,
+  className,
+  valueClassName,
+}: {
+  label: string;
+  value: number;
+  description: string;
+  className: string;
+  valueClassName: string;
+}) {
+  return (
+    <article
+      className={`rounded-xl border p-4 ${className}`}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+      </p>
+
+      <p
+        className={`mt-2 text-2xl font-bold ${valueClassName}`}
+      >
+        {value}
+      </p>
+
+      <p className="mt-1 text-xs text-zinc-500">
+        {description}
+      </p>
+    </article>
+  );
+}
+
+function SubmitButton({
+  mode,
+  isSubmitting,
+}: {
+  mode: "create" | "edit";
+  isSubmitting: boolean;
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={isSubmitting}
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {isSubmitting ? (
+        <>
+          <LoaderCircle
+            size={17}
+            className="animate-spin"
+          />
+
+          {mode === "edit"
+            ? "Salvando..."
+            : "Cadastrando..."}
+        </>
+      ) : (
+        <>
+          <CheckCircle2 size={17} />
+
+          {mode === "edit"
+            ? "Salvar alterações"
+            : "Cadastrar equipamento"}
+        </>
+      )}
+    </button>
   );
 }
 
@@ -1298,27 +1330,27 @@ function FormSection({
   icon: typeof Package;
   title: string;
   description: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <header className="flex items-start gap-3 border-b border-zinc-200 px-5 py-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-          <Icon size={19} />
+      <header className="flex items-start gap-3 border-b border-zinc-200 px-4 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-[#F57B00]">
+          <Icon size={18} />
         </div>
 
         <div>
-          <h2 className="text-base font-semibold text-zinc-900">
+          <h2 className="text-sm font-semibold text-zinc-900">
             {title}
           </h2>
 
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-0.5 text-xs text-zinc-500">
             {description}
           </p>
         </div>
       </header>
 
-      <div className="p-5">{children}</div>
+      <div className="p-4">{children}</div>
     </section>
   );
 }
@@ -1334,7 +1366,7 @@ function FormField({
   required?: boolean;
   error?: string;
   className?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label className={`block ${className}`}>
@@ -1342,7 +1374,9 @@ function FormField({
         {label}
 
         {required ? (
-          <span className="ml-1 text-red-500">*</span>
+          <span className="ml-1 text-red-500">
+            *
+          </span>
         ) : null}
       </span>
 
@@ -1403,39 +1437,40 @@ function FeedbackMessage({
 
 function inputClass(hasError: boolean) {
   return [
-    "h-11 w-full rounded-lg border bg-white px-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400",
+    "h-10 w-full rounded-lg border bg-white px-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400",
     hasError
       ? "border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-500/10"
       : "border-zinc-200 focus:border-[#F57B00] focus:ring-2 focus:ring-[#F57B00]/15",
   ].join(" ");
 }
 
-function formatCurrencyInput(value: string) {
-  const digits = value.replace(/\D/g, "");
+function mapStatusToApi(
+  status: EquipmentStatus,
+):
+  | "AVAILABLE"
+  | "IN_USE"
+  | "MAINTENANCE"
+  | "UNAVAILABLE" {
+  switch (status) {
+    case "Disponível":
+      return "AVAILABLE";
 
-  if (!digits) {
-    return "";
+    case "Em uso":
+      return "IN_USE";
+
+    case "Indisponível":
+      return "UNAVAILABLE";
   }
-
-  const amount = Number(digits) / 100;
-
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(amount);
 }
 
-function parseCurrencyValue(value: string) {
-  if (!value) {
-    return 0;
+function mapConditionToApi(
+  condition: EquipmentCondition,
+): "NEW" | "GOOD" | "REGULAR" | "DAMAGED" {
+  switch (condition) {
+    case "Novo":
+      return "NEW";
+
+    case "Danificado":
+      return "DAMAGED";
   }
-
-  const normalized = value
-    .replace(/[^\d,.-]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-
-  const parsed = Number(normalized);
-
-  return Number.isFinite(parsed) ? parsed : 0;
 }

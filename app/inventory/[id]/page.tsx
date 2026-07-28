@@ -2,22 +2,24 @@ import {
   EquipmentCondition,
   EquipmentStatus,
 } from "@/generated/prisma/client";
+import { DeleteEquipmentButton } from "@/components/inventory/DeleteEquipmentButton";
 import { prisma } from "@/lib/prisma";
 import {
   ArrowLeft,
   Boxes,
   CalendarDays,
-  CircleDollarSign,
   FileText,
-  MapPin,
+  Hash,
+  Images,
   PackageCheck,
   ReceiptText,
   ShieldCheck,
-  UserRound,
+  Tags,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DeleteEquipmentButton } from "@/components/inventory/DeleteEquipmentButton";
+import type { ReactNode } from "react";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -30,71 +32,125 @@ type EquipmentDetailsPageProps = {
 const statusLabels: Record<EquipmentStatus, string> = {
   AVAILABLE: "Disponível",
   IN_USE: "Em uso",
-  MAINTENANCE: "Em manutenção",
   UNAVAILABLE: "Indisponível",
 };
 
-const conditionLabels: Record<EquipmentCondition, string> = {
+const conditionLabels: Record<
+  EquipmentCondition,
+  string
+> = {
   NEW: "Novo",
-  GOOD: "Bom",
-  REGULAR: "Regular",
   DAMAGED: "Danificado",
 };
 
-const statusStyles: Record<EquipmentStatus, string> = {
+const statusStyles: Record<
+  EquipmentStatus,
+  string
+> = {
   AVAILABLE:
     "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  IN_USE: "bg-blue-50 text-blue-700 ring-blue-600/20",
-  MAINTENANCE:
-    "bg-amber-50 text-amber-700 ring-amber-600/20",
-  UNAVAILABLE: "bg-red-50 text-red-700 ring-red-600/20",
+  IN_USE:
+    "bg-blue-50 text-blue-700 ring-blue-600/20",
+    UNAVAILABLE:
+    "bg-red-50 text-red-700 ring-red-600/20",
 };
 
-const statusDotStyles: Record<EquipmentStatus, string> = {
+const statusDotStyles: Record<
+  EquipmentStatus,
+  string
+> = {
   AVAILABLE: "bg-emerald-500",
   IN_USE: "bg-blue-500",
-  MAINTENANCE: "bg-amber-500",
   UNAVAILABLE: "bg-red-500",
 };
 
-const currencyFormatter = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-});
+const conditionStyles: Record<
+  EquipmentCondition,
+  string
+> = {
+  NEW:
+    "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+    DAMAGED:
+    "bg-red-50 text-red-700 ring-red-600/20",
+};
 
-const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-const dateTimeFormatter = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  timeZone: "America/Sao_Paulo",
-});
+const dateTimeFormatter = new Intl.DateTimeFormat(
+  "pt-BR",
+  {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  },
+);
 
 export default async function EquipmentDetailsPage({
   params,
 }: EquipmentDetailsPageProps) {
   const { id } = await params;
 
-  const equipment = await prisma.equipment.findUnique({
-    where: {
-      id,
+ const equipment =
+  await prisma.equipment.findUnique({
+    where: { id },
+include: {
+  images: {
+    orderBy: {
+      position: "asc",
     },
+  },
+  projects: {
+    where: {
+      project: {
+        status: {
+          in: ["PLANNING", "IN_PROGRESS"],
+        },
+      },
+    },
+  },
+},
   });
 
   if (!equipment) {
     notFound();
   }
 
-  const numericValue =
-    equipment.value === null ? null : Number(equipment.value);
+  const manufacturerAndModel = [
+    equipment.manufacturer,
+    equipment.model,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+    
+const physicalStock =
+  equipment.quantity;
+
+const inUse = equipment.projects.reduce(
+  (total, item) => total + item.quantity,
+  0,
+);
+
+const availableStock = Math.max(
+  physicalStock - inUse,
+  0,
+);
+
+const quantityLabel =
+  `${physicalStock} ${
+    physicalStock === 1
+      ? "unidade"
+      : "unidades"
+  }`;
+const isOutOfStock =
+  availableStock === 0;
+
+  const isLowStock =
+    availableStock > 0 &&
+    equipment.minimumStock > 0 &&
+    availableStock <=
+      equipment.minimumStock;
 
   return (
     <div className="space-y-6">
@@ -110,8 +166,17 @@ export default async function EquipmentDetailsPage({
             </Link>
 
             <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-                <Boxes size={23} />
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50 text-[#F57B00]">
+                {equipment.images[0]?.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={equipment.images[0].url}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <Boxes size={23} />
+                )}
               </div>
 
               <div className="min-w-0">
@@ -120,97 +185,134 @@ export default async function EquipmentDetailsPage({
                     {equipment.name}
                   </h1>
 
-                  <StatusBadge status={equipment.status} />
+{equipment.status !== "AVAILABLE" && (
+  <StatusBadge status={equipment.status} />
+)}
                 </div>
 
                 <p className="mt-1 text-sm text-zinc-500">
-                  {equipment.manufacturer} · {equipment.model}
+                  {manufacturerAndModel ||
+                    "Sem fabricante ou modelo"}
                 </p>
 
                 <p className="mt-2 text-xs font-medium text-zinc-400">
-                  Patrimônio {equipment.patrimony}
+                  {equipment.serialNumber
+                    ? `Número de série: ${equipment.serialNumber}`
+                    : "Sem número de série"}
                 </p>
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/inventory/${equipment.id}/edit`}
+              className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+            >
+              Editar equipamento
+            </Link>
 
-
-<div className="flex flex-wrap gap-2">
-
-  <Link
-    href={`/inventory/${equipment.id}/edit`}
-    className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-  >
-    Editar equipamento
-  </Link>
-
-  <DeleteEquipmentButton
-    equipmentId={equipment.id}
-    equipmentName={equipment.name}
-    patrimony={equipment.patrimony}
-  />
-</div>
+            <DeleteEquipmentButton
+              equipmentId={equipment.id}
+              equipmentName={equipment.name}
+            />
           </div>
         </div>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          icon={PackageCheck}
-          label="Status"
-          value={statusLabels[equipment.status]}
-          iconClassName="bg-emerald-50 text-emerald-700"
-        />
+<SummaryCard
+  icon={Boxes}
+  label="Disponível"
+  value={`${availableStock} ${
+    availableStock === 1 ? "unidade" : "unidades"
+  }`}
+  iconClassName="bg-emerald-50 text-emerald-700"
+/>
 
-        <SummaryCard
-          icon={ShieldCheck}
-          label="Condição"
-          value={conditionLabels[equipment.condition]}
-          iconClassName="bg-blue-50 text-blue-700"
-        />
+<SummaryCard
+  icon={PackageCheck}
+  label="Em uso"
+  value={`${inUse} ${
+    inUse === 1 ? "unidade" : "unidades"
+  }`}
+  iconClassName="bg-blue-50 text-blue-700"
+/>
 
-        <SummaryCard
-          icon={MapPin}
-          label="Localização"
-          value={equipment.location}
-          iconClassName="bg-orange-50 text-[#F57B00]"
-        />
+<SummaryCard
+  icon={Boxes}
+  label="Estoque físico"
+  value={quantityLabel}
+  iconClassName="bg-orange-50 text-[#F57B00]"
+/>
 
-        <SummaryCard
-          icon={CircleDollarSign}
-          label="Valor de aquisição"
-          value={
-            numericValue === null
-              ? "Não informado"
-              : currencyFormatter.format(numericValue)
-          }
-          iconClassName="bg-violet-50 text-violet-700"
-        />
+<SummaryCard
+  icon={Tags}
+  label="Categoria"
+  value={equipment.category}
+  iconClassName="bg-violet-50 text-violet-700"
+/>
       </section>
+
+      {isOutOfStock ? (
+<StockAlert
+  type="danger"
+  message="Não existem unidades disponíveis para novos projetos."
+/>
+      ) : isLowStock ? (
+<StockAlert
+  type="warning"
+  message={`Existem apenas ${availableStock} ${
+    availableStock === 1 ? "unidade disponível" : "unidades disponíveis"
+  }. O estoque mínimo configurado é ${equipment.minimumStock}.`}
+/>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
+          {equipment.images.length > 0 ? (
+            <DetailsSection
+              icon={Images}
+              title="Imagens"
+              description="Fotos cadastradas para este equipamento."
+            >
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {equipment.images.map(
+                  (image, index) => (
+                    <article
+                      key={image.id}
+                      className="relative aspect-square overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={image.url}
+                        alt={`Imagem ${
+                          index + 1
+                        } de ${equipment.name}`}
+                        className="h-full w-full object-cover"
+                      />
+
+                      {index === 0 ? (
+                        <span className="absolute left-2 top-2 rounded-full bg-[#F57B00] px-2 py-1 text-[10px] font-bold text-white shadow-sm">
+                          Principal
+                        </span>
+                      ) : null}
+                    </article>
+                  ),
+                )}
+              </div>
+            </DetailsSection>
+          ) : null}
+
           <DetailsSection
             icon={Boxes}
-            title="Identificação do equipamento"
-            description="Dados utilizados para identificar o item no inventário."
+            title="Informações do equipamento"
+            description="Dados principais do item cadastrado no inventário."
           >
             <DetailsGrid>
               <DetailItem
                 label="Nome do equipamento"
                 value={equipment.name}
-              />
-
-              <DetailItem
-                label="Patrimônio"
-                value={equipment.patrimony}
-              />
-
-              <DetailItem
-                label="Número de série"
-                value={equipment.serialNumber}
               />
 
               <DetailItem
@@ -220,101 +322,62 @@ export default async function EquipmentDetailsPage({
 
               <DetailItem
                 label="Fabricante"
-                value={equipment.manufacturer}
+                value={
+                  equipment.manufacturer ||
+                  "Não informado"
+                }
               />
 
               <DetailItem
                 label="Modelo"
-                value={equipment.model}
+                value={
+                  equipment.model ||
+                  "Não informado"
+                }
               />
-
-               <DetailItem
-    label="Quantidade"
-    value={`${equipment.quantity} ${
-      equipment.quantity === 1
-        ? "unidade"
-        : "unidades"
-    }`}
-  />
-
 
               <DetailItem
-                label="Status"
-                value={statusLabels[equipment.status]}
+                label="Número de série"
+                value={
+                  equipment.serialNumber ||
+                  "Não informado"
+                }
               />
+
+<DetailItem
+  label="Estoque físico"
+  value={`${physicalStock} unidades`}
+/>
+
+<DetailItem
+  label="Em uso"
+  value={`${inUse} unidades`}
+/>
+
+<DetailItem
+  label="Disponível"
+  value={`${availableStock} unidades`}
+/>
+
+<DetailItem
+  label="Estoque mínimo"
+  value={`${equipment.minimumStock} unidades`}
+/>
 
               <DetailItem
                 label="Condição"
-                value={conditionLabels[equipment.condition]}
-              />
-            </DetailsGrid>
-          </DetailsSection>
-
-          <DetailsSection
-            icon={MapPin}
-            title="Alocação e responsabilidade"
-            description="Cliente, localização e pessoa responsável pelo equipamento."
-          >
-            <DetailsGrid>
-              <DetailItem
-                label="Cliente"
-                value={equipment.client}
-              />
-
-              <DetailItem
-                label="Localização"
-                value={equipment.location}
-              />
-
-              <DetailItem
-                label="Responsável"
-                value={equipment.responsible}
-              />
-            </DetailsGrid>
-          </DetailsSection>
-
-          <DetailsSection
-            icon={CalendarDays}
-            title="Aquisição e garantia"
-            description="Informações financeiras, fiscais e de garantia."
-          >
-            <DetailsGrid>
-              <DetailItem
-                label="Data de aquisição"
-                value={dateFormatter.format(
-                  equipment.acquisitionDate,
-                )}
-              />
-
-              <DetailItem
-                label="Fim da garantia"
                 value={
-                  equipment.warrantyEndDate
-                    ? dateFormatter.format(
-                        equipment.warrantyEndDate,
-                      )
-                    : "Não informado"
+                  conditionLabels[
+                    equipment.condition
+                  ]
                 }
-              />
-
-              <DetailItem
-                label="Valor de aquisição"
-                value={
-                  numericValue === null
-                    ? "Não informado"
-                    : currencyFormatter.format(numericValue)
-                }
-              />
-
-              <DetailItem
-                label="Fornecedor"
-                value={equipment.supplier ?? "Não informado"}
               />
 
               <DetailItem
                 label="Número da nota fiscal"
                 value={
-                  equipment.invoiceNumber ?? "Não informado"
+                  equipment.invoiceNumber ||
+                  "Não informado"
                 }
               />
             </DetailsGrid>
@@ -346,7 +409,7 @@ export default async function EquipmentDetailsPage({
                   </h2>
 
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    Informações administrativas
+                    Informações do registro
                   </p>
                 </div>
               </div>
@@ -378,20 +441,41 @@ export default async function EquipmentDetailsPage({
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
-                <UserRound size={19} />
+                <CalendarDays size={19} />
               </div>
 
               <div>
                 <p className="text-xs font-medium text-zinc-500">
-                  Responsável atual
+                  Última atualização
                 </p>
 
                 <p className="mt-1 font-semibold text-zinc-900">
-                  {equipment.responsible}
+                  {dateTimeFormatter.format(
+                    equipment.updatedAt,
+                  )}
                 </p>
 
                 <p className="mt-1 text-sm text-zinc-500">
-                  {equipment.client}
+                  Dados atualizados no sistema
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
+                <Hash size={19} />
+              </div>
+
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-zinc-500">
+                  Nota fiscal
+                </p>
+
+                <p className="mt-1 break-words font-semibold text-zinc-900">
+                  {equipment.invoiceNumber ||
+                    "Não informada"}
                 </p>
               </div>
             </div>
@@ -454,6 +538,28 @@ function SummaryCard({
   );
 }
 
+function StockAlert({
+  type,
+  message,
+}: {
+  type: "warning" | "danger";
+  message: string;
+}) {
+  const styles =
+    type === "danger"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : "border-amber-200 bg-amber-50 text-amber-700";
+
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold ${styles}`}
+    >
+      <Boxes size={18} />
+      {message}
+    </div>
+  );
+}
+
 function DetailsSection({
   icon: Icon,
   title,
@@ -463,7 +569,7 @@ function DetailsSection({
   icon: typeof Boxes;
   title: string;
   description: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
@@ -491,7 +597,7 @@ function DetailsSection({
 function DetailsGrid({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -538,7 +644,9 @@ function SidebarDetail({
       <dd
         className={[
           "mt-1 break-all text-sm font-semibold text-zinc-800",
-          monospace ? "font-mono text-xs" : "",
+          monospace
+            ? "font-mono text-xs"
+            : "",
         ].join(" ")}
       >
         {value}

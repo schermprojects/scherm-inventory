@@ -2,21 +2,137 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 
-export const proxy = auth((request) => {
-  const { pathname } = request.nextUrl;
-  const isAuthenticated = Boolean(request.auth?.user);
+type Role =
+  | "ADMIN"
+  | "COMMERCIAL"
+  | "VIEWER";
 
-  const isLoginPage = pathname === "/login";
+type AuthenticatedUser = {
+  id?: string;
+  role?: Role;
+};
 
-  if (!isAuthenticated && !isLoginPage) {
-    const loginUrl = new URL("/login", request.url);
+const protectedPrefixes = [
+  "/dashboard",
+  "/inventory",
+  "/projects",
+  "/purchases",
+  "/reports",
+  "/users",
+  "/account",
+] as const;
 
-    return NextResponse.redirect(loginUrl);
+function matchesPrefix(
+  pathname: string,
+  prefix: string,
+): boolean {
+  return (
+    pathname === prefix ||
+    pathname.startsWith(`${prefix}/`)
+  );
+}
+
+function isProtectedRoute(
+  pathname: string,
+): boolean {
+  return protectedPrefixes.some(
+    (prefix) =>
+      matchesPrefix(pathname, prefix),
+  );
+}
+
+function isViewerBlockedRoute(
+  pathname: string,
+): boolean {
+  if (
+    matchesPrefix(pathname, "/projects") ||
+    matchesPrefix(pathname, "/purchases") ||
+    matchesPrefix(pathname, "/users")
+  ) {
+    return true;
   }
 
-  if (isAuthenticated && isLoginPage) {
+  if (pathname === "/inventory/new") {
+    return true;
+  }
+
+  return /^\/inventory\/[^/]+\/edit$/.test(
+    pathname,
+  );
+}
+
+function isCommercialBlockedRoute(
+  pathname: string,
+): boolean {
+  return matchesPrefix(
+    pathname,
+    "/users",
+  );
+}
+
+/*
+ * Não tipar o parâmetro como NextRequest.
+ * O auth() fornece o tipo que inclui request.auth.
+ */
+export default auth((request) => {
+  const pathname =
+    request.nextUrl.pathname;
+
+  const user = request.auth
+    ?.user as AuthenticatedUser | undefined;
+
+  if (
+    isProtectedRoute(pathname) &&
+    !user?.id
+  ) {
+    const loginUrl = new URL(
+      "/login",
+      request.url,
+    );
+
+    loginUrl.searchParams.set(
+      "callbackUrl",
+      pathname,
+    );
+
     return NextResponse.redirect(
-      new URL("/inventory", request.url),
+      loginUrl,
+    );
+  }
+
+  if (
+    pathname === "/login" &&
+    user?.id
+  ) {
+    return NextResponse.redirect(
+      new URL(
+        "/dashboard",
+        request.url,
+      ),
+    );
+  }
+
+  if (
+    user?.role === "VIEWER" &&
+    isViewerBlockedRoute(pathname)
+  ) {
+    return NextResponse.redirect(
+      new URL(
+        "/dashboard",
+        request.url,
+      ),
+    );
+  }
+
+  if (
+    user?.role === "COMMERCIAL" &&
+    isCommercialBlockedRoute(pathname)
+  ) {
+    return NextResponse.redirect(
+      new URL(
+        "/dashboard",
+        request.url,
+      ),
     );
   }
 
@@ -25,6 +141,6 @@ export const proxy = auth((request) => {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api/auth|api|_next/static|_next/image|favicon.ico|.*\\..*).*)",
   ],
 };

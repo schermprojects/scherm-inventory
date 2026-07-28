@@ -1,28 +1,17 @@
-import {
-  handleUpload,
-  type HandleUploadBody,
-} from "@vercel/blob/client";
-
 import { auth } from "@/auth";
+import { handleUpload } from "@vercel/blob/client";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
-
-const ALLOWED_CONTENT_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
 
 export async function POST(request: Request) {
   const session = await auth();
 
   if (!session?.user) {
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
-        message: "Usuário não autenticado.",
+        message: "Não autenticado.",
       },
       {
         status: 401,
@@ -31,40 +20,56 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as HandleUploadBody;
+    const body = await request.json();
 
-    const result = await handleUpload({
-      request,
+    const response = await handleUpload({
       body,
+      request,
 
       onBeforeGenerateToken: async (pathname) => {
         if (!pathname.startsWith("equipment/")) {
-          throw new Error("Caminho de upload inválido.");
+          throw new Error(
+            "O caminho informado para o upload é inválido.",
+          );
         }
 
         return {
-          allowedContentTypes: ALLOWED_CONTENT_TYPES,
-          maximumSizeInBytes: MAX_FILE_SIZE,
-          addRandomSuffix: true,
+          allowedContentTypes: [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+          ],
+
+          maximumSizeInBytes: 5 * 1024 * 1024,
+
+          addRandomSuffix: false,
         };
       },
 
-      onUploadCompleted: async ({ blob }) => {
-        console.log("Upload concluído:", blob.pathname);
+      onUploadCompleted: async ({
+        blob,
+      }) => {
+        console.log(
+          "Upload concluído no Vercel Blob:",
+          blob.pathname,
+        );
       },
     });
 
-    return Response.json(result);
+    return NextResponse.json(response);
   } catch (error) {
-    console.error("Erro no upload:", error);
+    console.error(
+      "Erro ao gerar token do Vercel Blob:",
+      error,
+    );
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         message:
           error instanceof Error
             ? error.message
-            : "Não foi possível autorizar o upload.",
+            : "Não foi possível autorizar o envio da imagem.",
       },
       {
         status: 400,

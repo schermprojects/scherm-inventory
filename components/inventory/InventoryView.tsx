@@ -1,21 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   Boxes,
   ChevronLeft,
   ChevronRight,
   Download,
-  Eye,
   Filter,
   Grid2X2,
   List,
+  Package,
   Plus,
   Search,
   SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
+  type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useState,
@@ -47,58 +52,71 @@ type ApiEquipmentCondition =
   | "REGULAR"
   | "DAMAGED";
 
+type EquipmentImage = {
+  id?: string;
+  url: string;
+  pathname?: string;
+  position?: number;
+};
+
 type ApiEquipment = {
   id: string;
-  patrimony: string;
   name: string;
-  manufacturer: string;
-  model: string;
+  manufacturer: string | null;
+  model: string | null;
+
   quantity: number;
-  serialNumber: string;
+
+  physicalStock: number;
+  inUse: number;
+  availableStock: number;
+  shortage: number;
+
+  minimumStock: number;
+
+  serialNumber: string | null;
   category: string;
+
   status: ApiEquipmentStatus;
   condition: ApiEquipmentCondition;
-  client: string;
-  location: string;
-  responsible: string;
-  acquisitionDate: string;
-  warrantyEndDate: string | null;
-  value: string | number | null;
-  supplier: string | null;
+
   invoiceNumber: string | null;
   notes: string | null;
+
+  images?: EquipmentImage[];
+
   createdAt: string;
   updatedAt: string;
 };
 
 type Equipment = {
   id: string;
-  patrimony: string;
   name: string;
-  manufacturer: string;
-  model: string;
-  quantity: number;
-  serialNumber: string;
+  manufacturer: string | null;
+  model: string | null;
+quantity: number;
+
+physicalStock: number;
+inUse: number;
+availableStock: number;
+shortage: number;
+
+minimumStock: number;
+  serialNumber: string | null;
   category: string;
   status: EquipmentStatus;
   condition: EquipmentCondition;
-  client: string;
-  location: string;
-  responsible: string;
-  acquisitionDate: string;
-  warrantyEndDate: string | null;
-  value: number;
-  supplier: string | null;
   invoiceNumber: string | null;
   notes: string | null;
+  images: EquipmentImage[];
   createdAt: string;
   updatedAt: string;
 };
 
-type EquipmentApiResponse<T> = {
+type EquipmentApiResponse = {
   success: boolean;
   message?: string;
-  data?: T[];
+  data?: ApiEquipment[];
 };
 
 const PAGE_SIZE = 8;
@@ -106,10 +124,12 @@ const PAGE_SIZE = 8;
 const statusStyles: Record<EquipmentStatus, string> = {
   Disponível:
     "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  "Em uso": "bg-blue-50 text-blue-700 ring-blue-600/20",
+  "Em uso":
+    "bg-blue-50 text-blue-700 ring-blue-600/20",
   "Em manutenção":
     "bg-amber-50 text-amber-700 ring-amber-600/20",
-  Indisponível: "bg-red-50 text-red-700 ring-red-600/20",
+  Indisponível:
+    "bg-red-50 text-red-700 ring-red-600/20",
 };
 
 const statusDotStyles: Record<EquipmentStatus, string> = {
@@ -117,6 +137,20 @@ const statusDotStyles: Record<EquipmentStatus, string> = {
   "Em uso": "bg-blue-500",
   "Em manutenção": "bg-amber-500",
   Indisponível: "bg-red-500",
+};
+
+const conditionStyles: Record<
+  EquipmentCondition,
+  string
+> = {
+  Novo:
+    "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+  Bom:
+    "bg-blue-50 text-blue-700 ring-blue-600/20",
+  Regular:
+    "bg-amber-50 text-amber-700 ring-amber-600/20",
+  Danificado:
+    "bg-red-50 text-red-700 ring-red-600/20",
 };
 
 const statusFromApi: Record<
@@ -139,211 +173,223 @@ const conditionFromApi: Record<
   DAMAGED: "Danificado",
 };
 
-const currencyFormatter = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-});
-
-function mapApiEquipment(item: ApiEquipment): Equipment {
-  const numericValue =
-    item.value === null || item.value === ""
-      ? 0
-      : Number(item.value);
-
+function mapApiEquipment(
+  item: ApiEquipment,
+): Equipment {
   return {
     id: item.id,
-    patrimony: item.patrimony,
     name: item.name,
     manufacturer: item.manufacturer,
     model: item.model,
-    quantity: item.quantity,
+ quantity: item.quantity,
+
+physicalStock:
+  item.physicalStock,
+
+inUse:
+  item.inUse,
+
+availableStock:
+  item.availableStock,
+
+shortage:
+  item.shortage,
+
+minimumStock:
+  item.minimumStock ?? 0,
     serialNumber: item.serialNumber,
     category: item.category,
     status: statusFromApi[item.status],
     condition: conditionFromApi[item.condition],
-    client: item.client,
-    location: item.location,
-    responsible: item.responsible,
-    acquisitionDate: item.acquisitionDate,
-    warrantyEndDate: item.warrantyEndDate,
-    value: Number.isFinite(numericValue) ? numericValue : 0,
-    supplier: item.supplier,
     invoiceNumber: item.invoiceNumber,
     notes: item.notes,
+    images: item.images ?? [],
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
 }
 
+function isOutOfStock(
+  item: Equipment,
+): boolean {
+  return item.availableStock === 0;
+}
+
+function isLowStock(item: Equipment): boolean {
+return (
+  item.availableStock > 0 &&
+  item.minimumStock > 0 &&
+  item.availableStock <= item.minimumStock
+);
+}
+
 export function InventoryView() {
-  const [equipmentList, setEquipmentList] = useState<Equipment[]>(
-    [],
-  );
+  const { data: session } = useSession();
+
+const canEdit =
+  session?.user?.role === "ADMIN" ||
+  session?.user?.role === "COMMERCIAL";
+  const [equipmentList, setEquipmentList] = useState<
+    Equipment[]
+  >([]);
+
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-const [refreshKey, setRefreshKey] = useState(0);
+
+  const [loadError, setLoadError] = useState<
+    string | null
+  >(null);
+
+  const [refreshKey, setRefreshKey] = useState(0);
+
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("Todos");
   const [category, setCategory] = useState("Todas");
-  const [client, setClient] = useState("Todos");
-  const [location, setLocation] = useState("Todas");
-  const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [stockFilter, setStockFilter] =
+    useState("Todos");
+
+  const [viewMode, setViewMode] =
+    useState<ViewMode>("table");
+
   const [currentPage, setCurrentPage] = useState(1);
+
   const [mobileFiltersOpen, setMobileFiltersOpen] =
     useState(false);
 
-useEffect(() => {
-  const controller = new AbortController();
+  useEffect(() => {
+    const controller = new AbortController();
 
-fetch("/api/equipment", {
-  method: "GET",
-  cache: "no-store",
-  headers: {
-    Accept: "application/json",
-  },
-  signal: controller.signal,
-})
-  .then(async (response) => {
-    const result =
-      (await response.json()) as EquipmentApiResponse<
-        Parameters<typeof mapApiEquipment>[0]
-      >;
+    async function loadEquipment() {
+      try {
+        setIsLoading(true);
 
-    if (!response.ok || !result.success) {
-      throw new Error(
-        result.message ??
-          "Não foi possível carregar o inventário.",
-      );
+        const response = await fetch("/api/equipment", {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        const result =
+          (await response.json()) as EquipmentApiResponse;
+
+        if (!response.ok || !result.success) {
+          throw new Error(
+            result.message ??
+              "Não foi possível carregar o inventário.",
+          );
+        }
+
+        const mappedEquipment = (
+          result.data ?? []
+        ).map(mapApiEquipment);
+
+        setEquipmentList(mappedEquipment);
+        setLoadError(null);
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return;
+        }
+
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível carregar o inventário.",
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
     }
 
-    return (result.data ?? []).map(mapApiEquipment);
-  })
-  .then((mappedEquipment) => {
-    setEquipmentList(mappedEquipment);
-    setLoadError(null);
-  })
-  .catch((error: unknown) => {
-    if (
-      error instanceof DOMException &&
-      error.name === "AbortError"
-    ) {
-      return;
+    void loadEquipment();
+
+    return () => {
+      controller.abort();
+    };
+  }, [refreshKey]);
+
+  useEffect(() => {
+    function handleEquipmentCreated() {
+      setRefreshKey((current) => current + 1);
     }
 
-    setLoadError(
-      error instanceof Error
-        ? error.message
-        : "Não foi possível carregar o inventário.",
-    );
-  })
-  .finally(() => {
-    if (!controller.signal.aborted) {
-      setIsLoading(false);
-    }
-  });
-
-  return () => {
-    controller.abort();
-  };
-}, [refreshKey]);
-
-useEffect(() => {
-  function handleEquipmentCreated() {
-    setIsLoading(true);
-    setRefreshKey((current) => current + 1);
-  }
-
-  window.addEventListener(
-    "equipment-created",
-    handleEquipmentCreated,
-  );
-
-  return () => {
-    window.removeEventListener(
+    window.addEventListener(
       "equipment-created",
       handleEquipmentCreated,
     );
-  };
-}, []);
 
-  const categories = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          equipmentList.map(
-            (equipment) => equipment.category,
-          ),
-        ),
-      ).sort((first, second) =>
-        first.localeCompare(second, "pt-BR"),
-      ),
-    [equipmentList],
-  );
+    return () => {
+      window.removeEventListener(
+        "equipment-created",
+        handleEquipmentCreated,
+      );
+    };
+  }, []);
 
-  const clients = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          equipmentList.map((equipment) => equipment.client),
+  const categories = useMemo(() => {
+    return Array.from(
+      new Set(
+        equipmentList.map(
+          (equipment) => equipment.category,
         ),
-      ).sort((first, second) =>
-        first.localeCompare(second, "pt-BR"),
       ),
-    [equipmentList],
-  );
-
-  const locations = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          equipmentList.map(
-            (equipment) => equipment.location,
-          ),
-        ),
-      ).sort((first, second) =>
-        first.localeCompare(second, "pt-BR"),
-      ),
-    [equipmentList],
-  );
+    ).sort((first, second) =>
+      first.localeCompare(second, "pt-BR"),
+    );
+  }, [equipmentList]);
 
   const filteredEquipment = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
+    const normalizedSearch = search
+      .trim()
+      .toLocaleLowerCase("pt-BR");
 
     return equipmentList.filter((equipment) => {
+      const searchableValues = [
+        equipment.name,
+        equipment.manufacturer,
+        equipment.model,
+        equipment.serialNumber,
+        equipment.category,
+        equipment.invoiceNumber,
+      ];
+
       const matchesSearch =
         normalizedSearch.length === 0 ||
-        [
-          equipment.name,
-          equipment.patrimony,
-          equipment.serialNumber,
-          equipment.manufacturer,
-          equipment.model,
-          equipment.client,
-          equipment.location,
-        ].some((value) =>
-          value.toLowerCase().includes(normalizedSearch),
+        searchableValues.some((value) =>
+          value
+            ?.toLocaleLowerCase("pt-BR")
+            .includes(normalizedSearch),
         );
 
       const matchesStatus =
-        status === "Todos" || equipment.status === status;
+        status === "Todos" ||
+        equipment.status === status;
 
       const matchesCategory =
         category === "Todas" ||
         equipment.category === category;
 
-      const matchesClient =
-        client === "Todos" || equipment.client === client;
-
-      const matchesLocation =
-        location === "Todas" ||
-        equipment.location === location;
+      const matchesStock =
+        stockFilter === "Todos" ||
+        (stockFilter === "Baixo estoque" &&
+          isLowStock(equipment)) ||
+        (stockFilter === "Sem estoque" &&
+          isOutOfStock(equipment)) ||
+        (stockFilter === "Estoque normal" &&
+          !isLowStock(equipment) &&
+          !isOutOfStock(equipment));
 
       return (
         matchesSearch &&
         matchesStatus &&
         matchesCategory &&
-        matchesClient &&
-        matchesLocation
+        matchesStock
       );
     });
   }, [
@@ -351,13 +397,14 @@ useEffect(() => {
     search,
     status,
     category,
-    client,
-    location,
+    stockFilter,
   ]);
 
   const totalPages = Math.max(
     1,
-    Math.ceil(filteredEquipment.length / PAGE_SIZE),
+    Math.ceil(
+      filteredEquipment.length / PAGE_SIZE,
+    ),
   );
 
   const safeCurrentPage = Math.min(
@@ -366,7 +413,8 @@ useEffect(() => {
   );
 
   const paginatedEquipment = useMemo(() => {
-    const start = (safeCurrentPage - 1) * PAGE_SIZE;
+    const start =
+      (safeCurrentPage - 1) * PAGE_SIZE;
 
     return filteredEquipment.slice(
       start,
@@ -377,8 +425,7 @@ useEffect(() => {
   const activeFiltersCount = [
     status !== "Todos",
     category !== "Todas",
-    client !== "Todos",
-    location !== "Todas",
+    stockFilter !== "Todos",
   ].filter(Boolean).length;
 
   function updateFilter(
@@ -393,50 +440,55 @@ useEffect(() => {
     setSearch("");
     setStatus("Todos");
     setCategory("Todas");
-    setClient("Todos");
-    setLocation("Todas");
+    setStockFilter("Todos");
     setCurrentPage(1);
+  }
+
+  function retryLoading() {
+    setLoadError(null);
+    setRefreshKey((current) => current + 1);
   }
 
   function exportCsv() {
     const columns = [
-      "Patrimônio",
       "Equipamento",
       "Fabricante",
       "Modelo",
-      "Quantidade",
+      "Quantidade total",
+      "Estoque mínimo",
       "Número de série",
       "Categoria",
       "Status",
       "Condição",
-      "Cliente",
-      "Localização",
-      "Responsável",
-      "Valor",
+      "Nota fiscal",
+      "Observações",
     ];
 
-    const rows = filteredEquipment.map((equipment) => [
-      equipment.patrimony,
-      equipment.name,
-      equipment.manufacturer,
-      equipment.model,
-      equipment.quantity,
-      equipment.serialNumber,
-      equipment.category,
-      equipment.status,
-      equipment.condition,
-      equipment.client,
-      equipment.location,
-      equipment.responsible,
-      equipment.value.toFixed(2).replace(".", ","),
-    ]);
+    const rows = filteredEquipment.map(
+      (equipment) => [
+        equipment.name,
+        equipment.manufacturer ?? "",
+        equipment.model ?? "",
+        equipment.quantity,
+        equipment.minimumStock,
+        equipment.serialNumber ?? "",
+        equipment.category,
+        equipment.status,
+        equipment.condition,
+        equipment.invoiceNumber ?? "",
+        equipment.notes ?? "",
+      ],
+    );
 
     const csv = [columns, ...rows]
       .map((row) =>
         row
           .map(
             (cell) =>
-              `"${String(cell).replaceAll('"', '""')}"`,
+              `"${String(cell).replaceAll(
+                '"',
+                '""',
+              )}"`,
           )
           .join(";"),
       )
@@ -486,24 +538,22 @@ useEffect(() => {
           {loadError}
         </p>
 
-<button
-  type="button"
-  onClick={() => {
-    setLoadError(null);
-    setIsLoading(true);
-    setRefreshKey((current) => current + 1);
-  }}
-  className="mt-5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
->
-  Tentar novamente
-</button>
+        <button
+          type="button"
+          onClick={retryLoading}
+          className="mt-5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+        >
+          Tentar novamente
+        </button>
       </div>
     );
   }
 
   return (
     <div className="space-y-5">
-      <InventorySummary equipment={filteredEquipment} />
+      <InventorySummary
+        equipment={filteredEquipment}
+      />
 
       <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
         <div className="border-b border-zinc-200 p-4 sm:p-5">
@@ -521,7 +571,7 @@ useEffect(() => {
                   setSearch(event.target.value);
                   setCurrentPage(1);
                 }}
-                placeholder="Buscar por nome, patrimônio ou número de série..."
+                placeholder="Buscar por nome, modelo ou número de série..."
                 className="h-11 w-full rounded-lg border border-zinc-200 bg-zinc-50 pl-10 pr-10 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:bg-white focus:ring-2 focus:ring-[#F57B00]/15"
               />
 
@@ -544,7 +594,9 @@ useEffect(() => {
               <button
                 type="button"
                 onClick={() =>
-                  setMobileFiltersOpen((current) => !current)
+                  setMobileFiltersOpen(
+                    (current) => !current,
+                  )
                 }
                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 xl:hidden"
               >
@@ -561,7 +613,9 @@ useEffect(() => {
               <div className="flex rounded-lg border border-zinc-200 bg-white p-1">
                 <button
                   type="button"
-                  onClick={() => setViewMode("table")}
+                  onClick={() =>
+                    setViewMode("table")
+                  }
                   className={[
                     "flex h-8 w-8 items-center justify-center rounded-md transition",
                     viewMode === "table"
@@ -569,13 +623,16 @@ useEffect(() => {
                       : "text-zinc-500 hover:bg-zinc-100",
                   ].join(" ")}
                   aria-label="Visualização em tabela"
+                  aria-pressed={viewMode === "table"}
                 >
                   <List size={17} />
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setViewMode("cards")}
+                  onClick={() =>
+                    setViewMode("cards")
+                  }
                   className={[
                     "flex h-8 w-8 items-center justify-center rounded-md transition",
                     viewMode === "cards"
@@ -583,6 +640,7 @@ useEffect(() => {
                       : "text-zinc-500 hover:bg-zinc-100",
                   ].join(" ")}
                   aria-label="Visualização em cards"
+                  aria-pressed={viewMode === "cards"}
                 >
                   <Grid2X2 size={17} />
                 </button>
@@ -591,29 +649,36 @@ useEffect(() => {
               <button
                 type="button"
                 onClick={exportCsv}
-                disabled={filteredEquipment.length === 0}
+                disabled={
+                  filteredEquipment.length === 0
+                }
                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download size={17} />
+
                 <span className="hidden sm:inline">
                   Exportar CSV
                 </span>
               </button>
 
-              <Link
-                href="/inventory/new"
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-              >
-                <Plus size={18} />
-                Novo equipamento
-              </Link>
+              {canEdit && (
+  <Link
+    href="/inventory/new"
+    className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+  >
+    <Plus size={18} />
+    Novo equipamento
+  </Link>
+)}
             </div>
           </div>
 
           <div
             className={[
-              "mt-4 grid gap-3 xl:grid xl:grid-cols-4",
-              mobileFiltersOpen ? "grid" : "hidden",
+              "mt-4 gap-3 xl:grid xl:grid-cols-3",
+              mobileFiltersOpen
+                ? "grid"
+                : "hidden xl:grid",
             ].join(" ")}
           >
             <FilterSelect
@@ -641,20 +706,19 @@ useEffect(() => {
             />
 
             <FilterSelect
-              label="Cliente"
-              value={client}
-              options={["Todos", ...clients]}
+              label="Estoque"
+              value={stockFilter}
+              options={[
+                "Todos",
+                "Estoque normal",
+                "Baixo estoque",
+                "Sem estoque",
+              ]}
               onChange={(value) =>
-                updateFilter(setClient, value)
-              }
-            />
-
-            <FilterSelect
-              label="Localização"
-              value={location}
-              options={["Todas", ...locations]}
-              onChange={(value) =>
-                updateFilter(setLocation, value)
+                updateFilter(
+                  setStockFilter,
+                  value,
+                )
               }
             />
           </div>
@@ -695,21 +759,11 @@ useEffect(() => {
                 />
               ) : null}
 
-              {client !== "Todos" ? (
+              {stockFilter !== "Todos" ? (
                 <FilterTag
-                  label={client}
+                  label={stockFilter}
                   onRemove={() => {
-                    setClient("Todos");
-                    setCurrentPage(1);
-                  }}
-                />
-              ) : null}
-
-              {location !== "Todas" ? (
-                <FilterTag
-                  label={location}
-                  onRemove={() => {
-                    setLocation("Todas");
+                    setStockFilter("Todos");
                     setCurrentPage(1);
                   }}
                 />
@@ -728,13 +782,18 @@ useEffect(() => {
 
         {paginatedEquipment.length === 0 ? (
           <EmptyInventory
-            hasEquipment={equipmentList.length > 0}
-            onClear={clearFilters}
-          />
+  hasEquipment={equipmentList.length > 0}
+  onClear={clearFilters}
+  canEdit={canEdit}
+/>
         ) : viewMode === "table" ? (
-          <EquipmentTable equipment={paginatedEquipment} />
+          <EquipmentTable
+            equipment={paginatedEquipment}
+          />
         ) : (
-          <EquipmentCards equipment={paginatedEquipment} />
+          <EquipmentCards
+            equipment={paginatedEquipment}
+          />
         )}
 
         <Pagination
@@ -754,91 +813,112 @@ function InventorySummary({
 }: {
   equipment: Equipment[];
 }) {
-  const totalQuantity = equipment.reduce(
-    (total, item) => total + item.quantity,
+  const totalItems = equipment.length;
+
+const totalPhysicalStock =
+  equipment.reduce(
+    (t, e) =>
+      t + e.physicalStock,
+    0,
+  );
+
+const totalInUse =
+  equipment.reduce(
+    (t, e) =>
+      t + e.inUse,
+    0,
+  );
+
+const totalAvailable =
+  equipment.reduce(
+    (t, e) =>
+      t + e.availableStock,
     0,
   );
 
   const availableQuantity = equipment
-    .filter((item) => item.status === "Disponível")
-    .reduce(
-      (total, item) => total + item.quantity,
-      0,
-    );
-
-  const inUseQuantity = equipment
-    .filter((item) => item.status === "Em uso")
-    .reduce(
-      (total, item) => total + item.quantity,
-      0,
-    );
-
-  const attentionQuantity = equipment
     .filter(
-      (item) =>
-        item.status === "Em manutenção" ||
-        item.status === "Indisponível",
+      (item) => item.status === "Disponível",
     )
     .reduce(
       (total, item) => total + item.quantity,
       0,
     );
 
+const lowStockItems = equipment.filter(
+  (item) =>
+    isOutOfStock(item) || isLowStock(item),
+).length;
+
   const summary = [
     {
-      label: "Unidades encontradas",
-      value: totalQuantity,
+      label: "Itens cadastrados",
+      value: totalItems,
       color: "text-zinc-900",
       background: "bg-zinc-100",
+      icon: Package,
     },
     {
-      label: "Disponíveis",
-      value: availableQuantity,
-      color: "text-emerald-700",
-      background: "bg-emerald-50",
-    },
-    {
-      label: "Em uso",
-      value: inUseQuantity,
+      label: "Unidades em estoque",
+      value: totalPhysicalStock,
       color: "text-blue-700",
       background: "bg-blue-50",
+      icon: Boxes,
     },
     {
-      label: "Exigem atenção",
-      value: attentionQuantity,
-      color: "text-amber-700",
-      background: "bg-amber-50",
+      label: "Unidades disponíveis",
+      value: totalAvailable,
+      color: "text-emerald-700",
+      background: "bg-emerald-50",
+      icon: Boxes,
     },
+    {
+  label: "Itens com baixo estoque",
+  value: lowStockItems,
+  color:
+    lowStockItems > 0
+      ? "text-red-700"
+      : "text-zinc-900",
+  background:
+    lowStockItems > 0
+      ? "bg-red-50"
+      : "bg-zinc-100",
+  icon: AlertTriangle,
+},
   ];
 
   return (
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {summary.map((item) => (
-        <article
-          key={item.label}
-          className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm"
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-medium text-zinc-500">
-                {item.label}
-              </p>
+      {summary.map((item) => {
+        const Icon = item.icon;
 
-              <p
-                className={`mt-2 text-2xl font-bold ${item.color}`}
+        return (
+          <article
+            key={item.label}
+            className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-zinc-500">
+                  {item.label}
+                </p>
+
+                <p
+                  className={`mt-2 text-2xl font-bold ${item.color}`}
+                >
+                  {item.value}
+                </p>
+              </div>
+
+              <div
+                className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.background} ${item.color}`}
               >
-                {item.value}
-              </p>
+                <Icon size={19} />
+              </div>
             </div>
-
-            <div
-              className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.background} ${item.color}`}
-            >
-              <Boxes size={19} />
-            </div>
-          </div>
-        </article>
-      ))}
+          </article>
+        );
+      })}
     </section>
   );
 }
@@ -868,11 +948,16 @@ function FilterSelect({
 
         <select
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) =>
+            onChange(event.target.value)
+          }
           className="h-10 w-full appearance-none rounded-lg border border-zinc-200 bg-white pl-9 pr-8 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-[#F57B00]/15"
         >
           {options.map((option) => (
-            <option key={option} value={option}>
+            <option
+              key={option}
+              value={option}
+            >
               {option}
             </option>
           ))}
@@ -910,97 +995,157 @@ function EquipmentTable({
 }: {
   equipment: Equipment[];
 }) {
+  const router = useRouter();
+
+  function openEquipment(id: string) {
+    router.push(`/inventory/${id}`);
+  }
+
+  function handleRowKeyDown(
+    event: KeyboardEvent<HTMLTableRowElement>,
+    id: string,
+  ) {
+    if (
+      event.key === "Enter" ||
+      event.key === " "
+    ) {
+      event.preventDefault();
+      openEquipment(id);
+    }
+  }
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1120px] border-collapse text-left">
+      <table className="w-full min-w-[1080px] border-collapse text-left">
         <thead>
           <tr className="border-b border-zinc-200 bg-zinc-50">
-            <TableHeader>Equipamento</TableHeader>
-            <TableHeader>Patrimônio</TableHeader>
-            <TableHeader>Categoria</TableHeader>
-            <TableHeader>Quantidade</TableHeader>
-            <TableHeader>Status</TableHeader>
-            <TableHeader>Cliente</TableHeader>
-            <TableHeader>Localização</TableHeader>
-            <TableHeader>Valor</TableHeader>
+            <TableHeader>
+              Equipamento
+            </TableHeader>
+
+            <TableHeader>
+              Modelo / Série
+            </TableHeader>
+
+            <TableHeader>
+              Categoria
+            </TableHeader>
+
+            <TableHeader>
+              Estoque
+            </TableHeader>
+
+            <TableHeader>
+              Condição
+            </TableHeader>
+
             <TableHeader className="text-right">
-              Ações
+              Detalhes
             </TableHeader>
           </tr>
         </thead>
 
         <tbody>
-          {equipment.map((item) => (
-            <tr
-              key={item.id}
-              className="border-b border-zinc-100 transition last:border-0 hover:bg-zinc-50"
-            >
-              <td className="px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-[#F57B00]">
-                    <Boxes size={19} />
+          {equipment.map((item) => {
+            const outOfStock =
+              isOutOfStock(item);
+
+            const lowStock =
+              isLowStock(item);
+
+            const mainImage =
+              item.images[0]?.url;
+
+            return (
+              <tr
+                key={item.id}
+                role="link"
+                tabIndex={0}
+                onClick={() =>
+                  openEquipment(item.id)
+                }
+                onKeyDown={(event) =>
+                  handleRowKeyDown(
+                    event,
+                    item.id,
+                  )
+                }
+                className="group cursor-pointer border-b border-zinc-100 outline-none transition last:border-0 hover:bg-[#F57B00]/[0.06] hover:shadow-[inset_3px_0_0_#F57B00] focus:bg-[#F57B00]/[0.06] focus:shadow-[inset_3px_0_0_#F57B00] focus:ring-2 focus:ring-inset focus:ring-[#F57B00]/20"
+                aria-label={`Abrir detalhes de ${item.name}`}
+              >
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50 text-[#F57B00]">
+                      {mainImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={mainImage}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <Boxes size={19} />
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="max-w-[260px] truncate text-sm font-semibold text-zinc-900 transition group-hover:text-[#D96D00]">
+                        {item.name}
+                      </p>
+
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {[
+                          item.manufacturer,
+                          item.model,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") ||
+                          "Sem fabricante ou modelo"}
+                      </p>
+                    </div>
                   </div>
+                </td>
 
-                  <div className="min-w-0">
-                    <p className="max-w-[260px] truncate text-sm font-semibold text-zinc-900">
-                      {item.name}
-                    </p>
+                <td className="px-5 py-4">
+                  <p className="text-sm font-medium text-zinc-700">
+                    {item.model || "—"}
+                  </p>
 
-                    <p className="mt-1 text-xs text-zinc-500">
-                      {item.manufacturer} · {item.model}
-                    </p>
-                  </div>
-                </div>
-              </td>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {item.serialNumber ||
+                      "Sem número de série"}
+                  </p>
+                </td>
 
-              <td className="whitespace-nowrap px-5 py-4">
-                <p className="text-sm font-medium text-zinc-700">
-                  {item.patrimony}
-                </p>
+                <td className="px-5 py-4">
+                  <CategoryBadge category={item.category} />
+                </td>
 
-                <p className="mt-1 text-xs text-zinc-500">
-                  {item.serialNumber}
-                </p>
-              </td>
+             <td className="whitespace-nowrap px-5 py-4">
+<StockBadge
+  physicalStock={item.physicalStock}
+  inUse={item.inUse}
+  availableStock={item.availableStock}
+  minimumStock={item.minimumStock}
+  status={item.status}
+/>
+</td>
 
-              <td className="px-5 py-4 text-sm text-zinc-600">
-                {item.category}
-              </td>
+<td className="px-5 py-4">
+  <ConditionBadge
+    condition={item.condition}
+  />
+</td>
 
-            <td className="whitespace-nowrap px-5 py-4 text-sm font-semibold text-zinc-700">
-              {item.quantity}{" "}
-              {item.quantity === 1 ? "unidade" : "unidades"}
-            </td>
-
-              <td className="px-5 py-4">
-                <StatusBadge status={item.status} />
-              </td>
-
-              <td className="px-5 py-4 text-sm text-zinc-600">
-                {item.client}
-              </td>
-
-              <td className="max-w-[220px] px-5 py-4">
-                <p className="truncate text-sm text-zinc-600">
-                  {item.location}
-                </p>
-              </td>
-
-              <td className="whitespace-nowrap px-5 py-4 text-sm font-medium text-zinc-700">
-                {currencyFormatter.format(item.value)}
-              </td>
-
-              <td className="px-5 py-4 text-right">
-                <Link
-                  href={`/inventory/${item.id}`}
-                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-[#F57B00] hover:bg-orange-50 hover:text-[#D96D00]"
-                >
-                  <Eye size={15} />
-                  Detalhes
-                </Link>
-              </td>
-            </tr>
-          ))}
+<td className="px-5 py-4 text-right">
+  <span className="inline-flex translate-x-2 items-center gap-1 whitespace-nowrap text-sm font-semibold text-zinc-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[#F57B00] group-hover:opacity-100 group-focus:translate-x-0 group-focus:text-[#F57B00] group-focus:opacity-100">
+    Ver detalhes
+    <ChevronRight size={16} />
+  </span>
+</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1011,12 +1156,12 @@ function TableHeader({
   children,
   className = "",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
     <th
-      className={`whitespace-nowrap px-5 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 ${className}`}
+      className={`whitespace-nowrap px-5 py-4 text-xs font-semibold uppercase tracking-wide text-zinc-500 ${className}`}
     >
       {children}
     </th>
@@ -1030,73 +1175,142 @@ function EquipmentCards({
 }) {
   return (
     <div className="grid gap-4 p-4 sm:p-5 md:grid-cols-2 2xl:grid-cols-3">
-      {equipment.map((item) => (
-        <article
-          key={item.id}
-          className="rounded-xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-                <Boxes size={21} />
+      {equipment.map((item) => {
+        const outOfStock =
+          isOutOfStock(item);
+
+        const lowStock =
+          isLowStock(item);
+
+        const mainImage =
+          item.images[0]?.url;
+
+        return (
+          <Link
+            key={item.id}
+            href={`/inventory/${item.id}`}
+            className="group block rounded-xl border border-zinc-200 bg-white p-4 outline-none transition hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md focus:border-[#F57B00] focus:ring-2 focus:ring-[#F57B00]/20"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50 text-[#F57B00]">
+                  {mainImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={mainImage}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <Boxes size={21} />
+                  )}
+                </div>
+
+                <div className="min-w-0">
+                  <h3 className="line-clamp-2 text-sm font-semibold text-zinc-900 transition group-hover:text-[#D96D00]">
+                    {item.name}
+                  </h3>
+
+                  <p className="mt-1 truncate text-xs text-zinc-500">
+                    {[
+                      item.manufacturer,
+                      item.model,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") ||
+                      "Sem fabricante ou modelo"}
+                  </p>
+                </div>
               </div>
 
-              <div className="min-w-0">
-                <h3 className="line-clamp-2 text-sm font-semibold text-zinc-900">
-                  {item.name}
-                </h3>
-
-                <p className="mt-1 text-xs text-zinc-500">
-                  {item.patrimony}
-                </p>
-              </div>
-            </div>
-
-            <StatusBadge status={item.status} />
-          </div>
-
-          <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3">
-            <CardDetail
-              label="Categoria"
-              value={item.category}
-            />
-            <CardDetail
-              label="Condição"
-              value={item.condition}
-            />
-
-            <CardDetail
-          label="Quantidade"
-          value={`${item.quantity} ${
-          item.quantity === 1 ? "unidade" : "unidades"
-          }`}
-          />
-
-            <CardDetail label="Cliente" value={item.client} />
-            <CardDetail
-              label="Valor"
-              value={currencyFormatter.format(item.value)}
-            />
-
-            <div className="col-span-2">
-              <CardDetail
-                label="Localização"
-                value={item.location}
+              <StatusBadge
+                status={item.status}
               />
             </div>
-          </dl>
 
-          <div className="mt-5 border-t border-zinc-100 pt-4">
-            <Link
-              href={`/inventory/${item.id}`}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#F57B00]"
-            >
-              <Eye size={16} />
-              Ver detalhes
-            </Link>
-          </div>
-        </article>
-      ))}
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3">
+ <div className="min-w-0">
+  <dt className="text-xs font-medium text-zinc-400">
+    Categoria
+  </dt>
+
+  <dd className="mt-1">
+    <CategoryBadge category={item.category} />
+  </dd>
+</div>
+
+<div className="min-w-0">
+  <dt className="text-xs font-medium text-zinc-400">
+    Condição
+  </dt>
+
+  <dd className="mt-1">
+    <ConditionBadge
+      condition={item.condition}
+    />
+  </dd>
+</div>
+
+<div className="min-w-0">
+  <dt className="text-xs font-medium text-zinc-400">
+    Quantidade
+  </dt>
+
+  <dd className="mt-1">
+<StockBadge
+  physicalStock={item.physicalStock}
+  inUse={item.inUse}
+  availableStock={item.availableStock}
+  minimumStock={item.minimumStock}
+  status={item.status}
+/>
+  </dd>
+</div>
+
+              <CardDetail
+                label="Estoque mínimo"
+                value={`${item.minimumStock} ${
+                  item.minimumStock === 1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
+
+              <CardDetail
+                label="Número de série"
+                value={
+                  item.serialNumber ||
+                  "Não informado"
+                }
+              />
+
+              <CardDetail
+                label="Nota fiscal"
+                value={
+                  item.invoiceNumber ||
+                  "Não informada"
+                }
+              />
+            </dl>
+
+            {outOfStock ? (
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                <AlertTriangle size={15} />
+                Item sem estoque
+              </div>
+            ) : lowStock ? (
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                <AlertTriangle size={15} />
+                Estoque abaixo ou igual ao mínimo
+              </div>
+            ) : null}
+
+            <div className="mt-5 border-t border-zinc-100 pt-4 text-center text-sm font-semibold text-zinc-700 transition group-hover:text-[#F57B00]">
+              Abrir detalhes
+            </div>
+          </Link>
+        );
+      })}
     </div>
   );
 }
@@ -1104,20 +1318,136 @@ function EquipmentCards({
 function CardDetail({
   label,
   value,
+  tone = "default",
 }: {
   label: string;
   value: string;
+  tone?: "default" | "warning" | "danger";
 }) {
+  const valueColor =
+    tone === "danger"
+      ? "text-red-700"
+      : tone === "warning"
+        ? "text-amber-700"
+        : "text-zinc-700";
+
   return (
     <div className="min-w-0">
       <dt className="text-xs font-medium text-zinc-400">
         {label}
       </dt>
 
-      <dd className="mt-1 truncate text-sm font-medium text-zinc-700">
+      <dd
+        className={`mt-1 truncate text-sm font-medium ${valueColor}`}
+        title={value}
+      >
         {value}
       </dd>
     </div>
+  );
+}
+function StockBadge({
+  physicalStock,
+  inUse,
+  availableStock,
+  minimumStock,
+  status,
+}: {
+  physicalStock: number;
+  inUse: number;
+  availableStock: number;
+  minimumStock: number;
+  status: EquipmentStatus;
+}) {
+  const outOfStock = availableStock === 0;
+
+  const lowStock =
+    availableStock > 0 &&
+    minimumStock > 0 &&
+    availableStock <= minimumStock;
+
+  const label = outOfStock
+    ? "Sem estoque"
+    : lowStock
+      ? "Baixo estoque"
+      : "Estoque OK";
+
+  const styles = outOfStock
+    ? "bg-red-50 text-red-700 ring-red-600/20"
+    : lowStock
+      ? "bg-amber-50 text-amber-700 ring-amber-600/20"
+      : "bg-emerald-50 text-emerald-700 ring-emerald-600/20";
+
+  const dotStyles = outOfStock
+    ? "bg-red-500"
+    : lowStock
+      ? "bg-amber-500"
+      : "bg-emerald-500";
+
+  return (
+    <div className="space-y-2">
+      <div className="space-y-0.5 text-xs">
+        <div className="flex justify-between">
+          <span className="text-zinc-500">Físico</span>
+          <span className="font-semibold text-zinc-800">
+            {physicalStock}
+            {status !== "Disponível" && (
+  <StatusBadge status={status} />
+)}
+          </span>
+        </div>
+
+        <div className="flex justify-between">
+          <span className="text-blue-600">Em uso</span>
+          <span className="font-semibold text-blue-700">
+            {inUse}
+          </span>
+        </div>
+
+        <div className="flex justify-between">
+          <span className="text-emerald-600">Disponível</span>
+          <span className="font-semibold text-emerald-700">
+            {availableStock}
+          </span>
+        </div>
+      </div>
+
+      <span
+        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${dotStyles}`}
+        />
+
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function CategoryBadge({
+  category,
+}: {
+  category: string;
+}) {
+  return (
+    <span className="inline-flex max-w-[180px] truncate rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 ring-1 ring-inset ring-zinc-500/10">
+      {category}
+    </span>
+  );
+}
+
+function ConditionBadge({
+  condition,
+}: {
+  condition: EquipmentCondition;
+}) {
+  return (
+    <span
+      className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${conditionStyles[condition]}`}
+    >
+      {condition}
+    </span>
   );
 }
 
@@ -1142,9 +1472,11 @@ function StatusBadge({
 function EmptyInventory({
   hasEquipment,
   onClear,
+  canEdit,
 }: {
   hasEquipment: boolean;
   onClear: () => void;
+  canEdit: boolean;
 }) {
   return (
     <div className="flex min-h-80 flex-col items-center justify-center px-5 py-12 text-center">
@@ -1173,13 +1505,15 @@ function EmptyInventory({
           Limpar filtros
         </button>
       ) : (
-        <Link
-          href="/inventory/new"
-          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-        >
-          <Plus size={17} />
-          Cadastrar equipamento
-        </Link>
+        canEdit ? (
+  <Link
+    href="/inventory/new"
+    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+  >
+    <Plus size={17} />
+    Cadastrar equipamento
+  </Link>
+) : null
       )}
     </div>
   );
@@ -1236,7 +1570,9 @@ function Pagination({
         <button
           type="button"
           disabled={currentPage === 1}
-          onClick={() => onChange(currentPage - 1)}
+          onClick={() =>
+            onChange(currentPage - 1)
+          }
           className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Página anterior"
         >
@@ -1244,7 +1580,8 @@ function Pagination({
         </button>
 
         {pages.map((page, index) => {
-          const previousPage = pages[index - 1];
+          const previousPage =
+            pages[index - 1];
 
           const hasGap =
             previousPage !== undefined &&
@@ -1264,6 +1601,11 @@ function Pagination({
               <button
                 type="button"
                 onClick={() => onChange(page)}
+                aria-current={
+                  currentPage === page
+                    ? "page"
+                    : undefined
+                }
                 className={[
                   "flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-sm font-semibold transition",
                   currentPage === page
@@ -1279,8 +1621,12 @@ function Pagination({
 
         <button
           type="button"
-          disabled={currentPage === totalPages}
-          onClick={() => onChange(currentPage + 1)}
+          disabled={
+            currentPage === totalPages
+          }
+          onClick={() =>
+            onChange(currentPage + 1)
+          }
           className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Próxima página"
         >

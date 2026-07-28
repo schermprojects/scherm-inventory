@@ -7,7 +7,6 @@ import { useState } from "react";
 type DeleteEquipmentButtonProps = {
   equipmentId: string;
   equipmentName: string;
-  patrimony: string;
 };
 
 type DeleteApiResponse = {
@@ -18,7 +17,6 @@ type DeleteApiResponse = {
 export function DeleteEquipmentButton({
   equipmentId,
   equipmentName,
-  patrimony,
 }: DeleteEquipmentButtonProps) {
   const router = useRouter();
 
@@ -33,7 +31,6 @@ export function DeleteEquipmentButton({
         "Tem certeza que deseja excluir este equipamento?",
         "",
         `Equipamento: ${equipmentName}`,
-        `Patrimônio: ${patrimony}`,
         "",
         "Essa ação não poderá ser desfeita.",
       ].join("\n"),

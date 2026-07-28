@@ -19,79 +19,70 @@ type EditEquipmentPageProps = {
 
 const statusFromDatabase: Record<
   EquipmentStatus,
-  "Disponível" | "Em uso" | "Em manutenção" | "Indisponível"
+  "Disponível" | "Em uso" | "Indisponível"
 > = {
   AVAILABLE: "Disponível",
   IN_USE: "Em uso",
-  MAINTENANCE: "Em manutenção",
   UNAVAILABLE: "Indisponível",
 };
 
 const conditionFromDatabase: Record<
   EquipmentCondition,
-  "Novo" | "Bom" | "Regular" | "Danificado"
+  "Novo" | "Danificado"
 > = {
   NEW: "Novo",
-  GOOD: "Bom",
-  REGULAR: "Regular",
   DAMAGED: "Danificado",
 };
-
-const currencyFormatter = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-});
-
-function formatDateForInput(date: Date | null): string {
-  if (!date) {
-    return "";
-  }
-
-  return date.toISOString().slice(0, 10);
-}
 
 export default async function EditEquipmentPage({
   params,
 }: EditEquipmentPageProps) {
   const { id } = await params;
 
-  const equipment = await prisma.equipment.findUnique({
-    where: {
-      id,
+const equipment = await prisma.equipment.findUnique({
+  where: {
+    id,
+  },
+  include: {
+    projects: {
+      where: {
+        project: {
+          status: {
+            in: ["PLANNING", "IN_PROGRESS"],
+          },
+        },
+      },
     },
-  });
+  },
+});
 
   if (!equipment) {
     notFound();
   }
 
-const initialValues: EquipmentFormData = {
+  const physicalStock = equipment.quantity;
+
+const inUse = equipment.projects.reduce(
+  (total, item) => total + item.quantity,
+  0,
+);
+
+const availableStock = Math.max(
+  physicalStock - inUse,
+  0,
+);
+
+  const initialValues: EquipmentFormData = {
     name: equipment.name,
-    patrimony: equipment.patrimony,
-    serialNumber: equipment.serialNumber,
+    serialNumber: equipment.serialNumber ?? "",
     category: equipment.category,
-    manufacturer: equipment.manufacturer,
-    model: equipment.model,
+    manufacturer: equipment.manufacturer ?? "",
+    model: equipment.model ?? "",
     quantity: String(equipment.quantity),
+    minimumStock: String(equipment.minimumStock),
+    invoiceNumber: equipment.invoiceNumber ?? "",
     status: statusFromDatabase[equipment.status],
     condition: conditionFromDatabase[equipment.condition],
-    client: equipment.client,
-    location: equipment.location,
-    responsible: equipment.responsible,
-    acquisitionDate: formatDateForInput(
-      equipment.acquisitionDate,
-    ),
-    warrantyEndDate: formatDateForInput(
-      equipment.warrantyEndDate,
-    ),
-    value:
-      equipment.value === null
-        ? ""
-        : currencyFormatter.format(
-            Number(equipment.value),
-          ),
-    supplier: equipment.supplier ?? "",
-    invoiceNumber: equipment.invoiceNumber ?? "",
     notes: equipment.notes ?? "",
   };
 
@@ -111,7 +102,7 @@ const initialValues: EquipmentFormData = {
             <Pencil size={20} />
           </div>
 
-          <div>
+          <div className="min-w-0">
             <h1 className="text-xl font-bold text-zinc-900 sm:text-2xl">
               Editar equipamento
             </h1>
@@ -121,17 +112,29 @@ const initialValues: EquipmentFormData = {
             </p>
 
             <p className="mt-2 text-xs font-medium text-zinc-400">
-              Patrimônio {equipment.patrimony}
+              {[
+                equipment.manufacturer,
+                equipment.model,
+              ]
+                .filter(Boolean)
+                .join(" · ") ||
+                "Sem fabricante ou modelo"}
             </p>
           </div>
         </div>
       </header>
 
-      <EquipmentForm
-        mode="edit"
-        equipmentId={equipment.id}
-        initialValues={initialValues}
-      />
+<EquipmentForm
+  mode="edit"
+  equipmentId={equipment.id}
+  initialValues={initialValues}
+  stockInfo={{
+    physicalStock,
+    inUse,
+    availableStock,
+    minimumStock: equipment.minimumStock,
+  }}
+/>
     </div>
   );
 }

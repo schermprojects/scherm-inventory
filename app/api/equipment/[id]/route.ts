@@ -5,8 +5,8 @@ import {
 } from "@/generated/prisma/client";
 import { del } from "@vercel/blob";
 
-import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,6 @@ type RouteContext = {
 };
 
 type EquipmentRequestBody = {
-  patrimony?: unknown;
   name?: unknown;
   manufacturer?: unknown;
   model?: unknown;
@@ -27,20 +26,33 @@ type EquipmentRequestBody = {
   category?: unknown;
   status?: unknown;
   condition?: unknown;
-  client?: unknown;
-  location?: unknown;
-  responsible?: unknown;
-  acquisitionDate?: unknown;
-  warrantyEndDate?: unknown;
-  value?: unknown;
-  supplier?: unknown;
   invoiceNumber?: unknown;
   notes?: unknown;
 };
 
-function requiredText(value: unknown, label: string): string {
+class ValidationError extends Error {
+  field?: keyof EquipmentRequestBody;
+
+  constructor(
+    message: string,
+    field?: keyof EquipmentRequestBody,
+  ) {
+    super(message);
+    this.name = "ValidationError";
+    this.field = field;
+  }
+}
+
+function requiredText(
+  value: unknown,
+  label: string,
+  field: keyof EquipmentRequestBody,
+): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`O campo "${label}" é obrigatório.`);
+    throw new ValidationError(
+      `O campo "${label}" é obrigatório.`,
+      field,
+    );
   }
 
   return value.trim();
@@ -56,75 +68,36 @@ function optionalText(value: unknown): string | null {
   return normalizedValue || null;
 }
 
-function requiredDate(value: unknown, label: string): Date {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`O campo "${label}" é obrigatório.`);
-  }
+function optionalUppercaseText(
+  value: unknown,
+): string | null {
+  const normalizedValue = optionalText(value);
 
-  const date = new Date(`${value}T12:00:00.000Z`);
-
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`O campo "${label}" possui uma data inválida.`);
-  }
-
-  return date;
+  return normalizedValue
+    ? normalizedValue.toUpperCase()
+    : null;
 }
 
-function optionalDate(value: unknown, label: string): Date | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
+function requiredQuantity(value: unknown): number {
+  const quantity = Number(value);
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 0 ||
+    quantity > 999999
+  ) {
+    throw new ValidationError(
+      "A quantidade deve ser um número inteiro igual ou maior que zero.",
+      "quantity",
+    );
   }
 
-  if (typeof value !== "string") {
-    throw new Error(`O campo "${label}" possui uma data inválida.`);
-  }
-
-  const date = new Date(`${value}T12:00:00.000Z`);
-
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`O campo "${label}" possui uma data inválida.`);
-  }
-
-  return date;
+  return quantity;
 }
 
-function optionalDecimal(value: unknown): Prisma.Decimal | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error("O valor do equipamento é inválido.");
-    }
-
-    return new Prisma.Decimal(value);
-  }
-
-  if (typeof value !== "string") {
-    throw new Error("O valor do equipamento é inválido.");
-  }
-
-  const cleanedValue = value.trim().replace(/[^\d,.-]/g, "");
-
-  if (!cleanedValue) {
-    return null;
-  }
-
-  const normalizedValue = cleanedValue.includes(",")
-    ? cleanedValue.replace(/\./g, "").replace(",", ".")
-    : cleanedValue;
-
-  const numericValue = Number(normalizedValue);
-
-  if (!Number.isFinite(numericValue) || numericValue < 0) {
-    throw new Error("O valor do equipamento é inválido.");
-  }
-
-  return new Prisma.Decimal(numericValue);
-}
-
-function parseStatus(value: unknown): EquipmentStatus {
+function parseStatus(
+  value: unknown,
+): EquipmentStatus {
   if (
     typeof value === "string" &&
     Object.values(EquipmentStatus).includes(
@@ -134,10 +107,15 @@ function parseStatus(value: unknown): EquipmentStatus {
     return value as EquipmentStatus;
   }
 
-  throw new Error("O status informado é inválido.");
+  throw new ValidationError(
+    "O status informado é inválido.",
+    "status",
+  );
 }
 
-function parseCondition(value: unknown): EquipmentCondition {
+function parseCondition(
+  value: unknown,
+): EquipmentCondition {
   if (
     typeof value === "string" &&
     Object.values(EquipmentCondition).includes(
@@ -147,33 +125,26 @@ function parseCondition(value: unknown): EquipmentCondition {
     return value as EquipmentCondition;
   }
 
-  throw new Error("A condição informada é inválida.");
+  throw new ValidationError(
+    "A condição informada é inválida.",
+    "condition",
+  );
 }
 
-function duplicateResponse(error: Prisma.PrismaClientKnownRequestError) {
+function duplicateResponse(
+  error: Prisma.PrismaClientKnownRequestError,
+) {
   const target = Array.isArray(error.meta?.target)
     ? error.meta.target.join(",")
     : String(error.meta?.target ?? "");
-
-  if (target.includes("patrimony")) {
-    return Response.json(
-      {
-        success: false,
-        field: "patrimony",
-        message: "Esse patrimônio já está cadastrado.",
-      },
-      {
-        status: 409,
-      },
-    );
-  }
 
   if (target.includes("serialNumber")) {
     return Response.json(
       {
         success: false,
         field: "serialNumber",
-        message: "Esse número de série já está cadastrado.",
+        message:
+          "Esse número de série já está cadastrado.",
       },
       {
         status: 409,
@@ -184,7 +155,8 @@ function duplicateResponse(error: Prisma.PrismaClientKnownRequestError) {
   return Response.json(
     {
       success: false,
-      message: "Já existe um equipamento com esses dados.",
+      message:
+        "Já existe um equipamento com esses dados.",
     },
     {
       status: 409,
@@ -192,13 +164,20 @@ function duplicateResponse(error: Prisma.PrismaClientKnownRequestError) {
   );
 }
 
+async function requireAuthentication() {
+  const session = await auth();
+
+  return Boolean(session?.user);
+}
+
 export async function GET(
   _request: Request,
   context: RouteContext,
 ) {
-  const session = await auth();
+  const isAuthenticated =
+    await requireAuthentication();
 
-  if (!session?.user) {
+  if (!isAuthenticated) {
     return Response.json(
       {
         success: false,
@@ -213,18 +192,32 @@ export async function GET(
   try {
     const { id } = await context.params;
 
-    const equipment = await prisma.equipment.findUnique({
-      where: {
-        id,
-      },
-      include: {
-        images: {
-          orderBy: {
-            position: "asc",
+    if (!id) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O identificador do equipamento é obrigatório.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const equipment =
+      await prisma.equipment.findUnique({
+        where: {
+          id,
+        },
+        include: {
+          images: {
+            orderBy: {
+              position: "asc",
+            },
           },
         },
-      },
-    });
+      });
 
     if (!equipment) {
       return Response.json(
@@ -243,12 +236,16 @@ export async function GET(
       data: equipment,
     });
   } catch (error) {
-    console.error("Erro ao buscar equipamento:", error);
+    console.error(
+      "Erro ao buscar equipamento:",
+      error,
+    );
 
     return Response.json(
       {
         success: false,
-        message: "Não foi possível carregar o equipamento.",
+        message:
+          "Não foi possível carregar o equipamento.",
       },
       {
         status: 500,
@@ -261,9 +258,10 @@ export async function PATCH(
   request: Request,
   context: RouteContext,
 ) {
-  const session = await auth();
+  const isAuthenticated =
+    await requireAuthentication();
 
-  if (!session?.user) {
+  if (!isAuthenticated) {
     return Response.json(
       {
         success: false,
@@ -277,16 +275,32 @@ export async function PATCH(
 
   try {
     const { id } = await context.params;
-    const body = (await request.json()) as EquipmentRequestBody;
 
-    const existingEquipment = await prisma.equipment.findUnique({
-      where: {
-        id,
-      },
-      select: {
-        id: true,
-      },
-    });
+    if (!id) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O identificador do equipamento é obrigatório.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const body =
+      (await request.json()) as EquipmentRequestBody;
+
+    const existingEquipment =
+      await prisma.equipment.findUnique({
+        where: {
+          id,
+        },
+        select: {
+          id: true,
+        },
+      });
 
     if (!existingEquipment) {
       return Response.json(
@@ -300,93 +314,74 @@ export async function PATCH(
       );
     }
 
-function requiredQuantity(value: unknown): number {
-  const quantity = Number(value);
+    const equipment =
+      await prisma.equipment.update({
+        where: {
+          id,
+        },
+        data: {
+          name: requiredText(
+            body.name,
+            "Nome",
+            "name",
+          ),
 
-  if (
-    !Number.isInteger(quantity) ||
-    quantity < 1 ||
-    quantity > 999999
-  ) {
-    throw new Error(
-      "A quantidade deve ser um número inteiro maior que zero.",
-    );
-  }
+          category: requiredText(
+            body.category,
+            "Categoria",
+            "category",
+          ),
 
-  return quantity;
-}
+          manufacturer: optionalText(
+            body.manufacturer,
+          ),
 
-    const equipment = await prisma.equipment.update({
-      where: {
-        id,
-      },
-      data: {
-        patrimony: requiredText(
-          body.patrimony,
-          "Patrimônio",
-        ).toUpperCase(),
+          model: optionalText(body.model),
 
-        name: requiredText(body.name, "Nome"),
+          serialNumber: optionalUppercaseText(
+            body.serialNumber,
+          ),
 
-        manufacturer: requiredText(
-          body.manufacturer,
-          "Fabricante",
-        ),
+          quantity: requiredQuantity(
+            body.quantity,
+          ),
 
-        model: requiredText(body.model, "Modelo"),
+          invoiceNumber: optionalText(
+            body.invoiceNumber,
+          ),
 
-        serialNumber: requiredText(
-          body.serialNumber,
-          "Número de série",
-        ).toUpperCase(),
+          status: parseStatus(body.status),
 
-        quantity: requiredQuantity(body.quantity),
+          condition: parseCondition(
+            body.condition,
+          ),
 
-        category: requiredText(body.category, "Categoria"),
-
-        status: parseStatus(body.status),
-
-        condition: parseCondition(body.condition),
-
-        client: requiredText(body.client, "Cliente"),
-
-        location: requiredText(body.location, "Localização"),
-
-        responsible: requiredText(
-          body.responsible,
-          "Responsável",
-        ),
-
-        acquisitionDate: requiredDate(
-          body.acquisitionDate,
-          "Data de aquisição",
-        ),
-
-        warrantyEndDate: optionalDate(
-          body.warrantyEndDate,
-          "Fim da garantia",
-        ),
-
-        value: optionalDecimal(body.value),
-
-        supplier: optionalText(body.supplier),
-
-        invoiceNumber: optionalText(body.invoiceNumber),
-
-        notes: optionalText(body.notes),
-      },
-    });
+          notes: optionalText(body.notes),
+        },
+        include: {
+          images: {
+            orderBy: {
+              position: "asc",
+            },
+          },
+        },
+      });
 
     return Response.json({
       success: true,
-      message: "Equipamento atualizado com sucesso.",
+      message:
+        "Equipamento atualizado com sucesso.",
       data: equipment,
     });
   } catch (error) {
-    console.error("Erro ao atualizar equipamento:", error);
+    console.error(
+      "Erro ao atualizar equipamento:",
+      error,
+    );
 
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error instanceof
+        Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
       return duplicateResponse(error);
@@ -396,7 +391,8 @@ function requiredQuantity(value: unknown): number {
       return Response.json(
         {
           success: false,
-          message: "O conteúdo enviado não é um JSON válido.",
+          message:
+            "O conteúdo enviado não é um JSON válido.",
         },
         {
           status: 400,
@@ -404,10 +400,11 @@ function requiredQuantity(value: unknown): number {
       );
     }
 
-    if (error instanceof Error) {
+    if (error instanceof ValidationError) {
       return Response.json(
         {
           success: false,
+          field: error.field,
           message: error.message,
         },
         {
@@ -419,7 +416,8 @@ function requiredQuantity(value: unknown): number {
     return Response.json(
       {
         success: false,
-        message: "Não foi possível atualizar o equipamento.",
+        message:
+          "Não foi possível atualizar o equipamento.",
       },
       {
         status: 500,
@@ -432,9 +430,10 @@ export async function DELETE(
   _request: Request,
   context: RouteContext,
 ) {
-  const session = await auth();
+  const isAuthenticated =
+    await requireAuthentication();
 
-  if (!session?.user) {
+  if (!isAuthenticated) {
     return Response.json(
       {
         success: false,
@@ -448,6 +447,19 @@ export async function DELETE(
 
   try {
     const { id } = await context.params;
+
+    if (!id) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O identificador do equipamento é obrigatório.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
     const existingEquipment =
       await prisma.equipment.findUnique({
@@ -479,27 +491,17 @@ export async function DELETE(
     const imagePathnames =
       existingEquipment.images
         .map((image) => image.pathname)
-        .filter(Boolean);
+        .filter(
+          (pathname): pathname is string =>
+            Boolean(pathname),
+        );
 
-    /*
-     * Primeiro removemos o equipamento do banco.
-     *
-     * Como a relação possui onDelete: Cascade,
-     * os registros de EquipmentImage também serão removidos.
-     */
     await prisma.equipment.delete({
       where: {
         id,
       },
     });
 
-    /*
-     * Depois removemos os arquivos físicos do Vercel Blob.
-     *
-     * Se a exclusão no Blob falhar, o equipamento já terá sido
-     * removido do banco. Registramos o erro para não transformar
-     * uma exclusão concluída em falha para o usuário.
-     */
     if (imagePathnames.length > 0) {
       try {
         await del(imagePathnames);
@@ -513,15 +515,20 @@ export async function DELETE(
 
     return Response.json({
       success: true,
-      message: "Equipamento excluído com sucesso.",
+      message:
+        "Equipamento excluído com sucesso.",
     });
   } catch (error) {
-    console.error("Erro ao excluir equipamento:", error);
+    console.error(
+      "Erro ao excluir equipamento:",
+      error,
+    );
 
     return Response.json(
       {
         success: false,
-        message: "Não foi possível excluir o equipamento.",
+        message:
+          "Não foi possível excluir o equipamento.",
       },
       {
         status: 500,
