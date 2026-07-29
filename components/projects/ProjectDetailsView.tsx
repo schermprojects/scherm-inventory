@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { ProjectEquipmentModal } from "@/components/projects/ProjectEquipmentModal";
+import { ProjectPrintView } from "@/components/projects/ProjectPrintView";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -11,6 +12,7 @@ import {
   Loader2,
   Package,
   Pencil,
+  Printer,
   Save,
   Trash2,
   UserRound,
@@ -55,6 +57,19 @@ type ProjectEquipment = {
   id: string;
   quantity: number;
   notes: string | null;
+
+  needed: number;
+  physicalStock: number;
+  totalActiveNeeded: number;
+  neededByOtherProjects: number;
+  availableForProject: number;
+  assignedFromStock: number;
+  availableAfterProject: number;
+  shortage: number;
+  hasShortage: boolean;
+  isOutOfStock: boolean;
+  isBelowMinimum: boolean;
+
   equipment: {
     id: string;
     name: string;
@@ -86,6 +101,13 @@ type Project = {
   responsible: ProjectUser | null;
 
   equipment: ProjectEquipment[];
+
+  neededUnits: number;
+  availableUnits: number;
+  shortageUnits: number;
+  equipmentWithShortage: number;
+  hasShortage: boolean;
+
   createdAt: string;
   updatedAt: string;
 };
@@ -691,8 +713,11 @@ function closeEquipmentModal() {
       user.role === "COMMERCIAL",
   );
 
-  return (
-    <>
+return (
+  <>
+    <ProjectPrintView project={project} />
+
+    <div className="print:hidden">
       <div className="space-y-5">
         {successMessage ? (
           <div
@@ -736,6 +761,14 @@ function closeEquipmentModal() {
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
+             <button
+    type="button"
+    onClick={() => window.print()}
+    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
+  >
+    <Printer size={16} />
+    Imprimir / PDF
+  </button>
             {canEdit ? (
               <button
                 type="button"
@@ -744,6 +777,7 @@ function closeEquipmentModal() {
                 }}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
               >
+                
                 <Pencil size={16} />
                 Editar projeto
               </button>
@@ -866,10 +900,15 @@ function closeEquipmentModal() {
               <div className="divide-y divide-zinc-100">
                 {project.equipment.map(
                   (item) => (
-                    <div
-                      key={item.id}
-                      className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
+<div
+  key={item.id}
+  className={[
+    "flex flex-col gap-3 bg-white px-5 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between",
+    item.hasShortage
+      ? "border-l-4 border-red-500"
+      : "border-l-4 border-transparent",
+  ].join(" ")}
+>
                       <div>
                         <p className="font-semibold text-zinc-900">
                           {
@@ -894,7 +933,37 @@ function closeEquipmentModal() {
                             ? ` ${item.equipment.model}`
                             : ""}
                         </p>
+                        
+                        {item.hasShortage ? (
+  <div className="mt-3">
+    <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
+      <AlertTriangle
+        size={16}
+        aria-hidden="true"
+      />
 
+      {item.shortage === 1
+        ? "Falta 1 unidade"
+        : `Faltam ${item.shortage} unidades`}
+    </div>
+
+    <p className="mt-1 text-xs text-zinc-500">
+      Disponível:{" "}
+      <strong className="text-zinc-700">
+        {item.availableForProject}
+      </strong>
+
+      <span className="mx-1.5 text-zinc-300">
+        •
+      </span>
+
+      Necessário:{" "}
+      <strong className="text-zinc-700">
+        {item.needed}
+      </strong>
+    </p>
+  </div>
+) : null}
                         {item.notes ? (
                           <p className="mt-2 text-sm text-zinc-500">
                             {item.notes}
@@ -903,9 +972,19 @@ function closeEquipmentModal() {
                       </div>
 
 <div className="flex items-center gap-2">
-  <div className="rounded-lg bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-700">
-    {item.quantity} unidade(s)
-  </div>
+<div
+  className={[
+    "rounded-lg px-3 py-2 text-sm font-semibold",
+    item.hasShortage
+      ? "bg-red-100 text-red-700"
+      : "bg-zinc-100 text-zinc-700",
+  ].join(" ")}
+>
+  {item.quantity}{" "}
+  {item.quantity === 1
+    ? "unidade"
+    : "unidades"}
+</div>
 
   {canEdit ? (
     <button
@@ -991,12 +1070,16 @@ function closeEquipmentModal() {
                   )}
                 />
 
-                <DetailItem
-                  label="Data de conclusão"
-                  value={formatDate(
-                    project.completedAt,
-                  )}
-                />
+             <DetailItem
+  label="Conclusão do projeto"
+  value={
+    project.status === "COMPLETED"
+      ? `Concluído em ${formatDate(
+          project.completedAt,
+        )}`
+      : "Ainda não concluído"
+  }
+/>
 
                 <DetailItem
                   label="Criado em"
@@ -1584,14 +1667,15 @@ function closeEquipmentModal() {
           </div>
         </div>
       ) : null}
-      <ProjectEquipmentModal
-  open={showEquipmentModal}
-  projectId={project.id}
-  onClose={closeEquipmentModal}
-  onUpdated={loadProject}
-/>
-    </>
-  );
+           <ProjectEquipmentModal
+        open={showEquipmentModal}
+        projectId={project.id}
+        onClose={closeEquipmentModal}
+        onUpdated={loadProject}
+      />
+    </div>
+  </>
+);
 }
 
 function FormField({
