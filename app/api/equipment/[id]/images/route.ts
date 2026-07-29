@@ -90,12 +90,12 @@ export async function POST(
 
 const existingImagesCount = equipment.images.length;
 
-if (existingImagesCount + images.length > 6){
+if (existingImagesCount + images.length > 5){
       return Response.json(
         {
           success: false,
           message:
-            "O equipamento pode ter no máximo seis imagens.",
+            "O equipamento pode ter no máximo cinco imagens.",
         },
         {
           status: 400,

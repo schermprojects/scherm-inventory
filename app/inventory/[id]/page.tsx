@@ -3,6 +3,7 @@ import {
   EquipmentStatus,
 } from "@/generated/prisma/client";
 import { DeleteEquipmentButton } from "@/components/inventory/DeleteEquipmentButton";
+import { DeleteEquipmentImageButton } from "@/components/inventory/DeleteEquipmentImageButton";
 import { prisma } from "@/lib/prisma";
 import {
   ArrowLeft,
@@ -277,29 +278,33 @@ const isOutOfStock =
               description="Fotos cadastradas para este equipamento."
             >
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {equipment.images.map(
-                  (image, index) => (
-                    <article
-                      key={image.id}
-                      className="relative aspect-square overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={image.url}
-                        alt={`Imagem ${
-                          index + 1
-                        } de ${equipment.name}`}
-                        className="h-full w-full object-cover"
-                      />
+                {equipment.images.map((image, index) => (
+  <article
+    key={image.id}
+    className="group relative aspect-square overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
+  >
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img
+      src={image.url}
+      alt={`Imagem ${index + 1} de ${equipment.name}`}
+      className="h-full w-full object-cover"
+    />
 
-                      {index === 0 ? (
-                        <span className="absolute left-2 top-2 rounded-full bg-[#F57B00] px-2 py-1 text-[10px] font-bold text-white shadow-sm">
-                          Principal
-                        </span>
-                      ) : null}
-                    </article>
-                  ),
-                )}
+    <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/20" />
+
+    {index === 0 ? (
+      <span className="absolute left-2 top-2 z-10 rounded-full bg-[#F57B00] px-2 py-1 text-[10px] font-bold text-white shadow-sm">
+        Principal
+      </span>
+    ) : null}
+
+    <DeleteEquipmentImageButton
+      equipmentId={equipment.id}
+      imageId={image.id}
+      isPrimary={index === 0}
+    />
+  </article>
+))}
               </div>
             </DetailsSection>
           ) : null}
@@ -416,11 +421,6 @@ const isOutOfStock =
             </header>
 
             <dl className="divide-y divide-zinc-100 px-5">
-              <SidebarDetail
-                label="Identificador"
-                value={equipment.id}
-                monospace
-              />
 
               <SidebarDetail
                 label="Criado em"
@@ -629,11 +629,9 @@ function DetailItem({
 function SidebarDetail({
   label,
   value,
-  monospace = false,
 }: {
   label: string;
   value: string;
-  monospace?: boolean;
 }) {
   return (
     <div className="py-4">
@@ -641,14 +639,7 @@ function SidebarDetail({
         {label}
       </dt>
 
-      <dd
-        className={[
-          "mt-1 break-all text-sm font-semibold text-zinc-800",
-          monospace
-            ? "font-mono text-xs"
-            : "",
-        ].join(" ")}
-      >
+      <dd className="mt-1 text-sm font-semibold text-zinc-800">
         {value}
       </dd>
     </div>
