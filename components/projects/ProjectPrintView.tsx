@@ -188,6 +188,7 @@ export function ProjectPrintView({
 `}</style>
 
       <article className="project-print-document hidden bg-white font-sans text-zinc-900 print:block">
+ <div className="mb-4 h-1.5 w-full bg-[#f57b00]" />
  <header className="border-b-2 border-zinc-800 pb-4">
   <div className="flex items-start justify-between gap-8">
     <div className="flex min-w-0 items-center gap-4">
@@ -205,16 +206,17 @@ export function ProjectPrintView({
         <p className="mt-1 text-[9px] text-zinc-500">
           Controle interno de equipamentos e projetos
         </p>
+        <div className="mt-3 h-0.5 w-24 rounded-full bg-[#f57b00]" />
       </div>
     </div>
 
     <div className="shrink-0 text-right">
-      <p className="text-sm font-bold uppercase tracking-wide text-zinc-900">
-        Lista de equipamentos
-      </p>
+<p className="text-sm font-bold uppercase tracking-wide text-[#f57b00]">
+  Lista de equipamentos
+</p>
 
-      <p className="mt-1 text-[10px] text-zinc-500">
-        Projeto {project.name}
+      <p className="mt-1 text-[10px] font-semibold text-zinc-700">
+            {project.name}
       </p>
 
       <p className="mt-1 text-[9px] uppercase tracking-wide text-zinc-400">
@@ -225,14 +227,22 @@ export function ProjectPrintView({
 </header>
 
         <section className="project-print-section mt-5">
-          <h1 className="text-xl font-bold">
-            {project.name}
-          </h1>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
 
-          <p className="mt-1 text-sm text-zinc-600">
-            {project.clientName ||
-              "Cliente não informado"}
-          </p>
+  <h1 className="mt-0.5 text-xl font-bold text-zinc-900">
+    {project.name}
+  </h1>
+
+  <div className="mt-2 flex items-center gap-2 text-xs">
+    <span className="font-semibold text-zinc-500">
+      Cliente:
+    </span>
+
+    <span className="font-medium text-zinc-900">
+      {project.clientName || "Cliente não informado"}
+    </span>
+  </div>
+</div>
 
           <dl className="mt-5 grid grid-cols-2 gap-x-10 gap-y-2 text-xs">
             <PrintDetail
@@ -317,7 +327,7 @@ export function ProjectPrintView({
           </dl>
         </section>
 
-        <section className="project-print-section mt-7">
+        <section className="project-print-section mt-8">
           <div className="flex items-end justify-between border-b border-zinc-400 pb-2">
             <div>
               <h2 className="text-sm font-bold">
@@ -336,9 +346,9 @@ export function ProjectPrintView({
             </p>
           </div>
 
-          <table className="mt-3 w-full table-fixed border-collapse text-left text-[10px]">
-            <thead>
-              <tr className="border-b border-zinc-400 text-[9px] uppercase tracking-wide text-zinc-500">
+          <table className="mt-4 w-full table-fixed border-collapse text-left text-[10px]">
+            <thead className="bg-[#fff4eb]">
+  <tr className="border-b border-[#f57b00] text-[9px] uppercase tracking-wide text-zinc-700">
                 <th className="w-[5%] px-1 py-2">
                   OK
                 </th>
@@ -366,15 +376,17 @@ export function ProjectPrintView({
             </thead>
 
             <tbody>
-              {project.equipment.map((item) => (
+{project.equipment.map((item, index) => (
                 <tr
                   key={item.id}
-                  className={[
-                    "project-print-row border-b border-zinc-200 align-top",
-                    item.hasShortage
-                      ? "bg-red-50"
-                      : "",
-                  ].join(" ")}
+className={[
+  "project-print-row border-b border-zinc-200 align-top",
+  item.hasShortage
+    ? "bg-red-50"
+    : index % 2 === 0
+      ? "bg-white"
+      : "bg-zinc-50",
+].join(" ")}
                 >
                   <td className="px-1 py-3">
                     <span className="inline-block h-3 w-3 border border-zinc-500" />
@@ -414,23 +426,25 @@ export function ProjectPrintView({
                     {item.availableForProject}
                   </td>
 
-                  <td
-                    className={[
-                      "px-2 py-3 font-semibold",
-                      item.hasShortage
-                        ? "text-red-700"
-                        : "text-emerald-700",
-                    ].join(" ")}
-                  >
-                    {equipmentSituation(item)}
-                  </td>
+<td className="px-2 py-3">
+  <span
+    className={[
+      "inline-block rounded-full px-2 py-1 text-[9px] font-bold",
+      item.hasShortage
+        ? "bg-red-100 text-red-700"
+        : "bg-emerald-100 text-emerald-700",
+    ].join(" ")}
+  >
+    {equipmentSituation(item)}
+  </span>
+</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </section>
 
-        <section className="project-print-section mt-6 grid grid-cols-4 gap-3 border-y border-zinc-300 py-4 text-center">
+       <section className="project-print-section mt-7 grid grid-cols-4 gap-3">
           <PrintSummary
             label="Itens diferentes"
             value={project.equipment.length}
@@ -453,62 +467,104 @@ export function ProjectPrintView({
           />
         </section>
 
-        <section className="project-print-section mt-7">
-          <h2 className="text-xs font-bold">
-            Descrição do projeto
-          </h2>
+       <section className="project-print-section mt-7">
+  <div className="flex items-center gap-2 border-b border-zinc-300 pb-2">
+    <span className="h-4 w-1 rounded-full bg-[#f57b00]" />
 
-          <div className="mt-2 min-h-14 whitespace-pre-line border-b border-zinc-300 pb-3 text-[10px] leading-5 text-zinc-700">
-            {project.description ||
-              "Nenhuma descrição informada."}
-          </div>
-        </section>
+    <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-900">
+      Descrição do projeto
+    </h2>
+  </div>
 
-        <section className="project-print-section mt-6">
-          <h2 className="text-xs font-bold">
-            Observações do responsável ou técnico
-          </h2>
+  <div className="mt-3 min-h-14 whitespace-pre-line text-[10px] leading-5 text-zinc-700">
+    {project.description || "Nenhuma descrição informada."}
+  </div>
+</section>
 
-          {project.notes ? (
-            <p className="mt-3 min-h-20 whitespace-pre-line text-[10px] leading-5">
-              {project.notes}
-            </p>
-          ) : (
-            <div className="mt-4 space-y-5">
-              <div className="border-b border-zinc-400" />
-              <div className="border-b border-zinc-400" />
-              <div className="border-b border-zinc-400" />
-            </div>
-          )}
-        </section>
+<section className="project-print-section mt-7">
+  <div className="flex items-center gap-2 border-b border-zinc-300 pb-2">
+    <span className="h-4 w-1 rounded-full bg-[#f57b00]" />
 
-        <section className="project-print-signature mt-12 grid grid-cols-2 gap-14 text-[10px]">
-          <div>
-            <div className="border-b border-zinc-500" />
+    <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-900">
+      Observações do responsável ou técnico
+    </h2>
+  </div>
 
-            <p className="mt-2">
-              Responsável:{" "}
-              {project.responsible?.name ||
-                "________________________"}
-            </p>
-          </div>
+  {project.notes ? (
+    <p className="mt-3 min-h-20 whitespace-pre-line text-[10px] leading-5 text-zinc-700">
+      {project.notes}
+    </p>
+  ) : (
+    <div className="mt-4 space-y-5">
+      <div className="border-b border-zinc-300" />
+      <div className="border-b border-zinc-300" />
+      <div className="border-b border-zinc-300" />
+    </div>
+  )}
+</section>
 
-          <div>
-            <div className="border-b border-zinc-500" />
+        <section className="project-print-signature mt-14 grid grid-cols-3 gap-8 text-center text-[9px]">
+  <div>
+    <div className="mx-auto w-44 border-b border-zinc-500" />
 
-            <p className="mt-2">
-              Data e assinatura
-            </p>
-          </div>
-        </section>
+    <p className="mt-3 text-center font-semibold text-zinc-700">
+      Responsável pelo projeto
+    </p>
 
-        <footer className="mt-10 border-t border-zinc-300 pt-3 text-center text-[8px] text-zinc-500">
-          Documento gerado
-          {generatedAt
-            ? ` em ${generatedAt}`
-            : ""}{" "}
-          pelo sistema Scherm — uso interno.
-        </footer>
+    <p className="mt-1 text-center text-zinc-500">
+      {project.responsible?.name || "Nome não informado"}
+    </p>
+  </div>
+
+  <div>
+    <div className="mx-auto w-44 border-b border-zinc-500" />
+
+    <p className="mt-3 text-center font-semibold text-zinc-700">
+      Responsável pela conferência
+    </p>
+
+    <p className="mt-1 text-center text-zinc-500">
+      Nome e assinatura
+    </p>
+  </div>
+
+  <div>
+    <div className="mx-auto w-44 border-b border-zinc-500" />
+
+    <p className="mt-3 text-center font-semibold text-zinc-700">
+      Data
+    </p>
+
+    <p className="mt-1 text-center text-zinc-500">
+      ____ / ____ / ______
+    </p>
+  </div>
+</section>
+
+        <footer className="mt-10 border-t border-[#f57b00] pt-3">
+  <div className="flex items-center justify-between gap-6 text-[8px] text-zinc-500">
+    <div>
+      <p className="font-bold uppercase tracking-wide text-zinc-700">
+        Scherm Inventory
+      </p>
+
+      <p className="mt-1">
+        Controle interno de equipamentos e projetos
+      </p>
+    </div>
+
+    <div className="text-right">
+      <p>
+        Uso interno • Scherm Tecnologia
+      </p>
+
+      <p className="mt-1">
+        Gerado
+        {generatedAt ? ` em ${generatedAt}` : ""}
+      </p>
+    </div>
+  </div>
+</footer>
       </article>
     </>
   );
@@ -543,22 +599,29 @@ function PrintSummary({
   value: number;
   danger?: boolean;
 }) {
-  return (
-    <div>
-      <p className="text-[9px] uppercase tracking-wide text-zinc-500">
-        {label}
-      </p>
+return (
+  <div
+    className={[
+      "rounded-xl border shadow-sm p-3 text-center",
+      danger
+        ? "border-red-200 bg-red-50"
+        : "border-zinc-200 bg-white shadow-sm",
+    ].join(" ")}
+  >
+    <p className="text-[8px] font-semibold uppercase tracking-wide text-zinc-500">
+      {label}
+    </p>
 
-      <p
-        className={[
-          "mt-1 text-lg font-bold",
-          danger
-            ? "text-red-700"
-            : "text-zinc-900",
-        ].join(" ")}
-      >
-        {value}
-      </p>
-    </div>
-  );
+    <p
+      className={[
+        "mt-1 text-lg font-bold",
+        danger
+          ? "text-red-700"
+          : "text-[#f57b00]",
+      ].join(" ")}
+    >
+      {value}
+    </p>
+  </div>
+);
 }
