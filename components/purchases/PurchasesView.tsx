@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Package,
   PackageOpen,
+  Printer,
   RefreshCw,
   Search,
   ShoppingCart,
@@ -25,6 +26,7 @@ import {
 } from "react";
 
 import { EquipmentStockEntryModal } from "@/components/inventory/EquipmentStockEntryModal";
+import { PurchasesPrintView } from "@/components/purchases/PurchasesPrintView";
 
 type ProjectStatus =
   | "PLANNING"
@@ -529,40 +531,82 @@ export function PurchasesView({
     await loadPurchases();
   }
 
-  return (
-    <div className="space-y-5">
-      {!reportMode ? (
-        <header className="flex justify-end">
-          <button
-            type="button"
-            onClick={() =>
-              void loadPurchases(true)
-            }
-            disabled={
-              refreshing || loading
-            }
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <RefreshCw
-              size={17}
-              className={
-                refreshing
-                  ? "animate-spin"
-                  : ""
-              }
-            />
+  function handlePrint() {
+  window.print();
+}
 
-            {refreshing
-              ? "Atualizando..."
-              : "Atualizar"}
-          </button>
-        </header>
-      ) : null}
+ return (
+  <>
+    <PurchasesPrintView
+      items={filteredItems}
+    />
+
+    <div className="space-y-5 print:hidden">      
+      {!reportMode ? (
+        <header className="print-hidden flex flex-wrap justify-end gap-2">
+        <button
+        type="button"
+        onClick={handlePrint}
+        disabled={loading}
+        className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <Printer
+        size={17}
+        aria-hidden="true"
+      />
+
+      Imprimir / PDF
+    </button>
+
+    <button
+      type="button"
+      onClick={() =>
+        void loadPurchases(true)
+      }
+      disabled={
+        refreshing || loading
+      }
+      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <RefreshCw
+        size={17}
+        className={
+          refreshing
+            ? "animate-spin"
+            : ""
+        }
+        aria-hidden="true"
+      />
+
+      {refreshing
+        ? "Atualizando..."
+        : "Atualizar"}
+    </button>
+  </header>
+) : null}
+
+      <div className="print-only">
+  <h1 className="text-2xl font-bold text-zinc-900">
+    Lista de compras
+  </h1>
+
+  <p className="mt-1 text-sm text-zinc-600">
+    Equipamentos pendentes para os projetos ativos.
+  </p>
+
+  <p className="mt-1 text-xs text-zinc-500">
+    Emitido em{" "}
+    {new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date())}
+  </p>
+</div>
 
       {feedback ? (
         <div
           className={[
-            "flex items-start justify-between gap-4 rounded-xl border px-4 py-3 text-sm",
+  "print-hidden flex items-start justify-between gap-4 rounded-xl border px-4 py-3 text-sm",
             feedback.type ===
             "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -654,7 +698,7 @@ export function PurchasesView({
       </section>
 
       <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div className="border-b border-zinc-200 p-4">
+        <div className="print-hidden border-b border-zinc-200 p-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_220px_210px_auto]">
             <label className="relative">
               <span className="sr-only">
@@ -822,7 +866,7 @@ export function PurchasesView({
           />
         ) : (
           <>
-            <div className="hidden overflow-x-auto lg:block">
+            <div className="purchases-print-table hidden overflow-x-auto lg:block">
               <table className="w-full min-w-[950px] border-collapse">
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-50">
@@ -850,9 +894,9 @@ export function PurchasesView({
                       Comprar
                     </TableHeader>
 
-                    <TableHeader align="center">
-                      Detalhes
-                    </TableHeader>
+                    <th className="print-hidden px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">
+  Detalhes
+</th>
                   </tr>
                 </thead>
 
@@ -887,7 +931,7 @@ export function PurchasesView({
               </table>
             </div>
 
-            <div className="space-y-3 p-3 sm:p-4 lg:hidden">
+            <div className="purchases-print-cards space-y-3 p-3 sm:p-4 lg:hidden">
               {filteredItems.map(
                 (item) => (
                   <EquipmentCard
@@ -920,35 +964,36 @@ export function PurchasesView({
       </section>
 
       {!reportMode ? (
-        <EquipmentStockEntryModal
-          open={Boolean(
-            stockEntryEquipment,
-          )}
-          equipment={
-            stockEntryEquipment
-              ? {
-                  id: stockEntryEquipment.equipmentId,
-                  name: stockEntryEquipment.name,
-                  category: stockEntryEquipment.category,
-                  manufacturer:
-                    stockEntryEquipment.manufacturer,
-                  model:
-                    stockEntryEquipment.model,
-                  quantity:
-                    stockEntryEquipment.physicalStock,
-                }
-              : null
-          }
-          onClose={
-            closeStockEntry
-          }
-          onSuccess={
-            handleStockEntrySuccess
-          }
-        />
-      ) : null}
+  <div className="print-hidden">
+    <EquipmentStockEntryModal
+      open={Boolean(
+        stockEntryEquipment,
+      )}
+      equipment={
+        stockEntryEquipment
+          ? {
+              id: stockEntryEquipment.equipmentId,
+              name: stockEntryEquipment.name,
+              category: stockEntryEquipment.category,
+              manufacturer:
+                stockEntryEquipment.manufacturer,
+              model:
+                stockEntryEquipment.model,
+              quantity:
+                stockEntryEquipment.physicalStock,
+            }
+          : null
+      }
+      onClose={closeStockEntry}
+      onSuccess={
+        handleStockEntrySuccess
+      }
+    />
+  </div>
+) : null}
     </div>
-  );
+  </>
+);
 }
 
 function EquipmentRows({
@@ -1051,8 +1096,8 @@ function EquipmentRows({
           </div>
         </td>
 
-        <td className="px-4 py-4">
-          <div className="flex items-center justify-center gap-2">
+        <td className="print-hidden px-4 py-4">
+  <div className="flex items-center justify-center gap-2">
             {!reportMode ? (
               <button
                 type="button"

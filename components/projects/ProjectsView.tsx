@@ -51,10 +51,29 @@ type ProjectUser = {
   active: boolean;
 };
 
+type ClientOption = {
+  id: string;
+  clientCode: string;
+  shortName: string | null;
+  name: string;
+  active: boolean;
+};
+type ProjectClient = {
+  id: string;
+  clientCode: string | null;
+  shortName: string | null;
+  name: string;
+  contactName: string;
+  active: boolean;
+};
+
 type ProjectItem = {
   id: string;
   name: string;
+
+  clientId: string | null;
   clientName: string | null;
+  client: ProjectClient | null;
   description: string | null;
   status: ProjectStatus;
   priority: ProjectPriority;
@@ -175,6 +194,7 @@ type CreateProjectResponse = {
 
 type ProjectFormState = {
   name: string;
+  clientId: string;
   clientName: string;
   description: string;
   salespersonId: string;
@@ -266,6 +286,7 @@ function createEquipmentRow(
 function createInitialFormState(): ProjectFormState {
   return {
     name: "",
+    clientId: "",
     clientName: "",
     description: "",
     salespersonId: "",
@@ -376,6 +397,12 @@ export function ProjectsView() {
 
   const [users, setUsers] =
     useState<ProjectUser[]>([]);
+  
+  const [clients, setClients] =
+    useState<ClientOption[]>([]);
+
+  const [loadingClients, setLoadingClients] =
+    useState(true);
 
   const [equipmentOptions, setEquipmentOptions] =
     useState<EquipmentOption[]>([]);
@@ -686,6 +713,38 @@ for (const item of form.equipment) {
       }
     }, []);
 
+  const loadClients =
+  useCallback(async () => {
+    setLoadingClients(true);
+
+    try {
+      const response =
+        await fetch("/api/clients");
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ??
+            "Erro ao carregar clientes.",
+        );
+      }
+
+      setClients(
+        (data.data ?? []).filter(
+          (client: ClientOption) =>
+            client.active,
+        ),
+      );
+    } catch (error) {
+      console.error(error);
+      setClients([]);
+    } finally {
+      setLoadingClients(false);
+    }
+  }, []);
+
   const loadEquipment =
     useCallback(async () => {
       setLoadingEquipment(true);
@@ -752,10 +811,12 @@ for (const item of form.equipment) {
 
   useEffect(() => {
     void Promise.all([
-      loadUsers(),
-      loadEquipment(),
-    ]);
+    loadUsers(),
+    loadClients(),
+    loadEquipment(),
+]);
   }, [
+    loadClients,
     loadEquipment,
     loadUsers,
   ]);
@@ -1309,9 +1370,8 @@ availableStock:
           body: JSON.stringify({
             name,
 
-            clientName:
-              form.clientName.trim() ||
-              null,
+            clientId:
+  form.clientId || null,
 
             description:
               form.description.trim() ||
@@ -1686,27 +1746,35 @@ availableStock:
                 </FormField>
 
                 <FormField label="Cliente">
-                  <input
-                    type="text"
-                    value={
-                      form.clientName
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      updateForm(
-                        "clientName",
-                        event.target
-                          .value,
-                      )
-                    }
-                    placeholder="Nome do cliente"
-                    className={
-                      fieldClassName
-                    }
-                    maxLength={150}
-                  />
-                </FormField>
+  <select
+    value={form.clientId}
+    onChange={(event) =>
+      updateForm(
+        "clientId",
+        event.target.value,
+      )
+    }
+    disabled={loadingClients}
+    className={fieldClassName}
+  >
+    <option value="">
+      {loadingClients
+        ? "Carregando clientes..."
+        : "Selecione um cliente"}
+    </option>
+
+    {clients.map((client) => (
+      <option
+        key={client.id}
+        value={client.id}
+      >
+        {client.clientCode} •{" "}
+        {client.shortName ??
+          client.name}
+      </option>
+    ))}
+  </select>
+</FormField>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1862,10 +1930,7 @@ availableStock:
                     <option value="COMPLETED">
                       Concluído
                     </option>
-
-                    <option value="CANCELLED">
-                      Cancelado
-                    </option>
+                    
                   </select>
                 </FormField>
 
@@ -2789,10 +2854,23 @@ function ProjectCard({
           {project.name}
         </h2>
 
-        <p className="mt-1 text-sm text-zinc-500">
-          {project.clientName ||
-            "Cliente não informado"}
-        </p>
+        <div className="mt-1">
+  <p className="truncate text-sm text-zinc-500">
+    {project.client?.name ??
+      project.clientName ??
+      "Cliente não informado"}
+
+    {project.client?.contactName
+      ? ` · ${project.client.contactName}`
+      : ""}
+  </p>
+
+  {project.client?.clientCode ? (
+    <p className="mt-0.5 font-mono text-xs font-semibold text-[#F57B00]">
+      {project.client.clientCode}
+    </p>
+  ) : null}
+</div>
       </div>
 
       {project.description ? (

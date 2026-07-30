@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Boxes,
+  Building2,
   FolderKanban,
   LayoutDashboard,
   ShoppingCart,
@@ -38,6 +39,12 @@ export const navigationItems: readonly NavigationItem[] = [
     roles: ["ADMIN", "COMMERCIAL"],
   },
   {
+  label: "Clientes",
+  href: "/clients",
+  icon: Building2,
+  roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+},
+  {
     label: "Compras",
     href: "/purchases",
     icon: ShoppingCart,
@@ -69,4 +76,4 @@ export function getNavigationForRole(
   return navigationItems.filter((item) =>
     item.roles.includes(role),
   );
-}
+} 

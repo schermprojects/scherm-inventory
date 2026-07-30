@@ -36,7 +36,10 @@ type NormalizedProjectEquipment = {
 
 type ProjectBody = {
   name?: unknown;
+
+  clientId?: unknown;
   clientName?: unknown;
+
   description?: unknown;
   status?: unknown;
   priority?: unknown;
@@ -47,13 +50,6 @@ type ProjectBody = {
   responsibleId?: unknown;
   salespersonId?: unknown;
 
-  /*
-   * Se nenhum desses campos for enviado no PUT,
-   * os equipamentos atuais serão preservados.
-   *
-   * Se uma lista vazia for enviada, todos os
-   * equipamentos serão removidos do projeto.
-   */
   equipment?: unknown;
   equipments?: unknown;
 };
@@ -78,6 +74,17 @@ const projectInclude = {
   salesperson: {
     select: projectUserSelect,
   },
+
+  client: {
+  select: {
+    id: true,
+    clientCode: true,
+    shortName: true,
+    name: true,
+    contactName: true,
+    active: true,
+  },
+},
 
   equipment: {
     include: {
@@ -255,6 +262,15 @@ function hasEquipmentField(
       body,
       "equipments",
     )
+  );
+}
+
+function hasClientIdField(
+  body: ProjectBody,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(
+    body,
+    "clientId",
   );
 }
 
@@ -841,21 +857,110 @@ export async function PUT(
       await prisma.$transaction(
         async (transaction) => {
           const existingProject =
-            await transaction.project.findUnique({
-              where: {
-                id,
-              },
+  await transaction.project.findUnique({
+    where: {
+      id,
+    },
 
-              select: {
-                id: true,
-              },
-            });
+    select: {
+      id: true,
+      clientId: true,
+      clientName: true,
+    },
+  });
 
           if (!existingProject) {
             throw new Error(
               "PROJECT_NOT_FOUND",
             );
           }
+
+          let nextClientId =
+  existingProject.clientId;
+
+let nextClientName =
+  existingProject.clientName;
+
+if (hasClientIdField(body)) {
+  const requestedClientId =
+    optionalId(body.clientId);
+
+  if (!requestedClientId) {
+    /*
+     * O frontend enviou clientId como null
+     * ou string vazia. Remove o vínculo.
+     */
+    nextClientId = null;
+    nextClientName = optionalText(
+      body.clientName,
+    );
+  } else {
+    const selectedClient =
+      await transaction.client.findUnique({
+        where: {
+          id: requestedClientId,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          active: true,
+        },
+      });
+
+    if (!selectedClient) {
+      throw new Error(
+        "CLIENT_NOT_FOUND",
+      );
+    }
+
+    /*
+     * Permite preservar um cliente inativo
+     * que já estava vinculado ao projeto.
+     *
+     * Não permite selecionar outro cliente
+     * inativo.
+     */
+    const isExistingClient =
+      selectedClient.id ===
+      existingProject.clientId;
+
+    if (
+      !selectedClient.active &&
+      !isExistingClient
+    ) {
+      throw new Error(
+        "CLIENT_INACTIVE",
+      );
+    }
+
+    nextClientId =
+      selectedClient.id;
+
+    /*
+     * clientName continua temporariamente
+     * preenchido para compatibilidade com
+     * telas e relatórios antigos.
+     */
+    nextClientName =
+      selectedClient.name;
+  }
+} else if (
+  !existingProject.clientId &&
+  Object.prototype.hasOwnProperty.call(
+    body,
+    "clientName",
+  )
+) {
+  /*
+   * Compatibilidade com o formulário antigo.
+   * Só permite editar clientName diretamente
+   * quando ainda não existe clientId.
+   */
+  nextClientName = optionalText(
+    body.clientName,
+  );
+}
 
           if (shouldUpdateEquipment) {
             await validateEquipmentIds(
@@ -905,11 +1010,10 @@ export async function PUT(
             },
 
             data: {
-              name,
+  name,
 
-              clientName: optionalText(
-                body.clientName,
-              ),
+  clientId: nextClientId,
+  clientName: nextClientName,
 
               description: optionalText(
                 body.description,
@@ -979,6 +1083,40 @@ export async function PUT(
         },
       );
     }
+
+    if (
+  error instanceof Error &&
+  error.message ===
+    "CLIENT_NOT_FOUND"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "O cliente selecionado não foi encontrado.",
+    },
+    {
+      status: 404,
+    },
+  );
+}
+
+if (
+  error instanceof Error &&
+  error.message ===
+    "CLIENT_INACTIVE"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "O cliente selecionado está inativo e não pode ser vinculado ao projeto.",
+    },
+    {
+      status: 400,
+    },
+  );
+}
 
     if (isPrismaNotFoundError(error)) {
       return Response.json(

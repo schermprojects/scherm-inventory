@@ -8,23 +8,23 @@ datasource db {
 }
 
 model Equipment {
-  id            String             @id @default(cuid())
+  id            String              @id @default(cuid())
   name          String
   category      String
   manufacturer  String?
   model         String?
   serialNumber  String?
-  quantity      Int                @default(1)
-  minimumStock  Int                @default(0)
+  quantity      Int                 @default(1)
+  minimumStock  Int                 @default(0)
   invoiceNumber String?
-  status        EquipmentStatus    @default(AVAILABLE)
-  condition     EquipmentCondition @default(NEW)
+  status        EquipmentStatus     @default(AVAILABLE)
+  condition     EquipmentCondition  @default(NEW)
   notes         String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-
-  images   EquipmentImage[]
-  projects ProjectEquipment[]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  movements     EquipmentMovement[]
+  images        EquipmentImage[]
+  projects      ProjectEquipment[]
 
   @@index([name])
   @@index([category])
@@ -60,9 +60,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdProjects     Project[] @relation("ProjectCreatedBy")
-  responsibleProjects Project[] @relation("ProjectResponsible")
-  salesProjects       Project[] @relation("ProjectSalesperson")
+  createdProjects     Project[]           @relation("ProjectCreatedBy")
+  responsibleProjects Project[]           @relation("ProjectResponsible")
+  salesProjects       Project[]           @relation("ProjectSalesperson")
+  equipmentMovements  EquipmentMovement[] @relation("EquipmentMovementCreatedBy")
 
   @@index([name])
   @@index([role])
@@ -70,10 +71,51 @@ model User {
   @@map("users")
 }
 
+model Client {
+  id String @id @default(cuid())
+
+  shortName  String?
+  clientCode String? @unique
+
+  name        String
+  contactName String
+  position    String?
+
+  phone    String?
+  mobile   String?
+  email    String?
+  website  String?
+  document String?
+
+  zipcode    String?
+  address    String?
+  number     String?
+  complement String?
+  district   String?
+  city       String?
+  state      String?
+
+  notes  String?
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects Project[]
+
+  @@index([name])
+  @@index([shortName])
+  @@index([contactName])
+  @@index([city])
+  @@index([active])
+  @@map("clients")
+}
+
 model Project {
   id          String          @id @default(cuid())
   name        String
   clientName  String?
+  clientId    String?
   description String?
   status      ProjectStatus   @default(PLANNING)
   priority    ProjectPriority @default(NORMAL)
@@ -95,10 +137,14 @@ model Project {
 
   salesperson User? @relation("ProjectSalesperson", fields: [salespersonId], references: [id], onDelete: SetNull)
 
-  equipment ProjectEquipment[]
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  equipment          ProjectEquipment[]
+  equipmentMovements EquipmentMovement[]
 
   @@index([name])
   @@index([clientName])
+  @@index([clientId])
   @@index([status])
   @@index([priority])
   @@index([createdById])
@@ -109,13 +155,14 @@ model Project {
 }
 
 model ProjectEquipment {
-  id          String   @id @default(cuid())
-  quantity    Int      @default(1)
-  notes       String?
-  projectId   String
-  equipmentId String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(cuid())
+  quantity          Int      @default(1)
+  allocatedQuantity Int      @default(0)
+  notes             String?
+  projectId         String
+  equipmentId       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   equipment Equipment @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
@@ -124,6 +171,35 @@ model ProjectEquipment {
   @@index([projectId])
   @@index([equipmentId])
   @@map("project_equipment")
+}
+
+model EquipmentMovement {
+  id String @id @default(cuid())
+
+  type     EquipmentMovementType
+  quantity Int
+
+  previousQuantity Int
+  currentQuantity  Int
+
+  invoiceNumber String?
+  notes         String?
+
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("EquipmentMovementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([equipmentId])
+  @@index([projectId])
+  @@index([createdById])
+  @@index([createdAt])
 }
 
 enum UserRole {
@@ -155,4 +231,10 @@ enum ProjectPriority {
   NORMAL
   HIGH
   URGENT
+}
+
+enum EquipmentMovementType {
+  ENTRY
+  EXIT
+  ADJUSTMENT
 }

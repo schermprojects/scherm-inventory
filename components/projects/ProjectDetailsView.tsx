@@ -53,6 +53,31 @@ type ProjectUser = {
   active: boolean;
 };
 
+type ProjectClient = {
+  id: string;
+  clientCode: string | null;
+  shortName: string | null;
+  name: string;
+  contactName: string;
+  active: boolean;
+};
+
+type ClientOption = {
+  id: string;
+  clientCode: string | null;
+  shortName: string | null;
+  name: string;
+  contactName: string;
+  active: boolean;
+};
+
+type ClientsResponse = {
+  success: boolean;
+  data?: ClientOption[];
+  message?: string;
+  error?: string;
+};
+
 type ProjectEquipment = {
   id: string;
   quantity: number;
@@ -83,7 +108,9 @@ type ProjectEquipment = {
 type Project = {
   id: string;
   name: string;
+  clientId: string | null;
   clientName: string | null;
+  client: ProjectClient | null;
   description: string | null;
   status: ProjectStatus;
   priority: ProjectPriority;
@@ -131,6 +158,7 @@ type UsersResponse = {
 
 type ProjectForm = {
   name: string;
+  clientId: string;
   clientName: string;
   description: string;
   status: ProjectStatus;
@@ -149,6 +177,7 @@ type SessionUser = {
 
 const emptyProjectForm: ProjectForm = {
   name: "",
+  clientId: "",
   clientName: "",
   description: "",
   status: "PLANNING",
@@ -206,21 +235,38 @@ function projectToForm(
 ): ProjectForm {
   return {
     name: project.name,
-    clientName: project.clientName ?? "",
-    description: project.description ?? "",
+
+    clientId:
+      project.clientId ??
+      project.client?.id ??
+      "",
+
+    clientName:
+      project.client?.name ??
+      project.clientName ??
+      "",
+
+    description:
+      project.description ?? "",
+
     status: project.status,
     priority: project.priority,
+
     startDate: formatDateInput(
       project.startDate,
     ),
+
     dueDate: formatDateInput(
       project.dueDate,
     ),
+
     completedAt: formatDateInput(
       project.completedAt,
     ),
+
     salespersonId:
       project.salespersonId ?? "",
+
     responsibleId:
       project.responsibleId ?? "",
   };
@@ -277,6 +323,14 @@ export function ProjectDetailsView({
   const [users, setUsers] = useState<
     ProjectUser[]
   >([]);
+
+  const [clients, setClients] =
+  useState<ClientOption[]>([]);
+
+const [
+  loadingClients,
+  setLoadingClients,
+] = useState(false);
 
   const [form, setForm] =
     useState<ProjectForm>(emptyProjectForm);
@@ -403,6 +457,56 @@ export function ProjectDetailsView({
     [],
   );
 
+  const loadClients =
+  useCallback(async () => {
+    try {
+      setLoadingClients(true);
+      setModalError("");
+
+      const response = await fetch(
+        "/api/clients",
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept:
+              "application/json",
+          },
+        },
+      );
+
+      const data =
+        (await response.json()) as ClientsResponse;
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        throw new Error(
+          data.message ??
+            data.error ??
+            "Não foi possível carregar os clientes.",
+        );
+      }
+
+      setClients(
+        Array.isArray(data.data)
+          ? data.data
+          : [],
+      );
+    } catch (loadError) {
+      setClients([]);
+
+      setModalError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Não foi possível carregar os clientes.",
+      );
+    } finally {
+      setLoadingClients(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadProject();
   }, [loadProject]);
@@ -463,19 +567,29 @@ export function ProjectDetailsView({
   ]);
 
   async function openEditModal() {
-    if (!project || !canEdit) {
-      return;
-    }
-
-    setForm(projectToForm(project));
-    setModalError("");
-    setSuccessMessage("");
-    setShowEditModal(true);
-
-    if (users.length === 0) {
-      await loadUsers();
-    }
+  if (!project || !canEdit) {
+    return;
   }
+
+  setForm(projectToForm(project));
+  setModalError("");
+  setSuccessMessage("");
+  setShowEditModal(true);
+
+  const requests: Promise<void>[] = [];
+
+  if (users.length === 0) {
+    requests.push(loadUsers());
+  }
+
+  if (clients.length === 0) {
+    requests.push(loadClients());
+  }
+
+  if (requests.length > 0) {
+    await Promise.all(requests);
+  }
+}
 
   function closeEditModal() {
     if (saving) {
@@ -564,9 +678,12 @@ function closeEquipmentModal() {
           },
           body: JSON.stringify({
             name: form.name.trim(),
-            clientName:
-              form.clientName.trim() ||
-              null,
+            clientId:
+  form.clientId || null,
+
+clientName:
+  form.clientName.trim() ||
+  null,
             description:
               form.description.trim() ||
               null,
@@ -754,10 +871,36 @@ return (
               {project.name}
             </h1>
 
-            <p className="mt-1 text-sm text-zinc-500">
-              {project.clientName ||
-                "Cliente não informado"}
-            </p>
+            <div className="mt-1">
+  {project.client ? (
+    <>
+      <p className="text-sm text-zinc-600">
+        <span className="font-mono font-semibold text-[#F57B00]">
+          {project.client.clientCode ??
+            "SEM-CÓDIGO"}
+        </span>
+
+        <span className="mx-1.5 text-zinc-300">
+          •
+        </span>
+
+        <span className="font-medium">
+          {project.client.name}
+        </span>
+      </p>
+
+      <p className="mt-1 text-xs text-zinc-400">
+        Contato:{" "}
+        {project.client.contactName}
+      </p>
+    </>
+  ) : (
+    <p className="text-sm text-zinc-500">
+      {project.clientName ||
+        "Cliente não informado"}
+    </p>
+  )}
+</div>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -1198,27 +1341,94 @@ return (
                   </FormField>
 
                   <FormField
-                    label="Cliente"
-                    htmlFor="clientName"
-                  >
-                    <input
-                      id="clientName"
-                      name="clientName"
-                      type="text"
-                      maxLength={150}
-                      value={
-                        form.clientName
-                      }
-                      onChange={
-                        handleInputChange
-                      }
-                      disabled={saving}
-                      className={
-                        inputClassName
-                      }
-                      placeholder="Nome do cliente"
-                    />
-                  </FormField>
+  label="Cliente"
+  htmlFor="clientId"
+>
+  <select
+    id="clientId"
+    name="clientId"
+    value={form.clientId}
+    onChange={(event) => {
+      const selectedClientId =
+        event.target.value;
+
+      const selectedClient =
+        clients.find(
+          (client) =>
+            client.id ===
+            selectedClientId,
+        );
+
+      setForm((currentForm) => ({
+        ...currentForm,
+
+        clientId:
+          selectedClientId,
+
+        clientName:
+          selectedClient?.name ??
+          "",
+      }));
+    }}
+    disabled={
+  saving ||
+  loadingUsers ||
+  loadingClients
+}
+    className={inputClassName}
+  >
+    <option value="">
+      {loadingClients
+        ? "Carregando clientes..."
+        : "Sem cliente selecionado"}
+    </option>
+
+    {clients.map((client) => {
+      const isCurrentClient =
+        client.id ===
+        project.clientId;
+
+      return (
+        <option
+          key={client.id}
+          value={client.id}
+          disabled={
+            !client.active &&
+            !isCurrentClient
+          }
+        >
+          {client.clientCode ??
+            "SEM-CÓDIGO"}
+          {" • "}
+          {client.shortName ??
+            client.name}
+          {!client.active
+            ? " — Inativo"
+            : ""}
+        </option>
+      );
+    })}
+  </select>
+
+  {loadingClients ? (
+    <p className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+      <Loader2
+        size={13}
+        className="animate-spin"
+      />
+
+      Carregando clientes...
+    </p>
+  ) : null}
+
+  {!loadingClients &&
+  clients.length === 0 ? (
+    <p className="mt-2 text-xs text-amber-700">
+      Nenhum cliente cadastrado foi
+      encontrado.
+    </p>
+  ) : null}
+</FormField>
 
                   <FormField
                     label="Vendedor"

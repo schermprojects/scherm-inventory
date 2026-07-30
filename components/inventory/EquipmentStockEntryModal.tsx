@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -22,6 +23,29 @@ type StockEntryEquipment = {
   quantity: number;
 };
 
+type StockEntryProject = {
+  id: string;
+  name: string;
+  clientName: string | null;
+  requiredQuantity: number;
+  allocatedQuantity: number;
+  missingQuantity: number;
+};
+
+type ProjectsResponse = {
+  success?: boolean;
+  data?: {
+    equipment: {
+      id: string;
+      name: string;
+    };
+    projects: StockEntryProject[];
+    totalMissingQuantity: number;
+  };
+  message?: string;
+  error?: string;
+};
+
 type StockEntryResponse = {
   success?: boolean;
   message?: string;
@@ -32,6 +56,8 @@ type StockEntryResponse = {
     previousQuantity: number;
     entryQuantity: number;
     currentQuantity: number;
+    projectId?: string | null;
+    projectName?: string | null;
   };
 };
 
@@ -42,7 +68,10 @@ type EquipmentStockEntryModalProps = {
   onSuccess: () => Promise<void> | void;
 };
 
-type StockMetricTone = "zinc" | "orange" | "green";
+type StockMetricTone =
+  | "zinc"
+  | "orange"
+  | "green";
 
 type StockMetricProps = {
   label: string;
@@ -56,7 +85,9 @@ const MAX_STOCK_ENTRY = 999999;
 const fieldClassName =
   "h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500";
 
-function getApiMessage(data: StockEntryResponse): string {
+function getApiMessage(
+  data: StockEntryResponse,
+): string {
   return (
     data.message ??
     data.error ??
@@ -64,18 +95,35 @@ function getApiMessage(data: StockEntryResponse): string {
   );
 }
 
-function getErrorMessage(error: unknown): string {
+function getProjectsApiMessage(
+  data: ProjectsResponse,
+): string {
+  return (
+    data.message ??
+    data.error ??
+    "Não foi possível carregar os projetos."
+  );
+}
+
+function getErrorMessage(
+  error: unknown,
+): string {
   return error instanceof Error
     ? error.message
     : "Ocorreu um erro inesperado.";
 }
 
-async function parseResponse(
+async function parseStockEntryResponse(
   response: Response,
 ): Promise<StockEntryResponse> {
-  const contentType = response.headers.get("content-type");
+  const contentType =
+    response.headers.get("content-type");
 
-  if (!contentType?.includes("application/json")) {
+  if (
+    !contentType?.includes(
+      "application/json",
+    )
+  ) {
     return {
       success: response.ok,
       message: response.ok
@@ -87,24 +135,95 @@ async function parseResponse(
   return (await response.json()) as StockEntryResponse;
 }
 
+async function parseProjectsResponse(
+  response: Response,
+): Promise<ProjectsResponse> {
+  const contentType =
+    response.headers.get("content-type");
+
+  if (
+    !contentType?.includes(
+      "application/json",
+    )
+  ) {
+    return {
+      success: false,
+      message:
+        "O servidor retornou uma resposta inválida ao carregar os projetos.",
+    };
+  }
+
+  return (await response.json()) as ProjectsResponse;
+}
+
 export function EquipmentStockEntryModal({
   equipment,
   open,
   onClose,
   onSuccess,
 }: EquipmentStockEntryModalProps) {
-  const [quantity, setQuantity] = useState("1");
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [quantity, setQuantity] =
+    useState("1");
+
+  const [
+    invoiceNumber,
+    setInvoiceNumber,
+  ] = useState("");
+
+  const [notes, setNotes] =
+    useState("");
+
+  const [projectId, setProjectId] =
+    useState("");
+
+  const [projects, setProjects] =
+    useState<StockEntryProject[]>([]);
+
+  const [
+    loadingProjects,
+    setLoadingProjects,
+  ] = useState(false);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] = useState<
+    string | null
+  >(null);
 
   const parsedQuantity = Number(quantity);
 
-  const validQuantity =
-    Number.isInteger(parsedQuantity) &&
-    parsedQuantity >= 1 &&
-    parsedQuantity <= MAX_STOCK_ENTRY;
+  const selectedProject = useMemo(
+    () =>
+      projects.find(
+        (project) =>
+          project.id === projectId,
+      ) ?? null,
+    [projectId, projects],
+  );
+
+const validQuantity =
+  Number.isInteger(parsedQuantity) &&
+  parsedQuantity >= 1 &&
+  parsedQuantity <= MAX_STOCK_ENTRY;
+
+const allocationQuantity =
+  selectedProject && validQuantity
+    ? Math.min(
+        parsedQuantity,
+        selectedProject.missingQuantity,
+      )
+    : 0;
+
+const freeStockQuantity =
+  validQuantity
+    ? parsedQuantity - allocationQuantity
+    : 0;
+
+const canSubmit =
+  validQuantity &&
+  !saving &&
+  !loadingProjects;
 
   const projectedStock = useMemo(() => {
     if (!equipment) {
@@ -115,40 +234,132 @@ export function EquipmentStockEntryModal({
       return equipment.quantity;
     }
 
-    return equipment.quantity + parsedQuantity;
-  }, [equipment, parsedQuantity, validQuantity]);
+    return (
+      equipment.quantity +
+      parsedQuantity
+    );
+  }, [
+    equipment,
+    parsedQuantity,
+    validQuantity,
+  ]);
+
+  const loadProjects =
+    useCallback(async () => {
+      if (!equipment?.id) {
+        setProjects([]);
+        return;
+      }
+
+      setLoadingProjects(true);
+      setError(null);
+
+      try {
+        const response = await fetch(
+          `/api/equipment/${encodeURIComponent(
+            equipment.id,
+          )}/project-shortages`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
+            },
+          },
+        );
+
+        const data =
+          await parseProjectsResponse(
+            response,
+          );
+
+        if (
+          !response.ok ||
+          data.success === false
+        ) {
+          throw new Error(
+            getProjectsApiMessage(data),
+          );
+        }
+
+        setProjects(
+          Array.isArray(
+            data.data?.projects,
+          )
+            ? data.data.projects
+            : [],
+        );
+      } catch (loadError) {
+        console.error(
+          "Erro ao carregar projetos para entrada:",
+          loadError,
+        );
+
+        setProjects([]);
+        setError(
+          getErrorMessage(loadError),
+        );
+      } finally {
+        setLoadingProjects(false);
+      }
+    }, [equipment]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || !equipment) {
       return;
     }
 
     setQuantity("1");
     setInvoiceNumber("");
     setNotes("");
+    setProjectId("");
+    setProjects([]);
     setSaving(false);
     setError(null);
-  }, [equipment?.id, open]);
+
+    void loadProjects();
+  }, [
+    equipment,
+    loadProjects,
+    open,
+  ]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !saving) {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
+      if (
+        event.key === "Escape" &&
+        !saving
+      ) {
         onClose();
       }
     }
 
-    const previousOverflow = document.body.style.overflow;
+    const previousOverflow =
+      document.body.style.overflow;
 
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow =
+      "hidden";
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown,
+    );
 
     return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow =
+        previousOverflow;
+
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
     };
   }, [onClose, open, saving]);
 
@@ -164,23 +375,40 @@ export function EquipmentStockEntryModal({
     onClose();
   }
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
+  function handleQuantityChange(
+    value: string,
   ) {
-    event.preventDefault();
-
-    if (!equipment) {
-      return;
-    }
-
+    setQuantity(value);
     setError(null);
+  }
 
-    const normalizedQuantity = Number(quantity);
+function handleProjectChange(
+  value: string,
+) {
+  setProjectId(value);
+  setError(null);
+}
+
+  async function handleSubmit(
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+
+  if (!equipment) {
+    return;
+  }
+
+  setError(null);
+
+  const normalizedQuantity = Number(quantity);
 
     if (
-      !Number.isInteger(normalizedQuantity) ||
+      !Number.isInteger(
+        normalizedQuantity,
+      ) ||
       normalizedQuantity < 1 ||
-      normalizedQuantity > MAX_STOCK_ENTRY
+      normalizedQuantity >
+        MAX_STOCK_ENTRY
     ) {
       setError(
         `Informe uma quantidade inteira entre 1 e ${MAX_STOCK_ENTRY}.`,
@@ -193,31 +421,56 @@ export function EquipmentStockEntryModal({
 
     try {
       const response = await fetch(
-        `/api/equipment/${encodeURIComponent(equipment.id)}/stock`,
+        `/api/equipment/${encodeURIComponent(
+          equipment.id,
+        )}/stock`,
         {
           method: "PATCH",
           headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
           },
           body: JSON.stringify({
-            quantity: normalizedQuantity,
-            invoiceNumber: invoiceNumber.trim() || null,
-            notes: notes.trim() || null,
+            quantity:
+              normalizedQuantity,
+
+            projectId:
+              projectId || null,
+
+            invoiceNumber:
+              invoiceNumber.trim() ||
+              null,
+
+            notes:
+              notes.trim() || null,
           }),
         },
       );
 
-      const data = await parseResponse(response);
+      const data =
+        await parseStockEntryResponse(
+          response,
+        );
 
-      if (!response.ok || data.success === false) {
-        throw new Error(getApiMessage(data));
+      if (
+        !response.ok ||
+        data.success === false
+      ) {
+        throw new Error(
+          getApiMessage(data),
+        );
       }
 
       await onSuccess();
       onClose();
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      setError(
+        getErrorMessage(
+          submitError,
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -230,7 +483,8 @@ export function EquipmentStockEntryModal({
   ]
     .filter(
       (value): value is string =>
-        typeof value === "string" && value.trim().length > 0,
+        typeof value === "string" &&
+        value.trim().length > 0,
     )
     .join(" · ");
 
@@ -242,7 +496,10 @@ export function EquipmentStockEntryModal({
       aria-labelledby="stock-entry-modal-title"
       aria-describedby="stock-entry-modal-description"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (
+          event.target ===
+          event.currentTarget
+        ) {
           handleClose();
         }
       }}
@@ -261,7 +518,8 @@ export function EquipmentStockEntryModal({
               id="stock-entry-modal-description"
               className="mt-0.5 text-xs text-zinc-500"
             >
-              Adicione unidades ao estoque físico atual.
+              Adicione unidades ao
+              estoque físico atual.
             </p>
           </div>
 
@@ -291,7 +549,8 @@ export function EquipmentStockEntryModal({
               </p>
 
               <p className="mt-0.5 break-words text-xs text-zinc-600">
-                {equipmentDescription || "Equipamento do inventário"}
+                {equipmentDescription ||
+                  "Equipamento do inventário"}
               </p>
             </div>
           </section>
@@ -308,13 +567,19 @@ export function EquipmentStockEntryModal({
           <div className="grid grid-cols-3 gap-2">
             <StockMetric
               label="Estoque atual"
-              value={equipment.quantity}
+              value={
+                equipment.quantity
+              }
               tone="zinc"
             />
 
             <StockMetric
               label="Entrada"
-              value={validQuantity ? parsedQuantity : 0}
+              value={
+                validQuantity
+                  ? parsedQuantity
+                  : 0
+              }
               tone="orange"
               prefix="+"
             />
@@ -329,7 +594,9 @@ export function EquipmentStockEntryModal({
           <label className="block space-y-1.5">
             <span className="text-sm font-medium text-zinc-700">
               Quantidade recebida
-              <span className="ml-1 text-red-500">*</span>
+              <span className="ml-1 text-red-500">
+                *
+              </span>
             </span>
 
             <input
@@ -340,14 +607,73 @@ export function EquipmentStockEntryModal({
               step={1}
               value={quantity}
               onChange={(event) => {
-                setQuantity(event.target.value);
-                setError(null);
+                handleQuantityChange(
+                  event.target.value,
+                );
               }}
               className={fieldClassName}
               disabled={saving}
               autoFocus
               required
             />
+
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium text-zinc-700">
+              Projeto de destino
+            </span>
+
+            <select
+              value={projectId}
+              onChange={(event) => {
+                handleProjectChange(
+                  event.target.value,
+                );
+              }}
+              disabled={
+                saving ||
+                loadingProjects
+              }
+              className={fieldClassName}
+            >
+              <option value="">
+                {loadingProjects
+                  ? "Carregando projetos..."
+                  : "Entrada livre no estoque"}
+              </option>
+
+              {projects.map(
+                (project) => (
+                  <option
+                    key={project.id}
+                    value={project.id}
+                  >
+                    {project.name}
+                    {project.clientName
+                      ? ` • ${project.clientName}`
+                      : ""}
+                    {` — faltam ${project.missingQuantity}`}
+                  </option>
+                ),
+              )}
+            </select>
+
+            {!loadingProjects &&
+            projects.length === 0 ? (
+              <span className="block text-xs leading-5 text-emerald-700">
+                Nenhum projeto ativo
+                possui pendência deste
+                equipamento.
+              </span>
+            ) : (
+              <span className="block text-xs leading-5 text-zinc-500">
+                São exibidos apenas
+                projetos que ainda
+                possuem pendência deste
+                equipamento.
+              </span>
+            )}
           </label>
 
           <label className="block space-y-1.5">
@@ -359,11 +685,15 @@ export function EquipmentStockEntryModal({
               type="text"
               value={invoiceNumber}
               onChange={(event) => {
-                setInvoiceNumber(event.target.value);
+                setInvoiceNumber(
+                  event.target.value,
+                );
               }}
               placeholder="Opcional"
               maxLength={150}
-              className={fieldClassName}
+              className={
+                fieldClassName
+              }
               disabled={saving}
             />
           </label>
@@ -376,7 +706,9 @@ export function EquipmentStockEntryModal({
             <textarea
               value={notes}
               onChange={(event) => {
-                setNotes(event.target.value);
+                setNotes(
+                  event.target.value,
+                );
               }}
               placeholder="Ex.: entrega parcial do fornecedor"
               rows={3}
@@ -393,9 +725,38 @@ export function EquipmentStockEntryModal({
             />
 
             <span>
-              A entrada altera apenas o estoque físico. As quantidades
-              solicitadas pelos projetos permanecem iguais.
-            </span>
+  {selectedProject ? (
+    freeStockQuantity > 0 ? (
+      <>
+        <strong>{allocationQuantity}</strong>{" "}
+        unidade(s) atenderão o projeto{" "}
+        <strong>
+  “{selectedProject.name}”
+</strong>.
+        e{" "}
+        <strong>{freeStockQuantity}</strong>{" "}
+        unidade(s) permanecerão como
+        estoque livre.
+      </>
+    ) : (
+      <>
+        Todas as{" "}
+        <strong>{allocationQuantity}</strong>{" "}
+        unidade(s) atenderão o projeto{" "}
+        <strong>
+          “{selectedProject.name}”
+        </strong>.
+      </>
+    )
+  ) : (
+    <>
+      Todas as{" "}
+      <strong>{parsedQuantity || 0}</strong>{" "}
+      unidade(s) serão adicionadas ao
+      estoque livre.
+    </>
+  )}
+</span>
           </div>
 
           <div className="flex flex-col-reverse gap-2 border-t border-zinc-100 pt-4 sm:flex-row sm:justify-end">
@@ -410,7 +771,7 @@ export function EquipmentStockEntryModal({
 
             <button
               type="submit"
-              disabled={saving || !validQuantity}
+              disabled={!canSubmit}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <ArrowDownToLine
@@ -418,7 +779,9 @@ export function EquipmentStockEntryModal({
                 aria-hidden="true"
               />
 
-              {saving ? "Registrando..." : "Confirmar entrada"}
+              {saving
+                ? "Registrando..."
+                : "Confirmar entrada"}
             </button>
           </div>
         </form>
@@ -433,10 +796,15 @@ function StockMetric({
   tone,
   prefix = "",
 }: StockMetricProps) {
-  const colors: Record<StockMetricTone, string> = {
+  const colors: Record<
+    StockMetricTone,
+    string
+  > = {
     zinc: "border-zinc-200 bg-zinc-50 text-zinc-800",
-    orange: "border-orange-200 bg-orange-50 text-orange-700",
-    green: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    orange:
+      "border-orange-200 bg-orange-50 text-orange-700",
+    green:
+      "border-emerald-200 bg-emerald-50 text-emerald-700",
   };
 
   return (

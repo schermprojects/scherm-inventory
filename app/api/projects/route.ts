@@ -35,7 +35,10 @@ type NormalizedProjectEquipment = {
 
 type ProjectBody = {
   name?: unknown;
+
+  clientId?: unknown;
   clientName?: unknown;
+
   description?: unknown;
   status?: unknown;
   priority?: unknown;
@@ -46,16 +49,6 @@ type ProjectBody = {
   responsibleId?: unknown;
   salespersonId?: unknown;
 
-  /*
-   * Aceita os dois nomes para facilitar a integração
-   * com componentes antigos e novos.
-   *
-   * Preferencial:
-   * equipment
-   *
-   * Compatibilidade:
-   * equipments
-   */
   equipment?: unknown;
   equipments?: unknown;
 };
@@ -80,6 +73,17 @@ const projectInclude = {
   salesperson: {
     select: projectPersonSelect,
   },
+
+  client: {
+  select: {
+    id: true,
+    clientCode: true,
+    shortName: true,
+    name: true,
+    contactName: true,
+    active: true,
+  },
+},
 
   equipment: {
     include: {
@@ -766,6 +770,14 @@ export async function POST(
       "Nome do projeto",
     );
 
+    const clientId = optionalId(
+  body.clientId,
+);
+
+let clientName = optionalText(
+  body.clientName,
+);
+
     const createdById =
       sessionUser.id;
 
@@ -806,6 +818,9 @@ export async function POST(
       body.status,
     );
 
+    
+
+
     const priority = parsePriority(
       body.priority,
     );
@@ -828,6 +843,35 @@ export async function POST(
     const project =
       await prisma.$transaction(
         async (transaction) => {
+          if (clientId) {
+  const selectedClient =
+    await transaction.client.findUnique({
+      where: {
+        id: clientId,
+      },
+
+      select: {
+        id: true,
+        name: true,
+        active: true,
+      },
+    });
+
+  if (!selectedClient) {
+    throw new Error(
+      "CLIENT_NOT_FOUND",
+    );
+  }
+
+  if (!selectedClient.active) {
+    throw new Error(
+      "CLIENT_INACTIVE",
+    );
+  }
+
+  clientName =
+    selectedClient.name;
+}
           if (
             selectedEquipment.length > 0
           ) {
@@ -880,11 +924,9 @@ export async function POST(
 
           return transaction.project.create({
             data: {
-              name,
-
-              clientName: optionalText(
-                body.clientName,
-              ),
+            name,
+            clientId,
+            clientName,
 
               description: optionalText(
                 body.description,
