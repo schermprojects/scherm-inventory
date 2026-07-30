@@ -64,6 +64,7 @@ model User {
   responsibleProjects Project[]           @relation("ProjectResponsible")
   salesProjects       Project[]           @relation("ProjectSalesperson")
   equipmentMovements  EquipmentMovement[] @relation("EquipmentMovementCreatedBy")
+  auditLogs           AuditLog[]
 
   @@index([name])
   @@index([role])
@@ -202,6 +203,31 @@ model EquipmentMovement {
   @@index([createdAt])
 }
 
+model AuditLog {
+  id String @id @default(cuid())
+
+  action AuditAction
+  entity AuditEntity
+
+  entityId String?
+
+  description String
+
+  oldData Json?
+  newData Json?
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([entity])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
 enum UserRole {
   ADMIN
   COMMERCIAL
@@ -237,4 +263,25 @@ enum EquipmentMovementType {
   ENTRY
   EXIT
   ADJUSTMENT
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  STOCK_ENTRY
+  STOCK_EXIT
+  ALLOCATE
+  DEALLOCATE
+}
+
+enum AuditEntity {
+  USER
+  CLIENT
+  PROJECT
+  EQUIPMENT
+  PURCHASE
+  MOVEMENT
 }

@@ -1,14 +1,13 @@
 import { auth } from "@/auth";
+import { Prisma } from "@/generated/prisma/client";
 import {
-  Prisma,
+  AuditAction,
+  AuditEntity,
   UserRole,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
+import { generateShortNameFromName, generateUniqueClientCode, normalizeClientShortName } from "@/lib/client-code";
+import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
-import {
-  generateShortNameFromName,
-  generateUniqueClientCode,
-  normalizeClientShortName,
-} from "@/lib/client-code";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -450,9 +449,7 @@ export async function GET(
   }
 }
 
-export async function POST(
-  request: Request,
-) {
+export async function POST(request: Request) {
   const session = await auth();
 
   if (!session?.user) {
@@ -467,17 +464,13 @@ export async function POST(
     );
   }
 
-  const sessionUser =
-    session.user as SessionUser;
+  const sessionUser = session.user as SessionUser;
 
-  if (
-    !canManageClients(sessionUser.role)
-  ) {
+  if (!canManageClients(sessionUser.role)) {
     return Response.json(
       {
         success: false,
-        message:
-          "Você não possui permissão para cadastrar clientes.",
+        message: "Você não possui permissão para cadastrar clientes.",
       },
       {
         status: 403,
@@ -486,100 +479,86 @@ export async function POST(
   }
 
   try {
-    const body =
-      (await request.json()) as ClientBody;
+    const body = (await request.json()) as ClientBody;
 
-    const name = requiredText(
-      body.name,
-      "Nome",
-    );
-
-    const receivedShortName =
-  typeof body.shortName === "string"
-    ? normalizeClientShortName(
-        body.shortName,
-      )
-    : "";
-
-    const contactName = requiredText(
-      body.contactName,
-      "Contato",
-    );
+    const name = requiredText(body.name, "Nome");
+    const contactName = requiredText(body.contactName, "Contato");
 
     const shortName =
-  normalizeClientShortName(
-    typeof (body as ClientBody & { shortName?: unknown }).shortName === "string"
-      ? (body as ClientBody & { shortName?: string }).shortName ?? ""
-      : "",
-  ) || generateShortNameFromName(name);
+      normalizeClientShortName(
+        typeof body.shortName === "string" ? body.shortName : "",
+      ) || generateShortNameFromName(name);
 
-const position = optionalText(body.position);
-const phone = optionalText(body.phone);
-const mobile = optionalText(body.mobile);
-const email = optionalEmail(body.email);
-const website = optionalWebsite(body.website);
-const document = optionalText(body.document);
-const zipcode = optionalText(body.zipcode);
-const address = optionalText(body.address);
-const number = optionalText(body.number);
-const complement = optionalText(body.complement);
-const district = optionalText(body.district);
-const city = optionalText(body.city);
-const state = normalizeState(body.state);
-const notes = optionalText(body.notes);
-const active = optionalBoolean(
-  body.active,
-  true,
-);
+    const position = optionalText(body.position);
+    const phone = optionalText(body.phone);
+    const mobile = optionalText(body.mobile);
+    const email = optionalEmail(body.email);
+    const website = optionalWebsite(body.website);
+    const document = optionalText(body.document);
+    const zipcode = optionalText(body.zipcode);
+    const address = optionalText(body.address);
+    const number = optionalText(body.number);
+    const complement = optionalText(body.complement);
+    const district = optionalText(body.district);
+    const city = optionalText(body.city);
+    const state = normalizeState(body.state);
+    const notes = optionalText(body.notes);
+    const active = optionalBoolean(body.active, true);
 
-    const normalizedShortName =
-  normalizeClientShortName(
-    typeof body.shortName === "string"
-      ? body.shortName
-      : "",
-  ) ||
-  generateShortNameFromName(name);
-
-const clientCode =
-  await generateUniqueClientCode(
-    prisma,
-    normalizedShortName,
-  );
-
-const client =
-  await prisma.client.create({
-    data: {
+    const clientCode = await generateUniqueClientCode(
+      prisma,
       shortName,
-      clientCode,
+    );
 
-      name,
-      contactName,
-      position,
-      phone,
-      mobile,
-      email,
-      website,
-      document,
-      zipcode,
-      address,
-      number,
-      complement,
-      district,
-      city,
-      state,
-      notes,
-      active,
-    },
+    const client = await prisma.client.create({
+      data: {
+        shortName,
+        clientCode,
+        name,
+        contactName,
+        position,
+        phone,
+        mobile,
+        email,
+        website,
+        document,
+        zipcode,
+        address,
+        number,
+        complement,
+        district,
+        city,
+        state,
+        notes,
+        active,
+      },
 
-    include: clientInclude,
-  });
+      include: clientInclude,
+    });
+
+    await logAudit({
+      action: AuditAction.CREATE,
+      entity: AuditEntity.CLIENT,
+      entityId: client.id,
+      userId: sessionUser.id ?? null,
+      description: `Cliente "${client.name}" cadastrado.`,
+      newData: {
+        id: client.id,
+        clientCode: client.clientCode,
+        shortName: client.shortName,
+        name: client.name,
+        contactName: client.contactName,
+        position: client.position,
+        city: client.city,
+        state: client.state,
+        active: client.active,
+      },
+    });
 
     return Response.json(
       {
         success: true,
-        message:
-          "Cliente cadastrado com sucesso.",
-
+        message: "Cliente cadastrado com sucesso.",
         data: serializeClient(
           client,
           sessionUser.role,

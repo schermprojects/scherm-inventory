@@ -1,14 +1,17 @@
 import { auth } from "@/auth";
+import { Prisma } from "@/generated/prisma/client";
 import {
-  Prisma,
+  AuditAction,
+  AuditEntity,
   UserRole,
-} from "@/generated/prisma/client";
-import { prisma } from "@/lib/prisma";
+} from "@/generated/prisma/enums";
+import { logAudit } from "@/lib/audit";
 import {
   generateShortNameFromName,
   generateUniqueClientCode,
   normalizeClientShortName,
 } from "@/lib/client-code";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +42,12 @@ type ClientBody = {
   active?: unknown;
 };
 
+type RouteContext = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
 const clientInclude = {
   projects: {
     select: {
@@ -53,7 +62,6 @@ const clientInclude = {
       createdAt: true,
       updatedAt: true,
     },
-
     orderBy: [
       {
         createdAt: "desc" as const,
@@ -63,7 +71,6 @@ const clientInclude = {
       },
     ],
   },
-
   _count: {
     select: {
       projects: true,
@@ -71,10 +78,25 @@ const clientInclude = {
   },
 } satisfies Prisma.ClientInclude;
 
-type ClientWithRelations =
-  Prisma.ClientGetPayload<{
-    include: typeof clientInclude;
-  }>;
+type ClientWithRelations = Prisma.ClientGetPayload<{
+  include: typeof clientInclude;
+}>;
+
+const clientAuditSelect = {
+  id: true,
+  clientCode: true,
+  shortName: true,
+  name: true,
+  contactName: true,
+  position: true,
+  city: true,
+  state: true,
+  active: true,
+} satisfies Prisma.ClientSelect;
+
+type ClientAuditData = Prisma.ClientGetPayload<{
+  select: typeof clientAuditSelect;
+}>;
 
 function requiredText(
   value: unknown,
@@ -219,22 +241,28 @@ function serializeClient(
   client: ClientWithRelations,
   role: UserRole | undefined,
 ) {
- const baseData = {
-  id: client.id,
-  clientCode: client.clientCode,
-  shortName: client.shortName,
+  const baseData = {
+    id: client.id,
+    clientCode: client.clientCode,
+    shortName: client.shortName,
 
-  name: client.name,
-  contactName: client.contactName,
-  position: client.position,
-  city: client.city,
-  state: client.state,
-  active: client.active,
-  createdAt: client.createdAt,
-  updatedAt: client.updatedAt,
-  projectCount: client._count.projects,
-  projects: client.projects,
-};
+    name: client.name,
+    contactName: client.contactName,
+    position: client.position,
+
+    city: client.city,
+    state: client.state,
+
+    active: client.active,
+
+    createdAt: client.createdAt,
+    updatedAt: client.updatedAt,
+
+    projectCount:
+      client._count.projects,
+
+    projects: client.projects,
+  };
 
   if (!canViewSensitiveData(role)) {
     return baseData;
@@ -242,29 +270,42 @@ function serializeClient(
 
   return {
     ...baseData,
+
     phone: client.phone,
     mobile: client.mobile,
     email: client.email,
     website: client.website,
     document: client.document,
+
     zipcode: client.zipcode,
     address: client.address,
     number: client.number,
     complement: client.complement,
     district: client.district,
+
     notes: client.notes,
+  };
+}
+
+function serializeClientForAudit(
+  client: ClientAuditData,
+) {
+  return {
+    id: client.id,
+    clientCode: client.clientCode,
+    shortName: client.shortName,
+    name: client.name,
+    contactName: client.contactName,
+    position: client.position,
+    city: client.city,
+    state: client.state,
+    active: client.active,
   };
 }
 
 export async function GET(
   _request: Request,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-    }>;
-  },
+  { params }: RouteContext,
 ) {
   const session = await auth();
 
@@ -291,7 +332,6 @@ export async function GET(
         where: {
           id,
         },
-
         include: clientInclude,
       });
 
@@ -310,7 +350,6 @@ export async function GET(
 
     return Response.json({
       success: true,
-
       data: serializeClient(
         client,
         sessionUser.role,
@@ -337,13 +376,7 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-    }>;
-  },
+  { params }: RouteContext,
 ) {
   const session = await auth();
 
@@ -380,153 +413,176 @@ export async function PUT(
   const { id } = await params;
 
   try {
- const body =
-  (await request.json()) as ClientBody;
+    const body =
+      (await request.json()) as ClientBody;
 
-const currentClient =
-  await prisma.client.findUnique({
-    where: {
-      id,
-    },
+    const currentClient =
+      await prisma.client.findUnique({
+        where: {
+          id,
+        },
+        select: clientAuditSelect,
+      });
 
-    select: {
-      id: true,
-      shortName: true,
-      clientCode: true,
-    },
-  });
+    if (!currentClient) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Cliente não encontrado.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
 
-if (!currentClient) {
-  return Response.json(
-    {
-      success: false,
-      message: "Cliente não encontrado.",
-    },
-    {
-      status: 404,
-    },
-  );
-}
+    const name = requiredText(
+      body.name,
+      "Nome",
+    );
 
-const name = requiredText(
-  body.name,
-  "Nome",
-);
+    const contactName = requiredText(
+      body.contactName,
+      "Contato",
+    );
 
-const contactName = requiredText(
-  body.contactName,
-  "Contato",
-);
+    const active = requiredBoolean(
+      body.active,
+      "Ativo",
+    );
 
-const active = requiredBoolean(
-  body.active,
-  "Ativo",
-);
+    const receivedShortName =
+      typeof body.shortName === "string"
+        ? normalizeClientShortName(
+            body.shortName,
+          )
+        : "";
 
-const receivedShortName =
-  typeof body.shortName === "string"
-    ? normalizeClientShortName(
-        body.shortName,
-      )
-    : "";
+    const shortName =
+      receivedShortName ||
+      currentClient.shortName ||
+      generateShortNameFromName(name);
 
-const shortName =
-  receivedShortName ||
-  currentClient.shortName ||
-  generateShortNameFromName(name);
+    const shortNameChanged =
+      shortName !==
+      currentClient.shortName;
 
-const shortNameChanged =
-  shortName !==
-  currentClient.shortName;
+    const clientCode =
+      shortNameChanged
+        ? await generateUniqueClientCode(
+            prisma,
+            shortName,
+          )
+        : currentClient.clientCode;
 
-const clientCode =
-  shortNameChanged
-    ? await generateUniqueClientCode(
-        prisma,
-        shortName,
-      )
-    : currentClient.clientCode;
+    const client =
+      await prisma.client.update({
+        where: {
+          id,
+        },
+        data: {
+          shortName,
+          clientCode,
 
-const client =
-  await prisma.client.update({
-    where: {
-      id,
-    },
+          name,
+          contactName,
 
-    data: {
-      shortName,
-      clientCode,
+          position: optionalText(
+            body.position,
+          ),
 
-      name,
-      contactName,
+          phone: optionalText(
+            body.phone,
+          ),
 
-      position: optionalText(
-        body.position,
-      ),
+          mobile: optionalText(
+            body.mobile,
+          ),
 
-      phone: optionalText(
-        body.phone,
-      ),
+          email: optionalEmail(
+            body.email,
+          ),
 
-      mobile: optionalText(
-        body.mobile,
-      ),
+          website: optionalWebsite(
+            body.website,
+          ),
 
-      email: optionalEmail(
-        body.email,
-      ),
+          document: optionalText(
+            body.document,
+          ),
 
-      website: optionalWebsite(
-        body.website,
-      ),
+          zipcode: optionalText(
+            body.zipcode,
+          ),
 
-      document: optionalText(
-        body.document,
-      ),
+          address: optionalText(
+            body.address,
+          ),
 
-      zipcode: optionalText(
-        body.zipcode,
-      ),
+          number: optionalText(
+            body.number,
+          ),
 
-      address: optionalText(
-        body.address,
-      ),
+          complement: optionalText(
+            body.complement,
+          ),
 
-      number: optionalText(
-        body.number,
-      ),
+          district: optionalText(
+            body.district,
+          ),
 
-      complement: optionalText(
-        body.complement,
-      ),
+          city: optionalText(
+            body.city,
+          ),
 
-      district: optionalText(
-        body.district,
-      ),
+          state: normalizeState(
+            body.state,
+          ),
 
-      city: optionalText(
-        body.city,
-      ),
+          notes: optionalText(
+            body.notes,
+          ),
 
-      state: normalizeState(
-        body.state,
-      ),
+          active,
+        },
+        include: clientInclude,
+      });
 
-      notes: optionalText(
-        body.notes,
-      ),
-
-      active,
-    },
-
-    include: clientInclude,
-  });
+    await logAudit({
+      action: AuditAction.UPDATE,
+      entity: AuditEntity.CLIENT,
+      entityId: client.id,
+      userId: sessionUser.id ?? null,
+      description:
+        currentClient.active !==
+        client.active
+          ? client.active
+            ? `Cliente "${client.name}" reativado e atualizado.`
+            : `Cliente "${client.name}" inativado e atualizado.`
+          : `Cliente "${client.name}" atualizado.`,
+      oldData:
+        serializeClientForAudit(
+          currentClient,
+        ),
+      newData: {
+        id: client.id,
+        clientCode: client.clientCode,
+        shortName: client.shortName,
+        name: client.name,
+        contactName:
+          client.contactName,
+        position: client.position,
+        city: client.city,
+        state: client.state,
+        active: client.active,
+      },
+    });
 
     return Response.json({
       success: true,
       message:
         "Cliente atualizado com sucesso.",
-
       data: serializeClient(
         client,
         sessionUser.role,
@@ -609,13 +665,7 @@ const client =
 
 export async function DELETE(
   _request: Request,
-  {
-    params,
-  }: {
-    params: Promise<{
-      id: string;
-    }>;
-  },
+  { params }: RouteContext,
 ) {
   const session = await auth();
 
@@ -657,10 +707,8 @@ export async function DELETE(
         where: {
           id,
         },
-
         select: {
-          id: true,
-          active: true,
+          ...clientAuditSelect,
 
           _count: {
             select: {
@@ -697,19 +745,38 @@ export async function DELETE(
           success: true,
           message:
             "O cliente já está inativo.",
-          action:
-            "already_inactive",
+          action: "already_inactive",
         });
       }
 
-      await prisma.client.update({
-        where: {
-          id,
-        },
+      const deactivatedClient =
+        await prisma.client.update({
+          where: {
+            id,
+          },
+          data: {
+            active: false,
+          },
+          select: clientAuditSelect,
+        });
 
-        data: {
-          active: false,
-        },
+      await logAudit({
+        action: AuditAction.UPDATE,
+        entity: AuditEntity.CLIENT,
+        entityId:
+          deactivatedClient.id,
+        userId:
+          sessionUser.id ?? null,
+        description:
+          `Cliente "${deactivatedClient.name}" inativado.`,
+        oldData:
+          serializeClientForAudit(
+            client,
+          ),
+        newData:
+          serializeClientForAudit(
+            deactivatedClient,
+          ),
       });
 
       return Response.json({
@@ -722,10 +789,25 @@ export async function DELETE(
       });
     }
 
-    await prisma.client.delete({
-      where: {
-        id,
-      },
+    const deletedClient =
+      await prisma.client.delete({
+        where: {
+          id,
+        },
+        select: clientAuditSelect,
+      });
+
+    await logAudit({
+      action: AuditAction.DELETE,
+      entity: AuditEntity.CLIENT,
+      entityId: deletedClient.id,
+      userId: sessionUser.id ?? null,
+      description:
+        `Cliente "${deletedClient.name}" removido.`,
+      oldData:
+        serializeClientForAudit(
+          deletedClient,
+        ),
     });
 
     return Response.json({
