@@ -203,6 +203,10 @@ export function PurchasesView({
       null,
     );
 
+  const [issuedAt] = useState(
+  () => new Date().toISOString(),
+);
+
   const loadPurchases =
     useCallback(
       async (refresh = false) => {
@@ -539,6 +543,7 @@ export function PurchasesView({
   <>
     <PurchasesPrintView
       items={filteredItems}
+      issuedAt={issuedAt}
     />
 
     <div className="space-y-5 print:hidden">      
@@ -596,10 +601,10 @@ export function PurchasesView({
 
   <p className="mt-1 text-xs text-zinc-500">
     Emitido em{" "}
-    {new Intl.DateTimeFormat("pt-BR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date())}
+{new Intl.DateTimeFormat("pt-BR", {
+  dateStyle: "short",
+  timeStyle: "short",
+}).format(new Date(issuedAt))}
   </p>
 </div>
 

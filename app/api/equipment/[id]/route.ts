@@ -1,11 +1,15 @@
+import type { Session } from "next-auth";
+import { Prisma } from "@/generated/prisma/client";
 import {
+  AuditAction,
+  AuditEntity,
   EquipmentCondition,
   EquipmentStatus,
-  Prisma,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
 import { del } from "@vercel/blob";
 
 import { auth } from "@/auth";
+import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -30,6 +34,10 @@ type EquipmentRequestBody = {
   notes?: unknown;
 };
 
+type AuthenticatedSession = Session & {
+  user: NonNullable<Session["user"]>;
+};
+
 class ValidationError extends Error {
   field?: keyof EquipmentRequestBody;
 
@@ -38,6 +46,7 @@ class ValidationError extends Error {
     field?: keyof EquipmentRequestBody,
   ) {
     super(message);
+
     this.name = "ValidationError";
     this.field = field;
   }
@@ -48,7 +57,10 @@ function requiredText(
   label: string,
   field: keyof EquipmentRequestBody,
 ): string {
-  if (typeof value !== "string" || !value.trim()) {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
     throw new ValidationError(
       `O campo "${label}" é obrigatório.`,
       field,
@@ -58,12 +70,15 @@ function requiredText(
   return value.trim();
 }
 
-function optionalText(value: unknown): string | null {
+function optionalText(
+  value: unknown,
+): string | null {
   if (typeof value !== "string") {
     return null;
   }
 
-  const normalizedValue = value.trim();
+  const normalizedValue =
+    value.trim();
 
   return normalizedValue || null;
 }
@@ -71,14 +86,17 @@ function optionalText(value: unknown): string | null {
 function optionalUppercaseText(
   value: unknown,
 ): string | null {
-  const normalizedValue = optionalText(value);
+  const normalizedValue =
+    optionalText(value);
 
   return normalizedValue
     ? normalizedValue.toUpperCase()
     : null;
 }
 
-function requiredQuantity(value: unknown): number {
+function requiredQuantity(
+  value: unknown,
+): number {
   const quantity = Number(value);
 
   if (
@@ -100,7 +118,9 @@ function parseStatus(
 ): EquipmentStatus {
   if (
     typeof value === "string" &&
-    Object.values(EquipmentStatus).includes(
+    Object.values(
+      EquipmentStatus,
+    ).includes(
       value as EquipmentStatus,
     )
   ) {
@@ -118,7 +138,9 @@ function parseCondition(
 ): EquipmentCondition {
   if (
     typeof value === "string" &&
-    Object.values(EquipmentCondition).includes(
+    Object.values(
+      EquipmentCondition,
+    ).includes(
       value as EquipmentCondition,
     )
   ) {
@@ -134,11 +156,17 @@ function parseCondition(
 function duplicateResponse(
   error: Prisma.PrismaClientKnownRequestError,
 ) {
-  const target = Array.isArray(error.meta?.target)
+  const target = Array.isArray(
+    error.meta?.target,
+  )
     ? error.meta.target.join(",")
-    : String(error.meta?.target ?? "");
+    : String(
+        error.meta?.target ?? "",
+      );
 
-  if (target.includes("serialNumber")) {
+  if (
+    target.includes("serialNumber")
+  ) {
     return Response.json(
       {
         success: false,
@@ -164,20 +192,66 @@ function duplicateResponse(
   );
 }
 
-async function requireAuthentication() {
+async function requireAuthentication(): Promise<
+  AuthenticatedSession | null
+> {
   const session = await auth();
 
-  return Boolean(session?.user);
+  if (!session?.user) {
+    return null;
+  }
+
+  return session as AuthenticatedSession;
+}
+
+function serializeEquipmentForAudit(
+  equipment: {
+    id: string;
+    name: string;
+    manufacturer: string | null;
+    model: string | null;
+    serialNumber: string | null;
+    quantity: number;
+    category: string;
+    status: EquipmentStatus;
+    condition: EquipmentCondition;
+    invoiceNumber: string | null;
+    notes: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+) {
+  return {
+    id: equipment.id,
+    name: equipment.name,
+    manufacturer:
+      equipment.manufacturer,
+    model: equipment.model,
+    serialNumber:
+      equipment.serialNumber,
+    quantity: equipment.quantity,
+    category: equipment.category,
+    status: equipment.status,
+    condition:
+      equipment.condition,
+    invoiceNumber:
+      equipment.invoiceNumber,
+    notes: equipment.notes,
+    createdAt:
+      equipment.createdAt,
+    updatedAt:
+      equipment.updatedAt,
+  };
 }
 
 export async function GET(
   _request: Request,
   context: RouteContext,
 ) {
-  const isAuthenticated =
+  const session =
     await requireAuthentication();
 
-  if (!isAuthenticated) {
+  if (!session) {
     return Response.json(
       {
         success: false,
@@ -190,7 +264,8 @@ export async function GET(
   }
 
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     if (!id) {
       return Response.json(
@@ -210,6 +285,7 @@ export async function GET(
         where: {
           id,
         },
+
         include: {
           images: {
             orderBy: {
@@ -223,7 +299,8 @@ export async function GET(
       return Response.json(
         {
           success: false,
-          message: "Equipamento não encontrado.",
+          message:
+            "Equipamento não encontrado.",
         },
         {
           status: 404,
@@ -258,10 +335,10 @@ export async function PATCH(
   request: Request,
   context: RouteContext,
 ) {
-  const isAuthenticated =
+  const session =
     await requireAuthentication();
 
-  if (!isAuthenticated) {
+  if (!session) {
     return Response.json(
       {
         success: false,
@@ -274,7 +351,8 @@ export async function PATCH(
   }
 
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     if (!id) {
       return Response.json(
@@ -297,8 +375,21 @@ export async function PATCH(
         where: {
           id,
         },
+
         select: {
           id: true,
+          name: true,
+          manufacturer: true,
+          model: true,
+          serialNumber: true,
+          quantity: true,
+          category: true,
+          status: true,
+          condition: true,
+          invoiceNumber: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
         },
       });
 
@@ -306,7 +397,8 @@ export async function PATCH(
       return Response.json(
         {
           success: false,
-          message: "Equipamento não encontrado.",
+          message:
+            "Equipamento não encontrado.",
         },
         {
           status: 404,
@@ -319,6 +411,7 @@ export async function PATCH(
         where: {
           id,
         },
+
         data: {
           name: requiredText(
             body.name,
@@ -332,32 +425,44 @@ export async function PATCH(
             "category",
           ),
 
-          manufacturer: optionalText(
-            body.manufacturer,
+          manufacturer:
+            optionalText(
+              body.manufacturer,
+            ),
+
+          model: optionalText(
+            body.model,
           ),
 
-          model: optionalText(body.model),
+          serialNumber:
+            optionalUppercaseText(
+              body.serialNumber,
+            ),
 
-          serialNumber: optionalUppercaseText(
-            body.serialNumber,
+          quantity:
+            requiredQuantity(
+              body.quantity,
+            ),
+
+          invoiceNumber:
+            optionalText(
+              body.invoiceNumber,
+            ),
+
+          status: parseStatus(
+            body.status,
           ),
 
-          quantity: requiredQuantity(
-            body.quantity,
+          condition:
+            parseCondition(
+              body.condition,
+            ),
+
+          notes: optionalText(
+            body.notes,
           ),
-
-          invoiceNumber: optionalText(
-            body.invoiceNumber,
-          ),
-
-          status: parseStatus(body.status),
-
-          condition: parseCondition(
-            body.condition,
-          ),
-
-          notes: optionalText(body.notes),
         },
+
         include: {
           images: {
             orderBy: {
@@ -366,6 +471,26 @@ export async function PATCH(
           },
         },
       });
+
+    await logAudit({
+      action:
+        AuditAction.UPDATE,
+      entity:
+        AuditEntity.EQUIPMENT,
+      entityId: equipment.id,
+      userId:
+        session.user.id ?? null,
+      description:
+        `Equipamento "${equipment.name}" atualizado.`,
+      oldData:
+        serializeEquipmentForAudit(
+          existingEquipment,
+        ),
+      newData:
+        serializeEquipmentForAudit(
+          equipment,
+        ),
+    });
 
     return Response.json({
       success: true,
@@ -387,7 +512,9 @@ export async function PATCH(
       return duplicateResponse(error);
     }
 
-    if (error instanceof SyntaxError) {
+    if (
+      error instanceof SyntaxError
+    ) {
       return Response.json(
         {
           success: false,
@@ -400,7 +527,10 @@ export async function PATCH(
       );
     }
 
-    if (error instanceof ValidationError) {
+    if (
+      error instanceof
+      ValidationError
+    ) {
       return Response.json(
         {
           success: false,
@@ -430,10 +560,10 @@ export async function DELETE(
   _request: Request,
   context: RouteContext,
 ) {
-  const isAuthenticated =
+  const session =
     await requireAuthentication();
 
-  if (!isAuthenticated) {
+  if (!session) {
     return Response.json(
       {
         success: false,
@@ -446,7 +576,8 @@ export async function DELETE(
   }
 
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     if (!id) {
       return Response.json(
@@ -466,8 +597,22 @@ export async function DELETE(
         where: {
           id,
         },
+
         select: {
           id: true,
+          name: true,
+          manufacturer: true,
+          model: true,
+          serialNumber: true,
+          quantity: true,
+          category: true,
+          status: true,
+          condition: true,
+          invoiceNumber: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
+
           images: {
             select: {
               pathname: true,
@@ -480,7 +625,8 @@ export async function DELETE(
       return Response.json(
         {
           success: false,
-          message: "Equipamento não encontrado.",
+          message:
+            "Equipamento não encontrado.",
         },
         {
           status: 404,
@@ -490,21 +636,64 @@ export async function DELETE(
 
     const imagePathnames =
       existingEquipment.images
-        .map((image) => image.pathname)
+        .map(
+          (image) =>
+            image.pathname,
+        )
         .filter(
-          (pathname): pathname is string =>
+          (
+            pathname,
+          ): pathname is string =>
             Boolean(pathname),
         );
 
-    await prisma.equipment.delete({
-      where: {
-        id,
-      },
+    const deletedEquipment =
+      await prisma.equipment.delete({
+        where: {
+          id,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          manufacturer: true,
+          model: true,
+          serialNumber: true,
+          quantity: true,
+          category: true,
+          status: true,
+          condition: true,
+          invoiceNumber: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+    await logAudit({
+      action:
+        AuditAction.DELETE,
+      entity:
+        AuditEntity.EQUIPMENT,
+      entityId:
+        deletedEquipment.id,
+      userId:
+        session.user.id ?? null,
+      description:
+        `Equipamento "${deletedEquipment.name}" excluído.`,
+      oldData:
+        serializeEquipmentForAudit(
+          deletedEquipment,
+        ),
     });
 
-    if (imagePathnames.length > 0) {
+    if (
+      imagePathnames.length > 0
+    ) {
       try {
-        await del(imagePathnames);
+        await del(
+          imagePathnames,
+        );
       } catch (blobError) {
         console.error(
           "Equipamento excluído, mas houve erro ao remover imagens do Blob:",
@@ -523,6 +712,40 @@ export async function DELETE(
       "Erro ao excluir equipamento:",
       error,
     );
+
+    if (
+      error instanceof
+        Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2003"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Não é possível excluir este equipamento porque ele possui vínculos com projetos, movimentações ou outros registros.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
+      error instanceof
+        Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Equipamento não encontrado.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
 
     return Response.json(
       {

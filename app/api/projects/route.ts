@@ -1,9 +1,12 @@
 import { auth } from "@/auth";
+import { Prisma } from "@/generated/prisma/client";
 import {
-  Prisma,
+  AuditAction,
+  AuditEntity,
   ProjectPriority,
   ProjectStatus,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
+import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -483,6 +486,111 @@ function serializeProject<
   };
 }
 
+function serializeProjectForAudit(
+  project: {
+    id: string;
+    name: string;
+    clientId: string | null;
+    clientName: string | null;
+    description: string | null;
+    status: ProjectStatus;
+    priority: ProjectPriority;
+    startDate: Date | null;
+    dueDate: Date | null;
+    completedAt: Date | null;
+    notes: string | null;
+    createdById: string | null;
+    responsibleId: string | null;
+    salespersonId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+
+    equipment: Array<{
+      quantity: number;
+      notes: string | null;
+
+      equipment: {
+        id: string;
+        name: string;
+        category: string;
+        manufacturer: string | null;
+        model: string | null;
+        serialNumber: string | null;
+      };
+    }>;
+  },
+): Prisma.InputJsonValue {
+  return {
+    id: project.id,
+    name: project.name,
+
+    clientId: project.clientId,
+    clientName: project.clientName,
+
+    description: project.description,
+    status: project.status,
+    priority: project.priority,
+
+    startDate:
+      project.startDate?.toISOString() ??
+      null,
+
+    dueDate:
+      project.dueDate?.toISOString() ??
+      null,
+
+    completedAt:
+      project.completedAt?.toISOString() ??
+      null,
+
+    notes: project.notes,
+
+    createdById:
+      project.createdById,
+
+    responsibleId:
+      project.responsibleId,
+
+    salespersonId:
+      project.salespersonId,
+
+    equipment:
+      project.equipment.map(
+        (item) => ({
+          equipmentId:
+            item.equipment.id,
+
+          equipmentName:
+            item.equipment.name,
+
+          category:
+            item.equipment.category,
+
+          manufacturer:
+            item.equipment.manufacturer,
+
+          model:
+            item.equipment.model,
+
+          serialNumber:
+            item.equipment.serialNumber,
+
+          quantity:
+            item.quantity,
+
+          notes:
+            item.notes,
+        }),
+      ),
+
+    createdAt:
+      project.createdAt.toISOString(),
+
+    updatedAt:
+      project.updatedAt.toISOString(),
+  };
+}
+
 export async function GET(
   request: Request,
 ) {
@@ -840,164 +948,182 @@ let clientName = optionalText(
       ),
     ]);
 
-    const project =
-      await prisma.$transaction(
-        async (transaction) => {
-          if (clientId) {
-  const selectedClient =
-    await transaction.client.findUnique({
-      where: {
-        id: clientId,
-      },
-
-      select: {
-        id: true,
-        name: true,
-        active: true,
-      },
-    });
-
-  if (!selectedClient) {
-    throw new Error(
-      "CLIENT_NOT_FOUND",
-    );
-  }
-
-  if (!selectedClient.active) {
-    throw new Error(
-      "CLIENT_INACTIVE",
-    );
-  }
-
-  clientName =
-    selectedClient.name;
-}
-          if (
-            selectedEquipment.length > 0
-          ) {
-            const equipmentIds =
-              selectedEquipment.map(
-                (item) =>
-                  item.equipmentId,
-              );
-
-            const existingEquipment =
-              await transaction.equipment.findMany(
-                {
-                  where: {
-                    id: {
-                      in: equipmentIds,
-                    },
-                  },
-
-                  select: {
-                    id: true,
-                  },
-                },
-              );
-
-            const existingEquipmentIds =
-              new Set(
-                existingEquipment.map(
-                  (item) => item.id,
-                ),
-              );
-
-            const missingEquipmentIds =
-              equipmentIds.filter(
-                (equipmentId) =>
-                  !existingEquipmentIds.has(
-                    equipmentId,
-                  ),
-              );
-
-            if (
-              missingEquipmentIds.length > 0
-            ) {
-              throw new Error(
-                missingEquipmentIds.length === 1
-                  ? "Um dos equipamentos selecionados não foi encontrado."
-                  : "Alguns equipamentos selecionados não foram encontrados.",
-              );
-            }
-          }
-
-          return transaction.project.create({
-            data: {
-            name,
-            clientId,
-            clientName,
-
-              description: optionalText(
-                body.description,
-              ),
-
-              status,
-              priority,
-
-              startDate,
-              dueDate,
-
-              completedAt:
-                status ===
-                ProjectStatus.COMPLETED
-                  ? completedAt ??
-                    new Date()
-                  : null,
-
-              notes: optionalText(
-                body.notes,
-              ),
-
-              createdById,
-              responsibleId,
-              salespersonId,
-
-              equipment:
-                selectedEquipment.length >
-                0
-                  ? {
-                      create:
-                        selectedEquipment.map(
-                          (item) => ({
-                            quantity:
-                              item.quantity,
-
-                            notes:
-                              item.notes,
-
-                            equipment: {
-                              connect: {
-                                id: item.equipmentId,
-                              },
-                            },
-                          }),
-                        ),
-                    }
-                  : undefined,
+const project =
+  await prisma.$transaction(
+    async (transaction) => {
+      if (clientId) {
+        const selectedClient =
+          await transaction.client.findUnique({
+            where: {
+              id: clientId,
             },
 
-            include: projectInclude,
+            select: {
+              id: true,
+              name: true,
+              active: true,
+            },
           });
-        },
-        {
-          isolationLevel:
-            Prisma.TransactionIsolationLevel
-              .Serializable,
-        },
-      );
 
-    return Response.json(
-      {
-        success: true,
-        message:
-          "Projeto cadastrado com sucesso.",
-        data: serializeProject(project),
-      },
-      {
-        status: 201,
-      },
-    );
+        if (!selectedClient) {
+          throw new Error(
+            "CLIENT_NOT_FOUND",
+          );
+        }
+
+        if (!selectedClient.active) {
+          throw new Error(
+            "CLIENT_INACTIVE",
+          );
+        }
+
+        clientName =
+          selectedClient.name;
+      }
+
+      if (
+        selectedEquipment.length > 0
+      ) {
+        const equipmentIds =
+          selectedEquipment.map(
+            (item) =>
+              item.equipmentId,
+          );
+
+        const existingEquipment =
+          await transaction.equipment.findMany(
+            {
+              where: {
+                id: {
+                  in: equipmentIds,
+                },
+              },
+
+              select: {
+                id: true,
+              },
+            },
+          );
+
+        const existingEquipmentIds =
+          new Set(
+            existingEquipment.map(
+              (item) => item.id,
+            ),
+          );
+
+        const missingEquipmentIds =
+          equipmentIds.filter(
+            (equipmentId) =>
+              !existingEquipmentIds.has(
+                equipmentId,
+              ),
+          );
+
+        if (
+          missingEquipmentIds.length > 0
+        ) {
+          throw new Error(
+            missingEquipmentIds.length === 1
+              ? "Um dos equipamentos selecionados não foi encontrado."
+              : "Alguns equipamentos selecionados não foram encontrados.",
+          );
+        }
+      }
+
+      return transaction.project.create({
+        data: {
+          name,
+          clientId,
+          clientName,
+
+          description:
+            optionalText(
+              body.description,
+            ),
+
+          status,
+          priority,
+
+          startDate,
+          dueDate,
+
+          completedAt:
+            status ===
+            ProjectStatus.COMPLETED
+              ? completedAt ??
+                new Date()
+              : null,
+
+          notes:
+            optionalText(
+              body.notes,
+            ),
+
+          createdById,
+          responsibleId,
+          salespersonId,
+
+          equipment:
+            selectedEquipment.length >
+            0
+              ? {
+                  create:
+                    selectedEquipment.map(
+                      (item) => ({
+                        quantity:
+                          item.quantity,
+
+                        notes:
+                          item.notes,
+
+                        equipment: {
+                          connect: {
+                            id:
+                              item.equipmentId,
+                          },
+                        },
+                      }),
+                    ),
+                }
+              : undefined,
+        },
+
+        include: projectInclude,
+      });
+    },
+    {
+      isolationLevel:
+        Prisma.TransactionIsolationLevel
+          .Serializable,
+    },
+  );
+
+await logAudit({
+  action: AuditAction.CREATE,
+  entity: AuditEntity.PROJECT,
+  entityId: project.id,
+  userId: sessionUser.id,
+  description:
+    `Projeto "${project.name}" cadastrado.`,
+  newData:
+    serializeProjectForAudit(
+      project,
+    ),
+});
+
+return Response.json(
+  {
+    success: true,
+    message:
+      "Projeto cadastrado com sucesso.",
+    data:
+      serializeProject(project),
+  },
+  {
+    status: 201,
+  },
+);
   } catch (error) {
     console.error(
       "Erro ao cadastrar projeto:",

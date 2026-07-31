@@ -1,8 +1,13 @@
-import { prisma } from "@/lib/prisma";
+import { auth } from "@/auth";
 import { requireAdmin } from "@/lib/require-admin";
+import { Prisma } from "@/generated/prisma/client";
+import {
+  AuditAction,
+  AuditEntity,
+} from "@/generated/prisma/enums";
+import { logAudit } from "@/lib/audit";
 import { hash } from "bcryptjs";
-import { NextResponse } from "next/server";
-
+import { prisma } from "@/lib/prisma";
 type UserRouteProps = {
   params: Promise<{
     id: string;
@@ -29,6 +34,34 @@ function isAllowedRole(role: string): role is AllowedRole {
   return allowedRoles.includes(role as AllowedRole);
 }
 
+function serializeUserForAudit(
+  user: {
+    id: string;
+    name: string;
+    username: string;
+    role: AllowedRole;
+    active: boolean;
+    createdAt?: Date;
+    updatedAt?: Date;
+  },
+): Prisma.InputJsonValue {
+  return {
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    active: user.active,
+
+    createdAt:
+      user.createdAt?.toISOString() ??
+      null,
+
+    updatedAt:
+      user.updatedAt?.toISOString() ??
+      null,
+  };
+}
+
 export async function PATCH(
   request: Request,
   { params }: UserRouteProps,
@@ -36,7 +69,7 @@ export async function PATCH(
   const authorization = await requireAdmin();
 
   if (!authorization.authorized) {
-    return NextResponse.json(
+    return Response.json(
       {
         error:
           authorization.status === 401
@@ -53,21 +86,24 @@ export async function PATCH(
 
   try {
     const currentUser =
-      await prisma.user.findUnique({
-        where: {
-          id,
-        },
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          role: true,
-          active: true,
-        },
-      });
+  await prisma.user.findUnique({
+    where: {
+      id,
+    },
+
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      role: true,
+      active: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
 
     if (!currentUser) {
-      return NextResponse.json(
+      return Response.json(
         {
           error: "Usuário não encontrado.",
         },
@@ -95,7 +131,7 @@ export async function PATCH(
 
     if (body.name !== undefined) {
       if (typeof body.name !== "string") {
-        return NextResponse.json(
+        return Response.json(
           {
             error: "Nome inválido.",
           },
@@ -108,7 +144,7 @@ export async function PATCH(
       const name = body.name.trim();
 
       if (name.length < 3 || name.length > 100) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "O nome deve possuir entre 3 e 100 caracteres.",
@@ -124,7 +160,7 @@ export async function PATCH(
 
     if (body.username !== undefined) {
       if (typeof body.username !== "string") {
-        return NextResponse.json(
+        return Response.json(
           {
             error: "Nome de usuário inválido.",
           },
@@ -139,7 +175,7 @@ export async function PATCH(
       );
 
       if (!isValidUsername(username)) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "O usuário deve possuir entre 3 e 30 caracteres e usar apenas letras minúsculas, números, ponto, hífen ou sublinhado.",
@@ -164,7 +200,7 @@ export async function PATCH(
         });
 
       if (usernameOwner) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "Esse nome de usuário já está em uso.",
@@ -183,7 +219,7 @@ export async function PATCH(
         typeof body.role !== "string" ||
         !isAllowedRole(body.role)
       ) {
-        return NextResponse.json(
+        return Response.json(
           {
             error: "Perfil de usuário inválido.",
           },
@@ -198,7 +234,7 @@ export async function PATCH(
 
     if (body.active !== undefined) {
       if (typeof body.active !== "boolean") {
-        return NextResponse.json(
+        return Response.json(
           {
             error: "Status de usuário inválido.",
           },
@@ -212,7 +248,7 @@ export async function PATCH(
         id === authorization.user.id &&
         !body.active
       ) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "Você não pode desativar seu próprio usuário.",
@@ -231,7 +267,7 @@ export async function PATCH(
         typeof body.password !== "string" ||
         body.password.length < 8
       ) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "A nova senha deve possuir pelo menos 8 caracteres.",
@@ -271,7 +307,7 @@ export async function PATCH(
         });
 
       if (activeAdministratorCount <= 1) {
-        return NextResponse.json(
+        return Response.json(
           {
             error:
               "O sistema deve possuir pelo menos um administrador ativo.",
@@ -283,32 +319,44 @@ export async function PATCH(
       }
     }
 
-    const user = await prisma.user.update({
-      where: {
-        id,
-      },
-      data,
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        role: true,
-        active: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+const user = await prisma.user.update({
+  where: {
+    id,
+  },
+  data,
+  select: {
+    id: true,
+    name: true,
+    username: true,
+    role: true,
+    active: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+});
 
-    return NextResponse.json({
-      message: body.password
-        ? "Senha redefinida com sucesso."
-        : "Usuário atualizado com sucesso.",
-      user,
-    });
+await logAudit({
+  action: AuditAction.UPDATE,
+  entity: AuditEntity.USER,
+  entityId: user.id,
+  userId: authorization.user.id,
+  description: body.password
+    ? `Senha do usuário "${user.name}" redefinida.`
+    : `Usuário "${user.name}" atualizado.`,
+  oldData: serializeUserForAudit(currentUser),
+  newData: serializeUserForAudit(user),
+});
+
+return Response.json({
+  message: body.password
+    ? "Senha redefinida com sucesso."
+    : "Usuário atualizado com sucesso.",
+  user,
+});
   } catch (error) {
     console.error("Erro ao editar usuário:", error);
 
-    return NextResponse.json(
+    return Response.json(
       {
         error:
           "Não foi possível atualizar o usuário.",

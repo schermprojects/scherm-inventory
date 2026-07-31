@@ -1,13 +1,16 @@
+import { Prisma } from "@/generated/prisma/client";
 import {
+  AuditAction,
+  AuditEntity,
   EquipmentCondition,
   EquipmentStatus,
-  Prisma,
   ProjectStatus,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
 
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
 import { calculateStock } from "@/lib/inventory/calculateStock";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,7 +104,9 @@ function parseStatus(
 ): EquipmentStatus {
   if (
     typeof value === "string" &&
-    Object.values(EquipmentStatus).includes(
+    Object.values(
+      EquipmentStatus,
+    ).includes(
       value as EquipmentStatus,
     )
   ) {
@@ -212,109 +217,112 @@ export async function GET() {
       });
 
     const equipment =
-      equipmentRecords.map(
-        (item) => {
-          const requested = item.projects.reduce(
-  (total, projectEquipment) =>
-    total + projectEquipment.quantity,
-  0,
-);
+      equipmentRecords.map((item) => {
+        const requested =
+          item.projects.reduce(
+            (
+              total,
+              projectEquipment,
+            ) =>
+              total +
+              projectEquipment.quantity,
+            0,
+          );
 
-const {
-  physicalStock,
-  inUse,
-  availableStock,
-  shortage,
-} = calculateStock(
-  item.quantity,
-  requested,
-);
+        const {
+          physicalStock,
+          inUse,
+          availableStock,
+          shortage,
+        } = calculateStock(
+          item.quantity,
+          requested,
+        );
 
-const isOutOfStock =
-  availableStock === 0;
+        const isOutOfStock =
+          availableStock === 0;
 
-const isBelowMinimum =
-  availableStock <= item.minimumStock;
-  
+        const isBelowMinimum =
+          availableStock <=
+          item.minimumStock;
 
-          const hasShortage =
-            shortage > 0;
+        const hasShortage =
+          shortage > 0;
 
-          const projectsUsing =
-            new Set(
-              item.projects.map(
-                (
-                  projectEquipment,
-                ) =>
-                  projectEquipment.projectId,
-              ),
-            ).size;
+        const projectsUsing =
+          new Set(
+            item.projects.map(
+              (
+                projectEquipment,
+              ) =>
+                projectEquipment.projectId,
+            ),
+          ).size;
 
-          return {
-            id: item.id,
-            name: item.name,
-            category: item.category,
-            manufacturer:
-              item.manufacturer,
-            model: item.model,
-            serialNumber:
-              item.serialNumber,
+        return {
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          manufacturer:
+            item.manufacturer,
+          model: item.model,
+          serialNumber:
+            item.serialNumber,
 
- quantity: physicalStock,
-physicalStock,
+          quantity: physicalStock,
+          physicalStock,
 
-minimumStock:
-  item.minimumStock,
+          minimumStock:
+            item.minimumStock,
 
-inUse,
-availableStock,
-shortage,
-projectsUsing,
+          inUse,
+          availableStock,
+          shortage,
+          projectsUsing,
 
-            isOutOfStock,
-            isBelowMinimum,
-            hasShortage,
+          isOutOfStock,
+          isBelowMinimum,
+          hasShortage,
 
-            invoiceNumber:
-              item.invoiceNumber,
+          invoiceNumber:
+            item.invoiceNumber,
 
-            status: item.status,
-            condition: item.condition,
-            notes: item.notes,
+          status: item.status,
+          condition: item.condition,
+          notes: item.notes,
 
-            images: item.images,
+          images: item.images,
 
-            activeProjects:
-              item.projects.map(
-                (
-                  projectEquipment,
-                ) => ({
-                  projectId:
-                    projectEquipment
-                      .project.id,
+          activeProjects:
+            item.projects.map(
+              (
+                projectEquipment,
+              ) => ({
+                projectId:
+                  projectEquipment
+                    .project.id,
 
-                  projectName:
-                    projectEquipment
-                      .project.name,
+                projectName:
+                  projectEquipment
+                    .project.name,
 
-                  projectStatus:
-                    projectEquipment
-                      .project.status,
+                projectStatus:
+                  projectEquipment
+                    .project.status,
 
-                  quantity:
-                    projectEquipment
-                      .quantity,
-                }),
-              ),
+                quantity:
+                  projectEquipment
+                    .quantity,
+              }),
+            ),
 
-            createdAt:
-              item.createdAt,
+          createdAt:
+            item.createdAt,
 
-            updatedAt:
-              item.updatedAt,
-          };
-        },
-      );
+          updatedAt:
+            item.updatedAt,
+        };
+      });
 
     const summary =
       equipment.reduce(
@@ -328,11 +336,11 @@ projectsUsing,
           accumulator.totalPhysicalStock +=
             item.physicalStock;
 
-accumulator.totalInUse +=
-  item.inUse;
+          accumulator.totalInUse +=
+            item.inUse;
 
-accumulator.totalAvailable +=
-  item.availableStock;
+          accumulator.totalAvailable +=
+            item.availableStock;
 
           accumulator.totalShortage +=
             item.shortage;
@@ -354,16 +362,16 @@ accumulator.totalAvailable +=
 
           return accumulator;
         },
-{
-  totalEquipment: 0,
-  totalPhysicalStock: 0,
-  totalInUse: 0,
-  totalAvailable: 0,
-  totalShortage: 0,
-  outOfStock: 0,
-  belowMinimum: 0,
-  equipmentWithShortage: 0,
-},
+        {
+          totalEquipment: 0,
+          totalPhysicalStock: 0,
+          totalInUse: 0,
+          totalAvailable: 0,
+          totalShortage: 0,
+          outOfStock: 0,
+          belowMinimum: 0,
+          equipmentWithShortage: 0,
+        },
       );
 
     return Response.json({
@@ -451,7 +459,8 @@ export async function POST(
      *
      * COMMERCIAL pode cadastrar um novo item
      * de catálogo para utilizar em projetos,
-     * mas o item sempre nasce com estoque físico 0.
+     * mas o item sempre nasce com estoque
+     * físico igual a zero.
      */
     const quantity =
       isAdministrator
@@ -462,7 +471,8 @@ export async function POST(
      * O comercial não confirma entrada física,
      * nota fiscal, estado ou condição operacional.
      *
-     * Esses campos são controlados pelo administrador.
+     * Esses campos são controlados pelo
+     * administrador.
      */
     const invoiceNumber =
       isAdministrator
@@ -491,9 +501,10 @@ export async function POST(
             "Nome",
           ),
 
-          manufacturer: optionalText(
-            body.manufacturer,
-          ),
+          manufacturer:
+            optionalText(
+              body.manufacturer,
+            ),
 
           model: optionalText(
             body.model,
@@ -534,6 +545,41 @@ export async function POST(
         },
       });
 
+    await logAudit({
+      action: AuditAction.CREATE,
+      entity: AuditEntity.EQUIPMENT,
+      entityId: equipment.id,
+      userId:
+        session.user.id ?? null,
+      description:
+        `Equipamento "${equipment.name}" cadastrado.`,
+      newData: {
+        id: equipment.id,
+        name: equipment.name,
+        manufacturer:
+          equipment.manufacturer,
+        model: equipment.model,
+        serialNumber:
+          equipment.serialNumber,
+        quantity:
+          equipment.quantity,
+        minimumStock:
+          equipment.minimumStock,
+        invoiceNumber:
+          equipment.invoiceNumber,
+        category:
+          equipment.category,
+        status:
+          equipment.status,
+        condition:
+          equipment.condition,
+        notes:
+          equipment.notes,
+        createdAt:
+          equipment.createdAt,
+      },
+    });
+
     return Response.json(
       {
         success: true,
@@ -552,10 +598,10 @@ export async function POST(
           physicalStock:
             equipment.quantity,
 
- inUse: 0,
+          inUse: 0,
 
-availableStock:
-  equipment.quantity,
+          availableStock:
+            equipment.quantity,
 
           shortage: 0,
 

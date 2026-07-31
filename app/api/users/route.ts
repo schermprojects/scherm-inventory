@@ -1,8 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
+import { logAudit } from "@/lib/audit";
+import {
+  AuditAction,
+  AuditEntity,
+} from "@/generated/prisma/enums";
+import { Prisma } from "@/generated/prisma/client";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
-
 const allowedRoles = [
   "ADMIN",
   "COMMERCIAL",
@@ -21,6 +26,28 @@ function isValidUsername(username: string) {
 
 function isAllowedRole(role: string): role is AllowedRole {
   return allowedRoles.includes(role as AllowedRole);
+}
+
+function serializeUserForAudit(
+  user: {
+    id: string;
+    name: string;
+    username: string;
+    role: AllowedRole;
+    active: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+): Prisma.InputJsonValue {
+  return {
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    active: user.active,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+  };
 }
 
 export async function GET(request: Request) {
@@ -287,6 +314,15 @@ export async function POST(request: Request) {
         updatedAt: true,
       },
     });
+
+    await logAudit({
+  action: AuditAction.CREATE,
+  entity: AuditEntity.USER,
+  entityId: user.id,
+  userId: authorization.user.id,
+  description: `Usuário "${user.username}" cadastro.`,
+  newData: serializeUserForAudit(user),
+});
 
     return NextResponse.json(
       {

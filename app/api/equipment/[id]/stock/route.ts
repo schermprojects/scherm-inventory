@@ -1,9 +1,13 @@
+import { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/auth";
 import {
+  AuditAction,
+  AuditEntity,
   EquipmentMovementType,
-  Prisma,
   ProjectStatus,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
+
+import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -407,13 +411,13 @@ const freeStockQuantity =
             );
 
           return {
-            equipment,
-            movement,
-            project:
-              selectedProject,
-            previousQuantity,
-            currentQuantity,
-          };
+  equipment,
+  movement,
+  project: selectedProject,
+  previousQuantity,
+  currentQuantity,
+  previousEquipment: existingEquipment,
+};
         },
         {
           isolationLevel:
@@ -428,6 +432,59 @@ const freeStockQuantity =
     : ` ${result.project.allocationQuantity} unidade(s) foram alocadas ao projeto "${result.project.name}".`
   : " As unidades foram adicionadas ao estoque livre.";
 
+  await logAudit({
+  action: AuditAction.STOCK_ENTRY,
+  entity: AuditEntity.EQUIPMENT,
+  entityId: result.equipment.id,
+  userId: sessionUser.id ?? null,
+  description: `Entrada de ${entryQuantity} unidade(s) no equipamento "${result.equipment.name}".`,
+  newData: {
+    equipmentId: result.equipment.id,
+    equipmentName: result.equipment.name,
+
+    previousQuantity: result.previousQuantity,
+    entryQuantity,
+    currentQuantity: result.currentQuantity,
+
+    invoiceNumber,
+    notes,
+
+    movementId: result.movement.id,
+  },
+});
+
+if (
+  result.project &&
+  result.project.allocationQuantity > 0
+) {
+  await logAudit({
+    action: AuditAction.ALLOCATE,
+    entity: AuditEntity.PROJECT,
+    entityId: result.project.id,
+    userId: sessionUser.id ?? null,
+    description:
+      `${result.project.allocationQuantity} unidade(s) do equipamento "${result.equipment.name}" foram alocadas ao projeto "${result.project.name}".`,
+    newData: {
+      projectId: result.project.id,
+      projectName: result.project.name,
+
+      equipmentId: result.equipment.id,
+      equipmentName: result.equipment.name,
+
+      allocatedQuantity:
+        result.project.allocationQuantity,
+
+      requiredQuantity:
+        result.project.requiredQuantity,
+
+      currentAllocatedQuantity:
+        result.project.currentAllocatedQuantity,
+
+      missingQuantity:
+        result.project.missingQuantity,
+    },
+  });
+}
     return Response.json({
       success: true,
 
@@ -492,7 +549,8 @@ message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projec
       error instanceof Error &&
       error.message ===
         "EQUIPMENT_NOT_FOUND"
-    ) {
+    ) 
+    {
       return Response.json(
         {
           success: false,

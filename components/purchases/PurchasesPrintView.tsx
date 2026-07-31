@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useMemo } from "react";
 
 type ProjectStatus =
   | "PLANNING"
@@ -43,7 +39,13 @@ type PurchasePrintItem = {
 
 type PurchasesPrintViewProps = {
   items: PurchasePrintItem[];
+  issuedAt: string;
 };
+
+export function PurchasesPrintView({
+  items,
+  issuedAt,
+}: PurchasesPrintViewProps) {
 
 const statusLabels: Record<
   ProjectStatus,
@@ -65,24 +67,6 @@ function formatDescription(
     .filter(Boolean)
     .join(" ");
 }
-
-export function PurchasesPrintView({
-  items,
-}: PurchasesPrintViewProps) {
-  const [issuedAt, setIssuedAt] =
-    useState("");
-
-  useEffect(() => {
-    setIssuedAt(
-      new Intl.DateTimeFormat(
-        "pt-BR",
-        {
-          dateStyle: "short",
-          timeStyle: "short",
-        },
-      ).format(new Date()),
-    );
-  }, []);
 
   const summary = useMemo(() => {
     const projectIds =

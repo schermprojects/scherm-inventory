@@ -1,10 +1,13 @@
 import { auth } from "@/auth";
+import { Prisma } from "@/generated/prisma/client";
 import {
-  Prisma,
+  AuditAction,
+  AuditEntity,
   ProjectPriority,
   ProjectStatus,
   UserRole,
-} from "@/generated/prisma/client";
+} from "@/generated/prisma/enums";
+import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -636,6 +639,83 @@ async function serializeProject(
   };
 }
 
+function serializeProjectForAudit(
+  project: ProjectWithRelations,
+): Prisma.InputJsonValue {
+  return {
+    id: project.id,
+    name: project.name,
+
+    clientId: project.clientId,
+    clientName: project.clientName,
+
+    description: project.description,
+    status: project.status,
+    priority: project.priority,
+
+    startDate:
+      project.startDate?.toISOString() ??
+      null,
+
+    dueDate:
+      project.dueDate?.toISOString() ??
+      null,
+
+    completedAt:
+      project.completedAt?.toISOString() ??
+      null,
+
+    notes: project.notes,
+
+    createdById:
+      project.createdById,
+
+    responsibleId:
+      project.responsibleId,
+
+    salespersonId:
+      project.salespersonId,
+
+    equipment:
+      project.equipment.map(
+        (item) => ({
+          projectEquipmentId:
+            item.id,
+
+          equipmentId:
+            item.equipmentId,
+
+          equipmentName:
+            item.equipment.name,
+
+          category:
+            item.equipment.category,
+
+          manufacturer:
+            item.equipment.manufacturer,
+
+          model:
+            item.equipment.model,
+
+          serialNumber:
+            item.equipment.serialNumber,
+
+          quantity:
+            item.quantity,
+
+          notes:
+            item.notes,
+        }),
+      ),
+
+    createdAt:
+      project.createdAt.toISOString(),
+
+    updatedAt:
+      project.updatedAt.toISOString(),
+  };
+}
+
 export async function GET(
   _request: Request,
   {
@@ -750,6 +830,19 @@ export async function PUT(
     );
   }
 
+  if (!sessionUser.id) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Não foi possível identificar o usuário autenticado.",
+    },
+    {
+      status: 401,
+    },
+  );
+}
+
   try {
     const { id } = await params;
 
@@ -853,205 +946,205 @@ export async function PUT(
         ? parseProjectEquipment(body)
         : [];
 
-    const project =
-      await prisma.$transaction(
-        async (transaction) => {
-          const existingProject =
-  await transaction.project.findUnique({
-    where: {
-      id,
-    },
-
-    select: {
-      id: true,
-      clientId: true,
-      clientName: true,
-    },
-  });
-
-          if (!existingProject) {
-            throw new Error(
-              "PROJECT_NOT_FOUND",
-            );
-          }
-
-          let nextClientId =
-  existingProject.clientId;
-
-let nextClientName =
-  existingProject.clientName;
-
-if (hasClientIdField(body)) {
-  const requestedClientId =
-    optionalId(body.clientId);
-
-  if (!requestedClientId) {
-    /*
-     * O frontend enviou clientId como null
-     * ou string vazia. Remove o vínculo.
-     */
-    nextClientId = null;
-    nextClientName = optionalText(
-      body.clientName,
-    );
-  } else {
-    const selectedClient =
-      await transaction.client.findUnique({
+const {
+  existingProject,
+  project,
+} = await prisma.$transaction(
+  async (transaction) => {
+    const existingProject =
+      await transaction.project.findUnique({
         where: {
-          id: requestedClientId,
+          id,
         },
 
-        select: {
-          id: true,
-          name: true,
-          active: true,
-        },
+        include: projectInclude,
       });
 
-    if (!selectedClient) {
+    if (!existingProject) {
       throw new Error(
-        "CLIENT_NOT_FOUND",
+        "PROJECT_NOT_FOUND",
       );
     }
 
-    /*
-     * Permite preservar um cliente inativo
-     * que já estava vinculado ao projeto.
-     *
-     * Não permite selecionar outro cliente
-     * inativo.
-     */
-    const isExistingClient =
-      selectedClient.id ===
+    let nextClientId =
       existingProject.clientId;
 
-    if (
-      !selectedClient.active &&
-      !isExistingClient
+    let nextClientName =
+      existingProject.clientName;
+
+    if (hasClientIdField(body)) {
+      const requestedClientId =
+        optionalId(body.clientId);
+
+      if (!requestedClientId) {
+        nextClientId = null;
+
+        nextClientName =
+          optionalText(
+            body.clientName,
+          );
+      } else {
+        const selectedClient =
+          await transaction.client.findUnique({
+            where: {
+              id: requestedClientId,
+            },
+
+            select: {
+              id: true,
+              name: true,
+              active: true,
+            },
+          });
+
+        if (!selectedClient) {
+          throw new Error(
+            "CLIENT_NOT_FOUND",
+          );
+        }
+
+        const isExistingClient =
+          selectedClient.id ===
+          existingProject.clientId;
+
+        if (
+          !selectedClient.active &&
+          !isExistingClient
+        ) {
+          throw new Error(
+            "CLIENT_INACTIVE",
+          );
+        }
+
+        nextClientId =
+          selectedClient.id;
+
+        nextClientName =
+          selectedClient.name;
+      }
+    } else if (
+      !existingProject.clientId &&
+      Object.prototype.hasOwnProperty.call(
+        body,
+        "clientName",
+      )
     ) {
-      throw new Error(
-        "CLIENT_INACTIVE",
-      );
+      nextClientName =
+        optionalText(
+          body.clientName,
+        );
     }
 
-    nextClientId =
-      selectedClient.id;
+    if (shouldUpdateEquipment) {
+      await validateEquipmentIds(
+        transaction,
+        selectedEquipment,
+      );
 
-    /*
-     * clientName continua temporariamente
-     * preenchido para compatibilidade com
-     * telas e relatórios antigos.
-     */
-    nextClientName =
-      selectedClient.name;
-  }
-} else if (
-  !existingProject.clientId &&
-  Object.prototype.hasOwnProperty.call(
-    body,
-    "clientName",
-  )
-) {
-  /*
-   * Compatibilidade com o formulário antigo.
-   * Só permite editar clientName diretamente
-   * quando ainda não existe clientId.
-   */
-  nextClientName = optionalText(
-    body.clientName,
-  );
-}
-
-          if (shouldUpdateEquipment) {
-            await validateEquipmentIds(
-              transaction,
-              selectedEquipment,
-            );
-
-            /*
-             * ProjectEquipment representa a
-             * necessidade do projeto.
-             *
-             * Nenhuma quantidade do estoque físico
-             * é reduzida ou alterada aqui.
-             */
-            await transaction.projectEquipment.deleteMany(
-              {
-                where: {
-                  projectId: id,
-                },
-              },
-            );
-
-            if (
-              selectedEquipment.length > 0
-            ) {
-              await transaction.projectEquipment.createMany(
-                {
-                  data:
-                    selectedEquipment.map(
-                      (item) => ({
-                        projectId: id,
-                        equipmentId:
-                          item.equipmentId,
-                        quantity:
-                          item.quantity,
-                        notes: item.notes,
-                      }),
-                    ),
-                },
-              );
-            }
-          }
-
-          return transaction.project.update({
-            where: {
-              id,
-            },
-
-            data: {
-  name,
-
-  clientId: nextClientId,
-  clientName: nextClientName,
-
-              description: optionalText(
-                body.description,
-              ),
-
-              notes: optionalText(
-                body.notes,
-              ),
-
-              responsibleId:
-                validResponsibleId,
-
-              salespersonId:
-                validSalespersonId,
-
-              status,
-              priority,
-
-              startDate,
-              dueDate,
-
-              completedAt:
-                status ===
-                ProjectStatus.COMPLETED
-                  ? completedAt ??
-                    new Date()
-                  : null,
-            },
-
-            include: projectInclude,
-          });
-        },
+      await transaction.projectEquipment.deleteMany(
         {
-          isolationLevel:
-            Prisma.TransactionIsolationLevel
-              .Serializable,
+          where: {
+            projectId: id,
+          },
         },
       );
+
+      if (
+        selectedEquipment.length > 0
+      ) {
+        await transaction.projectEquipment.createMany(
+          {
+            data:
+              selectedEquipment.map(
+                (item) => ({
+                  projectId: id,
+                  equipmentId:
+                    item.equipmentId,
+                  quantity:
+                    item.quantity,
+                  notes:
+                    item.notes,
+                }),
+              ),
+          },
+        );
+      }
+    }
+
+    const project =
+      await transaction.project.update({
+        where: {
+          id,
+        },
+
+        data: {
+          name,
+
+          clientId:
+            nextClientId,
+
+          clientName:
+            nextClientName,
+
+          description:
+            optionalText(
+              body.description,
+            ),
+
+          notes:
+            optionalText(
+              body.notes,
+            ),
+
+          responsibleId:
+            validResponsibleId,
+
+          salespersonId:
+            validSalespersonId,
+
+          status,
+          priority,
+
+          startDate,
+          dueDate,
+
+          completedAt:
+            status ===
+            ProjectStatus.COMPLETED
+              ? completedAt ??
+                new Date()
+              : null,
+        },
+
+        include:
+          projectInclude,
+      });
+
+    return {
+      existingProject,
+      project,
+    };
+  },
+  {
+    isolationLevel:
+      Prisma.TransactionIsolationLevel
+        .Serializable,
+  },
+);
+
+await logAudit({
+  action: AuditAction.UPDATE,
+  entity: AuditEntity.PROJECT,
+  entityId: project.id,
+  userId: sessionUser.id,
+  description: `Projeto "${project.name}" atualizado.`,
+  oldData: serializeProjectForAudit(
+    existingProject,
+  ),
+  newData: serializeProjectForAudit(
+    project,
+  ),
+});
 
     return Response.json({
       success: true,
@@ -1061,6 +1154,7 @@ if (hasClientIdField(body)) {
         project,
       ),
     });
+
   } catch (error) {
     console.error(
       "Erro ao atualizar projeto:",
@@ -1214,7 +1308,9 @@ if (
         status: 500,
       },
     );
+  
   }
+   
 }
 
 export async function DELETE(
@@ -1259,20 +1355,68 @@ export async function DELETE(
     );
   }
 
+  if (!sessionUser.id) {
+    return Response.json(
+      {
+        success: false,
+        message:
+          "Não foi possível identificar o usuário autenticado.",
+      },
+      {
+        status: 401,
+      },
+    );
+  }
+
   const { id } = await params;
 
   try {
-    /*
-     * Os registros de ProjectEquipment são removidos
-     * automaticamente pelo onDelete: Cascade.
-     *
-     * O equipamento do inventário não será excluído,
-     * pois a relação Equipment usa onDelete: Restrict.
-     */
-    await prisma.project.delete({
-      where: {
-        id,
-      },
+    const deletedProject =
+      await prisma.$transaction(
+        async (transaction) => {
+          const existingProject =
+            await transaction.project.findUnique(
+              {
+                where: {
+                  id,
+                },
+
+                include:
+                  projectInclude,
+              },
+            );
+
+          if (!existingProject) {
+            throw new Error(
+              "PROJECT_NOT_FOUND",
+            );
+          }
+
+          await transaction.project.delete({
+            where: {
+              id,
+            },
+          });
+
+          return existingProject;
+        },
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel
+              .Serializable,
+        },
+      );
+
+    await logAudit({
+      action: AuditAction.DELETE,
+      entity: AuditEntity.PROJECT,
+      entityId: deletedProject.id,
+      userId: sessionUser.id,
+      description: `Projeto "${deletedProject.name}" removido.`,
+      oldData:
+        serializeProjectForAudit(
+          deletedProject,
+        ),
     });
 
     return Response.json({
@@ -1285,6 +1429,23 @@ export async function DELETE(
       "Erro ao remover projeto:",
       error,
     );
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "PROJECT_NOT_FOUND"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Projeto não encontrado.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
 
     if (isPrismaNotFoundError(error)) {
       return Response.json(
@@ -1309,6 +1470,23 @@ export async function DELETE(
           success: false,
           message:
             "O projeto possui registros vinculados e não pode ser removido.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
+      error instanceof
+        Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O projeto foi alterado simultaneamente. Tente remover novamente.",
         },
         {
           status: 409,
