@@ -99,6 +99,39 @@ function parseNonNegativeInteger(
   return parsedValue;
 }
 
+function parseMinimumStock(
+  value: unknown,
+): number {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return DEFAULT_MINIMUM_STOCK;
+  }
+
+  const parsedValue = Number(value);
+
+  if (
+    !Number.isInteger(parsedValue) ||
+    parsedValue < 0 ||
+    parsedValue > MAX_QUANTITY
+  ) {
+    throw new Error(
+      `O campo "Estoque mínimo" deve ser um número inteiro entre 0 e ${MAX_QUANTITY}.`,
+    );
+  }
+
+  /*
+   * Compatibilidade com o formulário atual:
+   * valores ausentes ou zerados recebem o
+   * estoque mínimo padrão.
+   */
+  return parsedValue === 0
+    ? DEFAULT_MINIMUM_STOCK
+    : parsedValue;
+}
+
 function parseStatus(
   value: unknown,
 ): EquipmentStatus {
@@ -240,11 +273,13 @@ export async function GET() {
         );
 
         const isOutOfStock =
-          availableStock === 0;
+  availableStock <= 0;
 
-        const isBelowMinimum =
-          availableStock <=
-          item.minimumStock;
+const isBelowMinimum =
+  availableStock > 0 &&
+  item.minimumStock > 0 &&
+  availableStock <=
+    item.minimumStock;
 
         const hasShortage =
           shortage > 0;
@@ -346,14 +381,12 @@ export async function GET() {
             item.shortage;
 
           if (item.isOutOfStock) {
-            accumulator.outOfStock +=
-              1;
-          }
-
-          if (item.isBelowMinimum) {
-            accumulator.belowMinimum +=
-              1;
-          }
+  accumulator.outOfStock +=
+    1;
+} else if (item.isBelowMinimum) {
+  accumulator.belowMinimum +=
+    1;
+}
 
           if (item.hasShortage) {
             accumulator.equipmentWithShortage +=
@@ -448,11 +481,9 @@ export async function POST(
       );
 
     const minimumStock =
-      parseNonNegativeInteger(
-        body.minimumStock,
-        "Estoque mínimo",
-        DEFAULT_MINIMUM_STOCK,
-      );
+  parseMinimumStock(
+    body.minimumStock,
+  );
 
     /*
      * ADMIN pode definir o estoque inicial.
@@ -608,11 +639,13 @@ export async function POST(
           projectsUsing: 0,
 
           isOutOfStock:
-            equipment.quantity === 0,
+  equipment.quantity <= 0,
 
-          isBelowMinimum:
-            equipment.quantity <=
-            equipment.minimumStock,
+isBelowMinimum:
+  equipment.quantity > 0 &&
+  equipment.minimumStock > 0 &&
+  equipment.quantity <=
+    equipment.minimumStock,
 
           hasShortage: false,
 
