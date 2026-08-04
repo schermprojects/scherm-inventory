@@ -10,12 +10,15 @@ import {
 import { auth } from "@/auth";
 import { logAudit } from "@/lib/audit";
 import { calculateStock } from "@/lib/inventory/calculateStock";
+import {
+  getStockAlertLevel,
+  LOW_STOCK_THRESHOLD,
+} from "@/lib/inventory/stockAlert";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_MINIMUM_STOCK = 3;
 const MAX_QUANTITY = 999999;
 
 const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
@@ -34,7 +37,6 @@ type EquipmentBody = {
   model?: unknown;
   serialNumber?: unknown;
   quantity?: unknown;
-  minimumStock?: unknown;
   invoiceNumber?: unknown;
   category?: unknown;
   status?: unknown;
@@ -97,39 +99,6 @@ function parseNonNegativeInteger(
   }
 
   return parsedValue;
-}
-
-function parseMinimumStock(
-  value: unknown,
-): number {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ""
-  ) {
-    return DEFAULT_MINIMUM_STOCK;
-  }
-
-  const parsedValue = Number(value);
-
-  if (
-    !Number.isInteger(parsedValue) ||
-    parsedValue < 0 ||
-    parsedValue > MAX_QUANTITY
-  ) {
-    throw new Error(
-      `O campo "Estoque mínimo" deve ser um número inteiro entre 0 e ${MAX_QUANTITY}.`,
-    );
-  }
-
-  /*
-   * Compatibilidade com o formulário atual:
-   * valores ausentes ou zerados recebem o
-   * estoque mínimo padrão.
-   */
-  return parsedValue === 0
-    ? DEFAULT_MINIMUM_STOCK
-    : parsedValue;
 }
 
 function parseStatus(
@@ -272,14 +241,18 @@ export async function GET() {
           requested,
         );
 
-        const isOutOfStock =
-  availableStock <= 0;
+        const stockAlertLevel =
+          getStockAlertLevel(
+            availableStock,
+          );
 
-const isBelowMinimum =
-  availableStock > 0 &&
-  item.minimumStock > 0 &&
-  availableStock <=
-    item.minimumStock;
+        const isOutOfStock =
+          stockAlertLevel ===
+          "OUT_OF_STOCK";
+
+        const isBelowMinimum =
+          stockAlertLevel ===
+          "LOW_STOCK";
 
         const hasShortage =
           shortage > 0;
@@ -287,9 +260,7 @@ const isBelowMinimum =
         const projectsUsing =
           new Set(
             item.projects.map(
-              (
-                projectEquipment,
-              ) =>
+              (projectEquipment) =>
                 projectEquipment.projectId,
             ),
           ).size;
@@ -308,7 +279,7 @@ const isBelowMinimum =
           physicalStock,
 
           minimumStock:
-            item.minimumStock,
+            LOW_STOCK_THRESHOLD,
 
           inUse,
           availableStock,
@@ -330,9 +301,7 @@ const isBelowMinimum =
 
           activeProjects:
             item.projects.map(
-              (
-                projectEquipment,
-              ) => ({
+              (projectEquipment) => ({
                 projectId:
                   projectEquipment
                     .project.id,
@@ -381,12 +350,14 @@ const isBelowMinimum =
             item.shortage;
 
           if (item.isOutOfStock) {
-  accumulator.outOfStock +=
-    1;
-} else if (item.isBelowMinimum) {
-  accumulator.belowMinimum +=
-    1;
-}
+            accumulator.outOfStock +=
+              1;
+          } else if (
+            item.isBelowMinimum
+          ) {
+            accumulator.belowMinimum +=
+              1;
+          }
 
           if (item.hasShortage) {
             accumulator.equipmentWithShortage +=
@@ -480,17 +451,12 @@ export async function POST(
         0,
       );
 
-    const minimumStock =
-  parseMinimumStock(
-    body.minimumStock,
-  );
-
     /*
      * ADMIN pode definir o estoque inicial.
      *
-     * COMMERCIAL pode cadastrar um novo item
+     * COMMERCIAL pode cadastrar um item
      * de catálogo para utilizar em projetos,
-     * mas o item sempre nasce com estoque
+     * mas ele sempre nasce com estoque
      * físico igual a zero.
      */
     const quantity =
@@ -548,7 +514,14 @@ export async function POST(
 
           quantity,
 
-          minimumStock,
+          /*
+           * Regra fixa do sistema:
+           * 0 = sem estoque
+           * 1 a 3 = baixo estoque
+           * 4 ou mais = estoque normal
+           */
+          minimumStock:
+            LOW_STOCK_THRESHOLD,
 
           invoiceNumber,
 
@@ -595,7 +568,7 @@ export async function POST(
         quantity:
           equipment.quantity,
         minimumStock:
-          equipment.minimumStock,
+          LOW_STOCK_THRESHOLD,
         invoiceNumber:
           equipment.invoiceNumber,
         category:
@@ -610,6 +583,11 @@ export async function POST(
           equipment.createdAt,
       },
     });
+
+    const createdStockAlertLevel =
+      getStockAlertLevel(
+        equipment.quantity,
+      );
 
     return Response.json(
       {
@@ -629,6 +607,9 @@ export async function POST(
           physicalStock:
             equipment.quantity,
 
+          minimumStock:
+            LOW_STOCK_THRESHOLD,
+
           inUse: 0,
 
           availableStock:
@@ -639,13 +620,12 @@ export async function POST(
           projectsUsing: 0,
 
           isOutOfStock:
-  equipment.quantity <= 0,
+            createdStockAlertLevel ===
+            "OUT_OF_STOCK",
 
-isBelowMinimum:
-  equipment.quantity > 0 &&
-  equipment.minimumStock > 0 &&
-  equipment.quantity <=
-    equipment.minimumStock,
+          isBelowMinimum:
+            createdStockAlertLevel ===
+            "LOW_STOCK",
 
           hasShortage: false,
 

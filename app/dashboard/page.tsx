@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import Link from "next/link";
 import {
   Boxes,
@@ -6,18 +7,27 @@ import {
   Users,
 } from "lucide-react";
 
+import {
+  getStockAlertLevel,
+  LOW_STOCK_THRESHOLD,
+  type StockAlertLevel,
+} from "@/lib/inventory/stockAlert";
+
 import { Breadcrumb } from "@/components/layout/Breadcrumb";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { calculateStock } from "@/lib/inventory/calculateStock";
 import { prisma } from "@/lib/prisma";
 
-type LowStockItem = {
+type StockAlertItem = {
   id: string;
   name: string;
   category: string;
   availableStock: number;
-  minimumStock: number;
+  alertLevel: Exclude<
+    StockAlertLevel,
+    "NORMAL"
+  >;
 };
 
 type DashboardData = {
@@ -34,7 +44,7 @@ type DashboardData = {
     shortage: number;
   };
 
-  lowStockItems: LowStockItem[];
+  stockAlertItems: StockAlertItem[];
 };
 
 export default async function DashboardPage() {
@@ -49,8 +59,6 @@ export default async function DashboardPage() {
         name: true,
         category: true,
         quantity: true,
-        minimumStock: true,
-        status: true,
 
         projects: {
           where: {
@@ -148,20 +156,38 @@ export default async function DashboardPage() {
       },
     );
 
-  const lowStockItems: LowStockItem[] =
-    calculatedEquipment
-      .filter(
-        (item) =>
-          item.status !==
-            "UNAVAILABLE" &&
-          item.availableStock <=
-            Math.max(
-              item.minimumStock,
-              0,
-            ),
-      )
-      .sort(
-        (first, second) =>
+ const stockAlertItems: StockAlertItem[] =
+  calculatedEquipment
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      category: item.category,
+      availableStock:
+        item.availableStock,
+      alertLevel:
+        getStockAlertLevel(
+          item.availableStock,
+        ),
+    }))
+    .filter(
+      (
+        item,
+      ): item is StockAlertItem =>
+        item.alertLevel !== "NORMAL",
+    )
+    .sort(
+      (first, second) => {
+        if (
+          first.alertLevel !==
+          second.alertLevel
+        ) {
+          return first.alertLevel ===
+            "OUT_OF_STOCK"
+            ? -1
+            : 1;
+        }
+
+        return (
           first.availableStock -
             second.availableStock ||
           first.name.localeCompare(
@@ -170,19 +196,10 @@ export default async function DashboardPage() {
             {
               sensitivity: "base",
             },
-          ),
-      )
-      .map((item) => ({
-        id: item.id,
-        name: item.name,
-        category: item.category,
-        availableStock:
-          item.availableStock,
-        minimumStock: Math.max(
-          item.minimumStock,
-          0,
-        ),
-      }));
+          )
+        );
+      },
+    );
 
   const dashboardData: DashboardData = {
     equipmentCount:
@@ -196,7 +213,7 @@ export default async function DashboardPage() {
 
     inventory: inventoryTotals,
 
-    lowStockItems,
+    stockAlertItems,
   };
 
   return (
@@ -227,6 +244,15 @@ function DashboardContent({
 }: {
   data: DashboardData;
 }) {
+  const visibleStockAlerts =
+  data.stockAlertItems.slice(0, 8);
+
+const hiddenStockAlertsCount =
+  Math.max(
+    data.stockAlertItems.length -
+      visibleStockAlerts.length,
+    0,
+  );
   return (
     <div className="space-y-5">
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -305,20 +331,8 @@ function DashboardContent({
             />
           </div>
 
-          <div className="mt-5 grid gap-4">
+          <div className="mt-5">
             <InventoryDonutChart
-              available={
-                data.inventory.available
-              }
-              inUse={
-                data.inventory.inUse
-              }
-              shortage={
-                data.inventory.shortage
-              }
-            />
-
-            <InventoryBarChart
               available={
                 data.inventory.available
               }
@@ -336,43 +350,54 @@ function DashboardContent({
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-base font-bold text-zinc-900">
-                Estoque mínimo
+                Alertas de estoque
               </h2>
 
               <p className="mt-1 text-sm text-zinc-500">
-                Equipamentos que precisam
-                de reposição.
+                Equipamentos sem estoque ou com até{" "}
+                {LOW_STOCK_THRESHOLD} unidades disponíveis.
               </p>
             </div>
 
             <span
               className={[
                 "inline-flex min-w-8 items-center justify-center rounded-full px-2.5 py-1 text-xs font-bold",
-                data.lowStockItems.length >
-                0
+                data.stockAlertItems.length > 0
                   ? "bg-red-100 text-red-700"
                   : "bg-emerald-100 text-emerald-700",
               ].join(" ")}
             >
               {
-                data.lowStockItems
-                  .length
+                data.stockAlertItems.length
               }
             </span>
           </div>
 
-          {data.lowStockItems.length >
+          {data.stockAlertItems.length >
           0 ? (
-            <div className="mt-5 space-y-3">
-              {data.lowStockItems.map(
-                (item) => (
-                  <LowStockAlert
-                    key={item.id}
-                    item={item}
-                  />
-                ),
-              )}
-            </div>
+            <div className="mt-4">
+  <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
+    {visibleStockAlerts.map(
+      (item) => (
+        <StockAlert
+          key={item.id}
+          item={item}
+        />
+      ),
+    )}
+  </div>
+
+  <div className="mt-4 border-t border-zinc-100 pt-4">
+    <Link
+      href="/inventory?stock=alert"
+      className="flex h-10 w-full items-center justify-center rounded-lg border border-orange-200 bg-orange-50 px-4 text-sm font-semibold text-[#D96D00] transition hover:border-orange-300 hover:bg-orange-100"
+    >
+      {hiddenStockAlertsCount > 0
+        ? `Ver todos os ${data.stockAlertItems.length} alertas`
+        : "Ver alertas no inventário"}
+    </Link>
+  </div>
+</div>
           ) : (
             <div className="mt-5 flex min-h-72 items-center justify-center rounded-lg border border-dashed border-emerald-200 bg-emerald-50 p-6 text-center">
               <div>
@@ -386,8 +411,7 @@ function DashboardContent({
                 </p>
 
                 <p className="mt-1 text-xs text-emerald-600">
-                  Nenhum equipamento atingiu
-                  o estoque mínimo.
+                   Nenhum equipamento possui alerta de estoque.
                 </p>
               </div>
             </div>
@@ -533,7 +557,7 @@ function InventoryDonutChart({
         )`;
 
   return (
-    <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-5">
+    <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
       <div>
         <h3 className="text-sm font-bold text-zinc-900">
           Situação das unidades
@@ -545,56 +569,49 @@ function InventoryDonutChart({
         </p>
       </div>
 
-      <div className="mt-6 flex flex-col items-center">
-        <div
-          className="relative flex h-44 w-44 items-center justify-center rounded-full shadow-inner"
-          style={{
-            background:
-              chartBackground,
-          }}
-          role="img"
-          aria-label={`Gráfico do inventário: ${available} disponíveis, ${inUse} em uso e ${shortage} em déficit.`}
-        >
-          <div className="flex h-28 w-28 flex-col items-center justify-center rounded-full bg-white shadow-sm">
-            <span className="text-3xl font-black text-zinc-900">
-              {total}
-            </span>
+ <div className="mt-4 flex flex-col items-center">
+  <div
+    className="relative flex h-36 w-36 items-center justify-center rounded-full shadow-inner"
+    style={{
+      background: chartBackground,
+    }}
+    role="img"
+    aria-label={`Gráfico do inventário: ${available} disponíveis, ${inUse} em uso e ${shortage} em déficit.`}
+  >
+    <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white shadow-sm">
+      <span className="text-2xl font-black text-zinc-900">
+        {total}
+      </span>
 
-            <span className="text-xs font-medium text-zinc-500">
-              unidades
-            </span>
-          </div>
-        </div>
+      <span className="text-xs font-medium text-zinc-500">
+        unidades
+      </span>
+    </div>
+  </div>
 
-        <div className="mt-6 grid w-full gap-2">
-          <ChartLegendItem
-            label="Disponíveis"
-            value={available}
-            percentage={
-              availablePercentage
-            }
-            colorClass="bg-emerald-500"
-          />
+  <div className="mt-4 grid w-full gap-2">
+    <ChartLegendItem
+      label="Disponíveis"
+      value={available}
+      percentage={availablePercentage}
+      colorClass="bg-emerald-500"
+    />
 
-          <ChartLegendItem
-            label="Em uso"
-            value={inUse}
-            percentage={
-              inUsePercentage
-            }
-            colorClass="bg-blue-500"
-          />
+    <ChartLegendItem
+      label="Em uso"
+      value={inUse}
+      percentage={inUsePercentage}
+      colorClass="bg-blue-500"
+    />
 
-          <ChartLegendItem
-            label="Déficit"
-            value={shortage}
-            percentage={
-              shortagePercentage
-            }
-            colorClass="bg-red-500"
-          />
-        </div>
-      </div>
+    <ChartLegendItem
+      label="Déficit"
+      value={shortage}
+      percentage={shortagePercentage}
+      colorClass="bg-red-500"
+    />
+  </div>
+</div>
     </article>
   );
 }
@@ -635,187 +652,66 @@ function ChartLegendItem({
   );
 }
 
-function InventoryBarChart({
-  available,
-  inUse,
-  shortage,
-}: {
-  available: number;
-  inUse: number;
-  shortage: number;
-}) {
-  const highestValue = Math.max(
-    available,
-    inUse,
-    shortage,
-    1,
-  );
-
-  return (
-    <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-5">
-      <div>
-        <h3 className="text-sm font-bold text-zinc-900">
-          Comparativo de estoque
-        </h3>
-
-        <p className="mt-1 text-xs text-zinc-500">
-          Quantidade total em cada
-          situação.
-        </p>
-      </div>
-
-      <div className="mt-7 space-y-6">
-        <InventoryBar
-          label="Disponíveis"
-          value={available}
-          highestValue={
-            highestValue
-          }
-          barClass="bg-gradient-to-r from-emerald-400 to-emerald-600"
-          textClass="text-emerald-700"
-        />
-
-        <InventoryBar
-          label="Em uso"
-          value={inUse}
-          highestValue={
-            highestValue
-          }
-          barClass="bg-gradient-to-r from-blue-400 to-blue-600"
-          textClass="text-blue-700"
-        />
-
-        <InventoryBar
-          label="Déficit"
-          value={shortage}
-          highestValue={
-            highestValue
-          }
-          barClass="bg-gradient-to-r from-red-400 to-red-600"
-          textClass="text-red-700"
-        />
-      </div>
-    </article>
-  );
-}
-
-function InventoryBar({
-  label,
-  value,
-  highestValue,
-  barClass,
-  textClass,
-}: {
-  label: string;
-  value: number;
-  highestValue: number;
-  barClass: string;
-  textClass: string;
-}) {
-  const percentage =
-    (value / highestValue) * 100;
-
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold text-zinc-700">
-          {label}
-        </span>
-
-        <span
-          className={`text-sm font-black ${textClass}`}
-        >
-          {value}
-        </span>
-      </div>
-
-      <div className="h-4 overflow-hidden rounded-full bg-zinc-200">
-        <div
-          className={`h-full min-w-0 rounded-full shadow-sm transition-all duration-700 ${barClass}`}
-          style={{
-            width:
-              value === 0
-                ? "0%"
-                : `${Math.max(
-                    percentage,
-                    4,
-                  )}%`,
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function LowStockAlert({
+function StockAlert({
   item,
 }: {
-  item: LowStockItem;
+  item: StockAlertItem;
 }) {
   const isOutOfStock =
-    item.availableStock === 0;
+    item.alertLevel ===
+    "OUT_OF_STOCK";
 
   return (
     <Link
       href={`/inventory/${item.id}`}
       className={[
-        "block rounded-xl border p-4 transition",
+        "block rounded-lg border px-3 py-3 transition",
         isOutOfStock
           ? "border-red-200 bg-red-50 hover:border-red-300 hover:bg-red-100/70"
           : "border-amber-200 bg-amber-50 hover:border-amber-300 hover:bg-amber-100/70",
       ].join(" ")}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-zinc-900">
-            {item.name}
-          </p>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p
+                className="truncate text-sm font-semibold text-zinc-900"
+                title={item.name}
+              >
+                {item.name}
+              </p>
 
-          <p className="mt-1 text-xs text-zinc-500">
-            {item.category}
-          </p>
+              <p className="mt-0.5 truncate text-xs text-zinc-500">
+                {item.category}
+              </p>
+            </div>
+
+            <span
+              className={[
+                "shrink-0 rounded-full px-2 py-1 text-[10px] font-bold",
+                isOutOfStock
+                  ? "bg-red-200 text-red-800"
+                  : "bg-amber-200 text-amber-800",
+              ].join(" ")}
+            >
+              {isOutOfStock
+                ? "Sem estoque"
+                : "Baixo estoque"}
+            </span>
+          </div>
         </div>
 
-        <span
+        <div
           className={[
-            "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold",
+            "flex h-10 min-w-10 shrink-0 items-center justify-center rounded-lg bg-white/80 px-2 text-lg font-black",
             isOutOfStock
-              ? "bg-red-200 text-red-800"
-              : "bg-amber-200 text-amber-800",
+              ? "text-red-700"
+              : "text-amber-700",
           ].join(" ")}
+          title={`${item.availableStock} unidades disponíveis`}
         >
-          {isOutOfStock
-            ? "Sem disponibilidade"
-            : "Estoque baixo"}
-        </span>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-white/80 p-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-            Disponível
-          </p>
-
-          <p
-            className={[
-              "mt-1 text-xl font-black",
-              isOutOfStock
-                ? "text-red-700"
-                : "text-amber-700",
-            ].join(" ")}
-          >
-            {item.availableStock}
-          </p>
-        </div>
-
-        <div className="rounded-lg bg-white/80 p-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-            Estoque mínimo
-          </p>
-
-          <p className="mt-1 text-xl font-black text-zinc-800">
-            {item.minimumStock}
-          </p>
+          {item.availableStock}
         </div>
       </div>
     </Link>

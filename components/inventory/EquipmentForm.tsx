@@ -25,6 +25,9 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  LOW_STOCK_THRESHOLD,
+} from "@/lib/inventory/stockAlert";
 
 type EquipmentStatus =
   | "Disponível"
@@ -42,7 +45,6 @@ export type EquipmentFormData = {
   manufacturer: string;
   model: string;
   quantity: string;
-  minimumStock: string;
   invoiceNumber: string;
   status: EquipmentStatus;
   condition: EquipmentCondition;
@@ -53,7 +55,6 @@ type EquipmentStockInfo = {
   physicalStock: number;
   inUse: number;
   availableStock: number;
-  minimumStock: number;
 };
 
 type EquipmentFormProps = {
@@ -82,6 +83,12 @@ type EquipmentApiResponse = {
   };
 };
 
+type ManufacturersApiResponse = {
+  success: boolean;
+  message?: string;
+  data?: string[];
+};
+
 type UploadedEquipmentImage = {
   url: string;
   downloadUrl: string;
@@ -104,7 +111,6 @@ const initialFormData: EquipmentFormData = {
   manufacturer: "",
   model: "",
   quantity: "1",
-  minimumStock: "0",
   invoiceNumber: "",
   status: "Disponível",
   condition: "Novo",
@@ -134,7 +140,7 @@ const categories = [
   "Outro",
 ];
 
-const manufacturers = [
+const DEFAULT_MANUFACTURERS = [
   "AMD",
   "AOC",
   "APC",
@@ -196,6 +202,12 @@ export function EquipmentForm({
 }: EquipmentFormProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [
+  manufacturerOptions,
+  setManufacturerOptions,
+] = useState<string[]>(
+  [...DEFAULT_MANUFACTURERS],
+);
 
 const [formData, setFormData] =
   useState<EquipmentFormData>(() => ({
@@ -208,7 +220,6 @@ const [formData, setFormData] =
     manufacturer: initialValues?.manufacturer ?? "",
     model: initialValues?.model ?? "",
     quantity: initialValues?.quantity ?? "1",
-    minimumStock: initialValues?.minimumStock ?? "0",
     invoiceNumber: initialValues?.invoiceNumber ?? "",
     status: initialValues?.status ?? "Disponível",
     condition: initialValues?.condition ?? "Novo",
@@ -225,6 +236,69 @@ const [formData, setFormData] =
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+  const controller = new AbortController();
+
+  async function loadManufacturers() {
+    try {
+      const response = await fetch(
+        "/api/manufacturers",
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        },
+      );
+
+      const result =
+        (await response.json()) as ManufacturersApiResponse;
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.message ??
+            "Não foi possível carregar os fabricantes.",
+        );
+      }
+
+      const manufacturers =
+        Array.isArray(result.data)
+          ? result.data
+          : [];
+
+      if (manufacturers.length > 0) {
+        setManufacturerOptions(
+          manufacturers,
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
+        return;
+      }
+
+      /*
+       * Mantém DEFAULT_MANUFACTURERS como
+       * fallback para não interromper o cadastro.
+       */
+      console.error(
+        "Erro ao carregar fabricantes:",
+        error,
+      );
+    }
+  }
+
+  void loadManufacturers();
+
+  return () => {
+    controller.abort();
+  };
+}, []);
 
   useEffect(() => {
     if (mode === "edit") {
@@ -353,18 +427,6 @@ function validateForm(): boolean {
   ) {
     nextErrors.quantity =
       `O estoque físico não pode ser menor que as ${stockInfo.inUse} unidades atualmente em uso.`;
-  }
-
-  const minimumStock =
-    Number(formData.minimumStock);
-
-  if (
-    !Number.isInteger(minimumStock) ||
-    minimumStock < 0 ||
-    minimumStock > 999999
-  ) {
-    nextErrors.minimumStock =
-      "Informe um estoque mínimo inteiro igual ou maior que zero.";
   }
 
   setErrors(nextErrors);
@@ -510,9 +572,6 @@ function validateForm(): boolean {
           model: formData.model.trim() || null,
 
           quantity: Number(formData.quantity),
-
-          minimumStock:
-            Number(formData.minimumStock),
 
           invoiceNumber:
             formData.invoiceNumber.trim() || null,
@@ -861,7 +920,7 @@ function validateForm(): boolean {
           projectedAvailableStock === 0
             ? "border-red-200 bg-red-50"
             : projectedAvailableStock <=
-                Number(formData.minimumStock)
+                  LOW_STOCK_THRESHOLD
               ? "border-amber-200 bg-amber-50"
               : "border-emerald-200 bg-emerald-50"
         }
@@ -869,18 +928,16 @@ function validateForm(): boolean {
           projectedAvailableStock === 0
             ? "text-red-700"
             : projectedAvailableStock <=
-                Number(formData.minimumStock)
+                LOW_STOCK_THRESHOLD
               ? "text-amber-700"
               : "text-emerald-700"
         }
       />
 
       <StockSummaryCard
-        label="Estoque mínimo"
-        value={
-          Number(formData.minimumStock) || 0
-        }
-        description="Limite para alerta"
+        label="Limite de alerta"
+        value={LOW_STOCK_THRESHOLD}
+        description="Regra fixa do sistema"
         className="border-violet-200 bg-violet-50"
         valueClassName="text-violet-700"
       />
@@ -944,7 +1001,7 @@ function validateForm(): boolean {
     id="manufacturer"
     name="manufacturer"
     value={formData.manufacturer}
-    options={manufacturers}
+    options={manufacturerOptions}
     placeholder="Digite ou selecione um fabricante"
     emptyMessage="Nenhum fabricante encontrado."
     allowCustomValue
@@ -1016,29 +1073,6 @@ function validateForm(): boolean {
       em projetos ativos.
     </span>
   ) : null}
-</FormField>
-
-<FormField
-  label="Estoque mínimo"
-  error={errors.minimumStock}
->
-  <input
-    type="number"
-    name="minimumStock"
-    min={0}
-    max={999999}
-    step={1}
-    value={formData.minimumStock}
-    onChange={handleChange}
-    className={inputClass(
-      Boolean(errors.minimumStock),
-    )}
-  />
-
-  <span className="mt-1.5 block text-xs text-zinc-500">
-    O sistema emitirá um alerta quando o
-    estoque disponível atingir este valor.
-  </span>
 </FormField>
 
           <FormField 
@@ -1194,6 +1228,28 @@ function validateForm(): boolean {
           </div>
         ) : null}
       </FormSection>
+      
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+  <div className="flex items-start gap-3">
+    <AlertCircle
+      size={18}
+      className="mt-0.5 shrink-0 text-amber-700"
+    />
+
+    <div>
+      <p className="text-sm font-semibold text-amber-900">
+        Alerta automático de estoque
+      </p>
+
+    <p className="mt-1 text-xs leading-5 text-amber-800">
+      O alerta é calculado automaticamente pelo estoque disponível:
+      0 unidades significa sem estoque, entre 1 e{" "}
+      {LOW_STOCK_THRESHOLD} significa baixo estoque e a partir de{" "}
+      {LOW_STOCK_THRESHOLD + 1} significa estoque normal.
+    </p>
+    </div>
+  </div>
+</div>
 
       <FormSection
         icon={FileText}

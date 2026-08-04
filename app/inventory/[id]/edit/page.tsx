@@ -79,7 +79,6 @@ const availableStock = Math.max(
     manufacturer: equipment.manufacturer ?? "",
     model: equipment.model ?? "",
     quantity: String(equipment.quantity),
-    minimumStock: String(equipment.minimumStock),
     invoiceNumber: equipment.invoiceNumber ?? "",
     status: statusFromDatabase[equipment.status],
     condition: conditionFromDatabase[equipment.condition],
@@ -132,7 +131,6 @@ const availableStock = Math.max(
     physicalStock,
     inUse,
     availableStock,
-    minimumStock: equipment.minimumStock,
   }}
 />
     </div>

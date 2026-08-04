@@ -40,10 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
-}
 # Prisma Client gerado
 /generated/prisma
 
@@ -52,3 +48,7 @@ generator client {
 /.claude
 /.windsurf
 /skills-lock.json
+.vercel
+.env*
+.env.blob-backup
+backups/

@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import {
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import {
   AlertTriangle,
   Boxes,
@@ -225,6 +228,7 @@ return (
 
 export function InventoryView() {
   const { data: session } = useSession();
+  const searchParams = useSearchParams();
 
 const canEdit =
   session?.user?.role === "ADMIN" ||
@@ -246,6 +250,34 @@ const canEdit =
   const [category, setCategory] = useState("Todas");
   const [stockFilter, setStockFilter] =
     useState("Todos");
+
+  useEffect(() => {
+  const stockParam =
+    searchParams.get("stock");
+
+  if (stockParam === "alert") {
+    setStockFilter(
+      "Alertas de estoque",
+    );
+    setCurrentPage(1);
+    return;
+  }
+
+  if (stockParam === "low") {
+    setStockFilter(
+      "Baixo estoque",
+    );
+    setCurrentPage(1);
+    return;
+  }
+
+  if (stockParam === "out") {
+    setStockFilter(
+      "Sem estoque",
+    );
+    setCurrentPage(1);
+  }
+}, [searchParams]);
 
   const [viewMode, setViewMode] =
     useState<ViewMode>("table");
@@ -375,15 +407,24 @@ const canEdit =
         category === "Todas" ||
         equipment.category === category;
 
-      const matchesStock =
-        stockFilter === "Todos" ||
-        (stockFilter === "Baixo estoque" &&
-          isLowStock(equipment)) ||
-        (stockFilter === "Sem estoque" &&
-          isOutOfStock(equipment)) ||
-        (stockFilter === "Estoque normal" &&
-          !isLowStock(equipment) &&
-          !isOutOfStock(equipment));
+const matchesStock =
+  stockFilter === "Todos" ||
+  (stockFilter ===
+    "Alertas de estoque" &&
+    (
+      isLowStock(equipment) ||
+      isOutOfStock(equipment)
+    )) ||
+  (stockFilter ===
+    "Baixo estoque" &&
+    isLowStock(equipment)) ||
+  (stockFilter ===
+    "Sem estoque" &&
+    isOutOfStock(equipment)) ||
+  (stockFilter ===
+    "Estoque normal" &&
+    !isLowStock(equipment) &&
+    !isOutOfStock(equipment));
 
       return (
         matchesSearch &&
@@ -685,11 +726,11 @@ const canEdit =
               label="Status"
               value={status}
               options={[
-                "Todos",
-                "Disponível",
-                "Em uso",
-                "Em manutenção",
-                "Indisponível",
+               "Todos",
+               "Alertas de estoque",
+               "Estoque normal",
+               "Baixo estoque",
+               "Sem estoque",
               ]}
               onChange={(value) =>
                 updateFilter(setStatus, value)
@@ -851,29 +892,29 @@ const lowStockItems = equipment.filter(
 ).length;
 
   const summary = [
-    {
-      label: "Itens cadastrados",
-      value: totalItems,
-      color: "text-zinc-900",
-      background: "bg-zinc-100",
-      icon: Package,
-    },
-    {
-      label: "Unidades em estoque",
-      value: totalPhysicalStock,
-      color: "text-blue-700",
-      background: "bg-blue-50",
-      icon: Boxes,
-    },
-    {
-      label: "Unidades disponíveis",
-      value: totalAvailable,
-      color: "text-emerald-700",
-      background: "bg-emerald-50",
-      icon: Boxes,
-    },
-    {
-  label: "Itens com baixo estoque",
+{
+  label: "Equipamentos cadastrados",
+  value: totalItems,
+  color: "text-zinc-900",
+  background: "bg-zinc-100",
+  icon: Package,
+},
+{
+  label: "Estoque físico",
+  value: totalPhysicalStock,
+  color: "text-blue-700",
+  background: "bg-blue-50",
+  icon: Boxes,
+},
+{
+  label: "Unidades disponíveis",
+  value: totalAvailable,
+  color: "text-emerald-700",
+  background: "bg-emerald-50",
+  icon: Boxes,
+},
+{
+  label: "Alertas de estoque",
   value: lowStockItems,
   color:
     lowStockItems > 0
