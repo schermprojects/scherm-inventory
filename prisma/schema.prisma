@@ -8,23 +8,24 @@ datasource db {
 }
 
 model Equipment {
-  id            String              @id @default(cuid())
+  id            String             @id @default(cuid())
   name          String
   category      String
   manufacturer  String?
   model         String?
   serialNumber  String?
-  quantity      Int                 @default(1)
-  minimumStock  Int                 @default(0)
+  quantity      Int                @default(1)
+  minimumStock  Int                @default(0)
   invoiceNumber String?
-  status        EquipmentStatus     @default(AVAILABLE)
-  condition     EquipmentCondition  @default(NEW)
+  status        EquipmentStatus    @default(AVAILABLE)
+  condition     EquipmentCondition @default(NEW)
   notes         String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  movements     EquipmentMovement[]
-  images        EquipmentImage[]
-  projects      ProjectEquipment[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  movements EquipmentMovement[]
+  images    EquipmentImage[]
+  projects  ProjectEquipment[]
 
   @@index([name])
   @@index([category])
@@ -113,17 +114,18 @@ model Client {
 }
 
 model Project {
-  id          String          @id @default(cuid())
-  name        String
-  clientName  String?
-  clientId    String?
-  description String?
-  status      ProjectStatus   @default(PLANNING)
-  priority    ProjectPriority @default(NORMAL)
-  startDate   DateTime?
-  dueDate     DateTime?
-  completedAt DateTime?
-  notes       String?
+  id              String          @id @default(cuid())
+  name            String
+  clientName      String?
+  clientId        String?
+  description     String?
+  status          ProjectStatus   @default(PLANNING)
+  priority        ProjectPriority @default(NORMAL)
+  startDate       DateTime?
+  dueDate         DateTime?
+  completedAt     DateTime?
+  stockDeductedAt DateTime?
+  notes           String?
 
   createdById   String?
   responsibleId String?
@@ -152,6 +154,7 @@ model Project {
   @@index([responsibleId])
   @@index([salespersonId])
   @@index([dueDate])
+  @@index([stockDeductedAt])
   @@map("projects")
 }
 

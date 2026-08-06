@@ -3,6 +3,7 @@ import { Prisma } from "@/generated/prisma/client";
 import {
   AuditAction,
   AuditEntity,
+  EquipmentMovementType,
   ProjectPriority,
   ProjectStatus,
   UserRole,
@@ -14,6 +15,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_EQUIPMENT_QUANTITY = 999999;
+
+class InsufficientProjectStockError extends Error {
+  constructor(
+    readonly equipmentName: string,
+    readonly availableQuantity: number,
+    readonly requestedQuantity: number,
+  ) {
+    super("INSUFFICIENT_PROJECT_STOCK");
+    this.name =
+      "InsufficientProjectStockError";
+  }
+}
 
 const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
   ProjectStatus.PLANNING,
@@ -665,6 +678,10 @@ function serializeProjectForAudit(
       project.completedAt?.toISOString() ??
       null,
 
+    stockDeductedAt:
+      project.stockDeductedAt
+      ?.toISOString() ?? null,
+
     notes: project.notes,
 
     createdById:
@@ -702,6 +719,9 @@ function serializeProjectForAudit(
 
           quantity:
             item.quantity,
+          
+          allocatedQuantity:
+            item.allocatedQuantity,
 
           notes:
             item.notes,
@@ -956,13 +976,58 @@ const {
         where: {
           id,
         },
-
         include: projectInclude,
       });
 
     if (!existingProject) {
       throw new Error(
         "PROJECT_NOT_FOUND",
+      );
+    }
+
+    const isCompletingProject =
+      existingProject.status !==
+        ProjectStatus.COMPLETED &&
+      status ===
+        ProjectStatus.COMPLETED;
+
+    console.log({
+  previousStatus: existingProject.status,
+  newStatus: status,
+  isCompletingProject,
+  stockDeductedAt: existingProject.stockDeductedAt,
+});
+
+    const isReopeningProject =
+      existingProject.status ===
+        ProjectStatus.COMPLETED &&
+      status !==
+        ProjectStatus.COMPLETED;
+
+    const isCancellingCompletedProject =
+      existingProject.status ===
+        ProjectStatus.COMPLETED &&
+      status ===
+        ProjectStatus.CANCELLED;
+
+    if (isCancellingCompletedProject) {
+      throw new Error(
+        "COMPLETED_PROJECT_CANNOT_BE_CANCELLED",
+      );
+    }
+
+    const hasDeliveredEquipment =
+      existingProject.equipment.some(
+        (item) =>
+          item.allocatedQuantity > 0,
+      );
+
+    if (
+      shouldUpdateEquipment &&
+      hasDeliveredEquipment
+    ) {
+      throw new Error(
+        "DELIVERED_PROJECT_EQUIPMENT_LOCKED",
       );
     }
 
@@ -989,7 +1054,6 @@ const {
             where: {
               id: requestedClientId,
             },
-
             select: {
               id: true,
               name: true,
@@ -1041,34 +1105,190 @@ const {
         selectedEquipment,
       );
 
-      await transaction.projectEquipment.deleteMany(
-        {
-          where: {
-            projectId: id,
-          },
+      await transaction.projectEquipment.deleteMany({
+        where: {
+          projectId: id,
         },
-      );
+      });
 
       if (
         selectedEquipment.length > 0
       ) {
-        await transaction.projectEquipment.createMany(
-          {
-            data:
-              selectedEquipment.map(
-                (item) => ({
-                  projectId: id,
-                  equipmentId:
-                    item.equipmentId,
-                  quantity:
-                    item.quantity,
-                  notes:
-                    item.notes,
-                }),
-              ),
-          },
-        );
+        await transaction.projectEquipment.createMany({
+          data: selectedEquipment.map(
+            (item) => ({
+              projectId: id,
+              equipmentId:
+                item.equipmentId,
+              quantity:
+                item.quantity,
+              allocatedQuantity: 0,
+              notes:
+                item.notes,
+            }),
+          ),
+        });
       }
+    }
+
+    let nextStockDeductedAt =
+      existingProject.stockDeductedAt;
+
+    if (
+      isCompletingProject &&
+      !existingProject.stockDeductedAt
+    ) {
+      const finalProjectEquipment =
+        await transaction.projectEquipment.findMany({
+          where: {
+            projectId: id,
+          },
+
+          include: {
+            equipment: {
+              select: {
+                id: true,
+                name: true,
+                quantity: true,
+              },
+            },
+          },
+
+          orderBy: {
+            createdAt: "asc",
+          },
+        });
+
+      /*
+       * Primeiro validamos todos os itens.
+       * Se um item não tiver estoque, toda a
+       * transação é cancelada.
+       */
+      for (
+        const item of
+        finalProjectEquipment
+      ) {
+        const quantityToDeduct =
+          Math.max(
+            item.quantity -
+              item.allocatedQuantity,
+            0,
+          );
+
+        if (quantityToDeduct === 0) {
+          continue;
+        }
+
+        if (
+          item.equipment.quantity <
+          quantityToDeduct
+        ) {
+          throw new InsufficientProjectStockError(
+            item.equipment.name,
+            item.equipment.quantity,
+            quantityToDeduct,
+          );
+        }
+      }
+
+      /*
+       * Depois da validação, realiza as baixas.
+       */
+      for (
+        const item of
+        finalProjectEquipment
+      ) {
+        const quantityToDeduct =
+          Math.max(
+            item.quantity -
+              item.allocatedQuantity,
+            0,
+          );
+
+        if (quantityToDeduct === 0) {
+          continue;
+        }
+
+        const previousQuantity =
+          item.equipment.quantity;
+
+        const currentQuantity =
+          previousQuantity -
+          quantityToDeduct;
+
+        const stockUpdate =
+          await transaction.equipment.updateMany({
+            where: {
+              id: item.equipmentId,
+              quantity: {
+                gte: quantityToDeduct,
+              },
+            },
+
+            data: {
+              quantity: {
+                decrement:
+                  quantityToDeduct,
+              },
+            },
+          });
+
+        if (stockUpdate.count !== 1) {
+          throw new InsufficientProjectStockError(
+            item.equipment.name,
+            previousQuantity,
+            quantityToDeduct,
+          );
+        }
+
+        await transaction.projectEquipment.update({
+          where: {
+            id: item.id,
+          },
+
+          data: {
+            allocatedQuantity:
+              item.allocatedQuantity +
+              quantityToDeduct,
+          },
+        });
+
+        await transaction.equipmentMovement.create({
+          data: {
+            type:
+              EquipmentMovementType.EXIT,
+
+            quantity:
+              quantityToDeduct,
+
+            previousQuantity,
+            currentQuantity,
+
+            equipmentId:
+              item.equipmentId,
+
+            projectId: id,
+
+            createdById:
+              sessionUser.id,
+
+            notes:
+              `Baixa automática pela conclusão do projeto "${existingProject.name}".`,
+          },
+        });
+      }
+
+      nextStockDeductedAt =
+        new Date();
+    }
+
+    /*
+     * Reabrir não devolve estoque.
+     * O marcador da baixa permanece preenchido.
+     */
+    if (isReopeningProject) {
+      nextStockDeductedAt =
+        existingProject.stockDeductedAt;
     }
 
     const project =
@@ -1112,8 +1332,12 @@ const {
             status ===
             ProjectStatus.COMPLETED
               ? completedAt ??
+                existingProject.completedAt ??
                 new Date()
               : null,
+
+          stockDeductedAt:
+            nextStockDeductedAt,
         },
 
         include:
@@ -1208,6 +1432,57 @@ if (
     },
     {
       status: 400,
+    },
+  );
+}
+    if (
+  error instanceof
+    InsufficientProjectStockError
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        `Estoque insuficiente de "${error.equipmentName}". ` +
+        `Estoque físico disponível: ${error.availableQuantity}. ` +
+        `Quantidade necessária para concluir: ${error.requestedQuantity}.`,
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+if (
+  error instanceof Error &&
+  error.message ===
+    "COMPLETED_PROJECT_CANNOT_BE_CANCELLED"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Projetos concluídos não podem ser cancelados. Utilize a opção de reabrir o projeto.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+if (
+  error instanceof Error &&
+  error.message ===
+    "DELIVERED_PROJECT_EQUIPMENT_LOCKED"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Os equipamentos já entregues não podem ser alterados pelo formulário comum. Utilize o gerenciamento de devoluções.",
+    },
+    {
+      status: 409,
     },
   );
 }
@@ -1392,6 +1667,16 @@ export async function DELETE(
             );
           }
 
+          if (
+  existingProject.status ===
+    ProjectStatus.COMPLETED ||
+  existingProject.stockDeductedAt
+) {
+  throw new Error(
+    "DELIVERED_PROJECT_CANNOT_BE_DELETED",
+  );
+}
+
           await transaction.project.delete({
             where: {
               id,
@@ -1446,6 +1731,23 @@ export async function DELETE(
         },
       );
     }
+
+    if (
+  error instanceof Error &&
+  error.message ===
+    "DELIVERED_PROJECT_CANNOT_BE_DELETED"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Projetos concluídos ou com equipamentos entregues não podem ser excluídos.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
 
     if (isPrismaNotFoundError(error)) {
       return Response.json(
