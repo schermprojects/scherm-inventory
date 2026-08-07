@@ -74,6 +74,8 @@ type ApiEquipment = {
   inUse: number;
   availableStock: number;
   shortage: number;
+  damagedQuantity: number;
+  hasDamagedUnits: boolean;
 
   minimumStock: number;
 
@@ -103,6 +105,8 @@ physicalStock: number;
 inUse: number;
 availableStock: number;
 shortage: number;
+damagedQuantity: number;
+hasDamagedUnits: boolean;
 
 minimumStock: number;
   serialNumber: string | null;
@@ -197,6 +201,13 @@ availableStock:
 
 shortage:
   item.shortage,
+
+damagedQuantity:
+  item.damagedQuantity ?? 0,
+
+hasDamagedUnits:
+  item.hasDamagedUnits ??
+  (item.damagedQuantity ?? 0) > 0,
 
 minimumStock:
   item.minimumStock ?? 0,
@@ -422,6 +433,9 @@ const matchesStock =
     "Sem estoque" &&
     isOutOfStock(equipment)) ||
   (stockFilter ===
+  "Danificados" &&
+  equipment.damagedQuantity > 0) ||
+  (stockFilter ===
     "Estoque normal" &&
     !isLowStock(equipment) &&
     !isOutOfStock(equipment));
@@ -495,8 +509,11 @@ const matchesStock =
       "Equipamento",
       "Fabricante",
       "Modelo",
-      "Quantidade total",
-      "Estoque mínimo",
+      "Estoque físico",
+"Disponível",
+"Em uso",
+"Danificados",
+"Estoque mínimo",
       "Número de série",
       "Categoria",
       "Status",
@@ -510,8 +527,11 @@ const matchesStock =
         equipment.name,
         equipment.manufacturer ?? "",
         equipment.model ?? "",
-        equipment.quantity,
-        equipment.minimumStock,
+        equipment.physicalStock,
+equipment.availableStock,
+equipment.inUse,
+equipment.damagedQuantity,
+equipment.minimumStock,
         equipment.serialNumber ?? "",
         equipment.category,
         equipment.status,
@@ -754,6 +774,7 @@ const matchesStock =
                 "Estoque normal",
                 "Baixo estoque",
                 "Sem estoque",
+                "Danificados",
               ]}
               onChange={(value) =>
                 updateFilter(
@@ -863,13 +884,6 @@ const totalPhysicalStock =
     0,
   );
 
-const totalInUse =
-  equipment.reduce(
-    (t, e) =>
-      t + e.inUse,
-    0,
-  );
-
 const totalAvailable =
   equipment.reduce(
     (t, e) =>
@@ -877,14 +891,13 @@ const totalAvailable =
     0,
   );
 
-  const availableQuantity = equipment
-    .filter(
-      (item) => item.status === "Disponível",
-    )
-    .reduce(
-      (total, item) => total + item.quantity,
-      0,
-    );
+  const totalDamaged =
+  equipment.reduce(
+    (total, item) =>
+      total +
+      item.damagedQuantity,
+    0,
+  );
 
 const lowStockItems = equipment.filter(
   (item) =>
@@ -913,6 +926,19 @@ const lowStockItems = equipment.filter(
   background: "bg-emerald-50",
   icon: Boxes,
 },
+ {
+    label: "Unidades danificadas",
+    value: totalDamaged,
+    color:
+      totalDamaged > 0
+        ? "text-red-700"
+        : "text-zinc-900",
+    background:
+      totalDamaged > 0
+        ? "bg-red-50"
+        : "bg-zinc-100",
+    icon: AlertTriangle,
+  },
 {
   label: "Alertas de estoque",
   value: lowStockItems,
@@ -929,7 +955,7 @@ const lowStockItems = equipment.filter(
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
       {summary.map((item) => {
         const Icon = item.icon;
 
@@ -1143,6 +1169,16 @@ function EquipmentTable({
                           .join(" · ") ||
                           "Sem fabricante ou modelo"}
                       </p>
+                      {item.damagedQuantity > 0 ? (
+  <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">
+    <AlertTriangle size={13} />
+
+    {item.damagedQuantity}{" "}
+    {item.damagedQuantity === 1
+      ? "unidade danificada"
+      : "unidades danificadas"}
+  </span>
+) : null}
                     </div>
                   </div>
                 </td>
@@ -1167,6 +1203,7 @@ function EquipmentTable({
   physicalStock={item.physicalStock}
   inUse={item.inUse}
   availableStock={item.availableStock}
+  damagedQuantity={item.damagedQuantity}
   minimumStock={item.minimumStock}
   status={item.status}
 />
@@ -1261,6 +1298,17 @@ function EquipmentCards({
                       .join(" · ") ||
                       "Sem fabricante ou modelo"}
                   </p>
+
+                    {item.damagedQuantity > 0 ? (
+  <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">
+    <AlertTriangle size={13} />
+
+    {item.damagedQuantity}{" "}
+    {item.damagedQuantity === 1
+      ? "unidade danificada"
+      : "unidades danificadas"}
+  </span>
+) : null}
                 </div>
               </div>
 
@@ -1302,6 +1350,7 @@ function EquipmentCards({
   physicalStock={item.physicalStock}
   inUse={item.inUse}
   availableStock={item.availableStock}
+  damagedQuantity={item.damagedQuantity}
   minimumStock={item.minimumStock}
   status={item.status}
 />
@@ -1391,12 +1440,14 @@ function StockBadge({
   physicalStock,
   inUse,
   availableStock,
+  damagedQuantity,
   minimumStock,
   status,
 }: {
   physicalStock: number;
   inUse: number;
   availableStock: number;
+  damagedQuantity: number;
   minimumStock: number;
   status: EquipmentStatus;
 }) {
@@ -1451,6 +1502,17 @@ function StockBadge({
             {availableStock}
           </span>
         </div>
+        {damagedQuantity > 0 ? (
+  <div className="flex justify-between">
+    <span className="text-red-600">
+      Danificado
+    </span>
+
+    <span className="font-semibold text-red-700">
+      {damagedQuantity}
+    </span>
+  </div>
+) : null}
       </div>
 
       <span

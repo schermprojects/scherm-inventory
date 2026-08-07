@@ -36,7 +36,7 @@ export const navigationItems: readonly NavigationItem[] = [
     label: "Projetos",
     href: "/projects",
     icon: FolderKanban,
-    roles: ["ADMIN", "COMMERCIAL"],
+    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
   },
   {
   label: "Clientes",

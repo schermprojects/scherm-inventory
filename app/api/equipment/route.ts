@@ -195,6 +195,7 @@ export async function GET() {
 
             select: {
               quantity: true,
+              allocatedQuantity: true,
               projectId: true,
 
               project: {
@@ -227,19 +228,25 @@ export async function GET() {
               projectEquipment,
             ) =>
               total +
-              projectEquipment.quantity,
+              Math.max(
+              projectEquipment.quantity -
+          projectEquipment.allocatedQuantity,
+        0,
+      ),
             0,
           );
 
         const {
-          physicalStock,
-          inUse,
-          availableStock,
-          shortage,
-        } = calculateStock(
-          item.quantity,
-          requested,
-        );
+  physicalStock,
+  operationalStock,
+  inUse,
+  availableStock,
+  shortage,
+} = calculateStock(
+  item.quantity,
+  requested,
+  item.damagedQuantity,
+);
 
         const stockAlertLevel =
           getStockAlertLevel(
@@ -275,11 +282,17 @@ export async function GET() {
           serialNumber:
             item.serialNumber,
 
-          quantity: physicalStock,
+          quantity: operationalStock,
           physicalStock,
 
-          minimumStock:
-            LOW_STOCK_THRESHOLD,
+damagedQuantity:
+  item.damagedQuantity,
+
+hasDamagedUnits:
+  item.damagedQuantity > 0,
+
+minimumStock:
+  LOW_STOCK_THRESHOLD,
 
           inUse,
           availableStock,
@@ -300,25 +313,35 @@ export async function GET() {
           images: item.images,
 
           activeProjects:
-            item.projects.map(
-              (projectEquipment) => ({
-                projectId:
-                  projectEquipment
-                    .project.id,
+  item.projects.map(
+    (projectEquipment) => {
+      const pendingQuantity =
+        Math.max(
+          projectEquipment.quantity -
+            projectEquipment.allocatedQuantity,
+          0,
+        );
 
-                projectName:
-                  projectEquipment
-                    .project.name,
+      return {
+        projectId:
+          projectEquipment.project.id,
 
-                projectStatus:
-                  projectEquipment
-                    .project.status,
+        projectName:
+          projectEquipment.project.name,
 
-                quantity:
-                  projectEquipment
-                    .quantity,
-              }),
-            ),
+        projectStatus:
+          projectEquipment.project.status,
+
+        quantity:
+          projectEquipment.quantity,
+
+        allocatedQuantity:
+          projectEquipment.allocatedQuantity,
+
+        pendingQuantity,
+      };
+    },
+  ),
 
           createdAt:
             item.createdAt,
@@ -348,6 +371,14 @@ export async function GET() {
 
           accumulator.totalShortage +=
             item.shortage;
+          
+          accumulator.totalDamaged +=
+            item.damagedQuantity;
+
+        if (item.hasDamagedUnits) {
+            accumulator.equipmentWithDamage +=
+            1;
+          }
 
           if (item.isOutOfStock) {
             accumulator.outOfStock +=
@@ -372,6 +403,8 @@ export async function GET() {
           totalInUse: 0,
           totalAvailable: 0,
           totalShortage: 0,
+          totalDamaged: 0,
+          equipmentWithDamage: 0,
           outOfStock: 0,
           belowMinimum: 0,
           equipmentWithShortage: 0,
@@ -605,7 +638,14 @@ export async function POST(
             equipment.quantity,
 
           physicalStock:
-            equipment.quantity,
+            equipment.quantity +
+            equipment.damagedQuantity,
+
+          damagedQuantity:
+            equipment.damagedQuantity,
+
+          hasDamagedUnits:
+            equipment.damagedQuantity > 0,
 
           minimumStock:
             LOW_STOCK_THRESHOLD,

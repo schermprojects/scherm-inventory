@@ -15,6 +15,7 @@ model Equipment {
   model         String?
   serialNumber  String?
   quantity      Int                @default(1)
+  damagedQuantity Int                @default(0)
   minimumStock  Int                @default(0)
   invoiceNumber String?
   status        EquipmentStatus    @default(AVAILABLE)
@@ -31,6 +32,7 @@ model Equipment {
   @@index([category])
   @@index([status])
   @@index([condition])
+  @@index([damagedQuantity])
   @@map("equipment")
 }
 
@@ -266,6 +268,8 @@ enum EquipmentMovementType {
   ENTRY
   EXIT
   ADJUSTMENT
+  RETURN
+  DAMAGED_RETURN
 }
 
 enum AuditAction {

@@ -1,6 +1,7 @@
 import {
   EquipmentStatus,
   Prisma,
+  ProjectStatus,
   UserRole,
 } from "@/generated/prisma/client";
 import { auth } from "@/auth";
@@ -55,10 +56,14 @@ function requiredQuantity(
 /**
  * PUT /api/projects/[id]/equipment/[equipmentId]
  *
- * Body:
- * {
- *   quantity: number;
- * }
+ * Atualiza a quantidade planejada de um
+ * equipamento já vinculado ao projeto.
+ *
+ * Regras:
+ * - projeto concluído não pode ser alterado;
+ * - quantidade nunca pode ficar abaixo
+ *   do que já foi efetivamente baixado;
+ * - allocatedQuantity nunca é alterado aqui.
  */
 export async function PUT(
   request: Request,
@@ -125,6 +130,13 @@ export async function PUT(
                 },
 
                 include: {
+                  project: {
+                    select: {
+                      id: true,
+                      status: true,
+                    },
+                  },
+
                   equipment: {
                     select: {
                       id: true,
@@ -139,7 +151,38 @@ export async function PUT(
 
           if (!existing) {
             throw new Error(
-              "Este equipamento não está vinculado ao projeto.",
+              "PROJECT_EQUIPMENT_NOT_FOUND",
+            );
+          }
+
+          /*
+           * Projeto concluído é somente leitura.
+           * Primeiro precisa ser reaberto.
+           */
+          if (
+            existing.project.status ===
+            ProjectStatus.COMPLETED
+          ) {
+            throw new Error(
+              "COMPLETED_PROJECT_LOCKED",
+            );
+          }
+
+          /*
+           * Se já foram baixadas 3 unidades,
+           * por exemplo, quantity nunca pode
+           * passar para 2.
+           *
+           * A redução da quantidade baixada
+           * será feita depois pelo fluxo
+           * específico de devolução.
+           */
+          if (
+            quantity <
+            existing.allocatedQuantity
+          ) {
+            throw new Error(
+              "EQUIPMENT_QUANTITY_BELOW_ALLOCATED",
             );
           }
 
@@ -148,33 +191,9 @@ export async function PUT(
             EquipmentStatus.UNAVAILABLE
           ) {
             throw new Error(
-              "Este equipamento está indisponível.",
+              "EQUIPMENT_UNAVAILABLE",
             );
           }
-
-          const reservedByOthers =
-            await transaction.projectEquipment.aggregate(
-              {
-                where: {
-                  equipmentId,
-                  NOT: {
-                    projectId,
-                  },
-                },
-
-                _sum: {
-                  quantity: true,
-                },
-              },
-            );
-
-          const totalReservedByOthers =
-            reservedByOthers._sum.quantity ??
-            0;
-
-          const availableForProject =
-            existing.equipment.quantity -
-            totalReservedByOthers;
 
           return transaction.projectEquipment.update(
             {
@@ -226,6 +245,74 @@ export async function PUT(
     );
 
     if (
+      error instanceof Error &&
+      error.message ===
+        "PROJECT_EQUIPMENT_NOT_FOUND"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento não está vinculado ao projeto.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "COMPLETED_PROJECT_LOCKED"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O projeto está concluído e bloqueado para alterações. Reabra o projeto antes de alterar os equipamentos.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "EQUIPMENT_QUANTITY_BELOW_ALLOCATED"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "A quantidade do equipamento não pode ser menor que a quantidade já baixada. Registre primeiro a devolução das unidades.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "EQUIPMENT_UNAVAILABLE"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento está indisponível.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
       error instanceof
         Prisma.PrismaClientKnownRequestError &&
       error.code === "P2034"
@@ -234,7 +321,7 @@ export async function PUT(
         {
           success: false,
           message:
-            "O estoque foi alterado por outro usuário. Tente novamente.",
+            "O projeto foi alterado por outro usuário. Tente novamente.",
         },
         {
           status: 409,
@@ -256,27 +343,13 @@ export async function PUT(
     }
 
     if (error instanceof Error) {
-      const isNotFound =
-        error.message.includes(
-          "não está vinculado",
-        );
-
-      const isConflict =
-        error.message.includes(
-          "Quantidade indisponível",
-        );
-
       return Response.json(
         {
           success: false,
           message: error.message,
         },
         {
-          status: isNotFound
-            ? 404
-            : isConflict
-              ? 409
-              : 400,
+          status: 400,
         },
       );
     }
@@ -296,6 +369,9 @@ export async function PUT(
 
 /**
  * DELETE /api/projects/[id]/equipment/[equipmentId]
+ *
+ * Remove um equipamento do projeto somente
+ * quando ele nunca teve baixa de estoque.
  */
 export async function DELETE(
   _request: Request,
@@ -341,43 +417,81 @@ export async function DELETE(
       equipmentId,
     } = await context.params;
 
-    const existing =
-      await prisma.projectEquipment.findUnique(
-        {
-          where: {
-            projectId_equipmentId: {
-              projectId,
-              equipmentId,
+    await prisma.$transaction(
+      async (transaction) => {
+        const existing =
+          await transaction.projectEquipment.findUnique(
+            {
+              where: {
+                projectId_equipmentId: {
+                  projectId,
+                  equipmentId,
+                },
+              },
+
+              select: {
+                id: true,
+                allocatedQuantity: true,
+
+                project: {
+                  select: {
+                    status: true,
+                  },
+                },
+              },
+            },
+          );
+
+        if (!existing) {
+          throw new Error(
+            "PROJECT_EQUIPMENT_NOT_FOUND",
+          );
+        }
+
+        /*
+         * Projeto concluído é somente leitura.
+         */
+        if (
+          existing.project.status ===
+          ProjectStatus.COMPLETED
+        ) {
+          throw new Error(
+            "COMPLETED_PROJECT_LOCKED",
+          );
+        }
+
+        /*
+         * Um vínculo que já teve baixa não
+         * pode ser apagado.
+         *
+         * A devolução será responsável por
+         * ajustar allocatedQuantity.
+         */
+        if (
+          existing.allocatedQuantity > 0
+        ) {
+          throw new Error(
+            "ALLOCATED_EQUIPMENT_CANNOT_BE_REMOVED",
+          );
+        }
+
+        await transaction.projectEquipment.delete(
+          {
+            where: {
+              projectId_equipmentId: {
+                projectId,
+                equipmentId,
+              },
             },
           },
-
-          select: {
-            id: true,
-          },
-        },
-      );
-
-    if (!existing) {
-      return Response.json(
-        {
-          success: false,
-          message:
-            "Este equipamento não está vinculado ao projeto.",
-        },
-        {
-          status: 404,
-        },
-      );
-    }
-
-    await prisma.projectEquipment.delete({
-      where: {
-        projectId_equipmentId: {
-          projectId,
-          equipmentId,
-        },
+        );
       },
-    });
+      {
+        isolationLevel:
+          Prisma.TransactionIsolationLevel
+            .Serializable,
+      },
+    );
 
     return Response.json({
       success: true,
@@ -391,8 +505,59 @@ export async function DELETE(
     );
 
     if (
+      error instanceof Error &&
+      error.message ===
+        "PROJECT_EQUIPMENT_NOT_FOUND"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento não está vinculado ao projeto.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "COMPLETED_PROJECT_LOCKED"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O projeto está concluído e bloqueado para alterações. Reabra o projeto antes de alterar os equipamentos.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "ALLOCATED_EQUIPMENT_CANNOT_BE_REMOVED"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Não é possível remover um equipamento que já teve baixa de estoque. Registre primeiro a devolução das unidades baixadas.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    if (
       error instanceof
-      Prisma.PrismaClientKnownRequestError
+        Prisma.PrismaClientKnownRequestError
     ) {
       if (error.code === "P2025") {
         return Response.json(
@@ -403,6 +568,19 @@ export async function DELETE(
           },
           {
             status: 404,
+          },
+        );
+      }
+
+      if (error.code === "P2034") {
+        return Response.json(
+          {
+            success: false,
+            message:
+              "O projeto foi alterado por outro usuário. Tente novamente.",
+          },
+          {
+            status: 409,
           },
         );
       }

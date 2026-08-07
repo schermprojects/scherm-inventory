@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import {
+  AlertTriangle,
   Boxes,
   FolderKanban,
   PackageCheck,
@@ -33,6 +34,7 @@ type StockAlertItem = {
 type DashboardData = {
   equipmentCount: number;
   availableUnits: number;
+  damagedUnits: number;
   activeProjects: number;
   activeUsers: number;
 
@@ -41,6 +43,7 @@ type DashboardData = {
     requested: number;
     available: number;
     inUse: number;
+    damaged: number;
     shortage: number;
   };
 
@@ -59,6 +62,7 @@ export default async function DashboardPage() {
         name: true,
         category: true,
         quantity: true,
+        damagedQuantity: true,
 
         projects: {
           where: {
@@ -74,6 +78,7 @@ export default async function DashboardPage() {
 
           select: {
             quantity: true,
+            allocatedQuantity: true,
           },
         },
       },
@@ -101,60 +106,82 @@ export default async function DashboardPage() {
     }),
   ]);
 
-  const calculatedEquipment =
-    equipment.map((item) => {
-      const requested =
-        item.projects.reduce(
-          (
-            total,
-            projectEquipment,
-          ) =>
-            total +
-            Math.max(
-              projectEquipment.quantity,
-              0,
-            ),
-          0,
-        );
-
-      const stock = calculateStock(
-        item.quantity,
-        requested,
+const calculatedEquipment =
+  equipment.map((item) => {
+    /*
+     * Considera somente a quantidade
+     * ainda pendente dos projetos ativos.
+     *
+     * O que já teve baixa não pode entrar
+     * novamente como "em uso".
+     */
+    const requested =
+      item.projects.reduce(
+        (
+          total,
+          projectEquipment,
+        ) =>
+          total +
+          Math.max(
+            projectEquipment.quantity -
+              projectEquipment.allocatedQuantity,
+            0,
+          ),
+        0,
       );
 
-      return {
-        ...item,
-        ...stock,
-      };
-    });
-
-  const inventoryTotals =
-    calculatedEquipment.reduce(
-      (totals, item) => {
-        totals.physicalStock +=
-          item.physicalStock;
-
-        totals.requested +=
-          item.requested;
-
-        totals.inUse += item.inUse;
-
-        totals.available +=
-          item.availableStock;
-
-        totals.shortage +=
-          item.shortage;
-
-        return totals;
-      },
-      {
-        physicalStock: 0,
-        requested: 0,
-        available: 0,
-        inUse: 0,
-        shortage: 0,
-      },
+    /*
+     * item.quantity =
+     * estoque operacional disponível.
+     *
+     * item.damagedQuantity =
+     * unidades fisicamente existentes,
+     * porém danificadas e indisponíveis.
+     */
+    const stock = calculateStock(
+      item.quantity,
+      requested,
+      item.damagedQuantity,
     );
+
+    return {
+      ...item,
+      ...stock,
+    };
+  });
+
+const inventoryTotals =
+  calculatedEquipment.reduce(
+    (totals, item) => {
+      totals.physicalStock +=
+        item.physicalStock;
+
+      totals.requested +=
+        item.requested;
+
+      totals.inUse +=
+        item.inUse;
+
+      totals.available +=
+        item.availableStock;
+
+      totals.damaged +=
+        item.damagedQuantity;
+
+      totals.shortage +=
+        item.shortage;
+
+      return totals;
+    },
+    {
+      physicalStock: 0,
+      requested: 0,
+      available: 0,
+      inUse: 0,
+      damaged: 0,
+      shortage: 0,
+    },
+  );
 
  const stockAlertItems: StockAlertItem[] =
   calculatedEquipment
@@ -202,20 +229,23 @@ export default async function DashboardPage() {
     );
 
   const dashboardData: DashboardData = {
-    equipmentCount:
-      equipment.length,
+  equipmentCount:
+    equipment.length,
 
-    availableUnits:
-      inventoryTotals.available,
+  availableUnits:
+    inventoryTotals.available,
 
-    activeProjects,
-    activeUsers,
+  damagedUnits:
+    inventoryTotals.damaged,
 
-    inventory: inventoryTotals,
+  activeProjects,
+  activeUsers,
 
-    stockAlertItems,
-  };
+  inventory:
+    inventoryTotals,
 
+  stockAlertItems,
+};
   return (
     <DashboardLayout>
       <PageContainer
@@ -255,7 +285,7 @@ const hiddenStockAlertsCount =
   );
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <DashboardCard
           title="Equipamentos cadastrados"
           value={data.equipmentCount}
@@ -270,6 +300,15 @@ const hiddenStockAlertsCount =
             <PackageCheck size={21} />
           }
           color="green"
+        />
+
+        <DashboardCard
+          title="Unidades danificadas"
+          value={data.damagedUnits}
+          icon={
+            <AlertTriangle size={21} />
+            }
+          color="red"
         />
 
         <DashboardCard
@@ -305,7 +344,7 @@ const hiddenStockAlertsCount =
             </p>
           </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <InventorySummary
               label="Disponíveis"
               value={
@@ -323,6 +362,14 @@ const hiddenStockAlertsCount =
             />
 
             <InventorySummary
+              label="Danificadas"
+              value={
+                data.inventory.damaged
+              }
+              color="red"
+            />
+
+            <InventorySummary
               label="Déficit"
               value={
                 data.inventory.shortage
@@ -333,16 +380,19 @@ const hiddenStockAlertsCount =
 
           <div className="mt-5">
             <InventoryDonutChart
-              available={
-                data.inventory.available
-              }
-              inUse={
-                data.inventory.inUse
-              }
-              shortage={
-                data.inventory.shortage
-              }
-            />
+  available={
+    data.inventory.available
+  }
+  inUse={
+    data.inventory.inUse
+  }
+  damaged={
+    data.inventory.damaged
+  }
+  shortage={
+    data.inventory.shortage
+  }
+/>
           </div>
         </article>
 
@@ -426,6 +476,7 @@ type DashboardCardColor =
   | "orange"
   | "green"
   | "blue"
+  | "red"
   | "violet";
 
 function DashboardCard({
@@ -449,6 +500,8 @@ function DashboardCard({
       "bg-emerald-50 text-emerald-600",
     blue:
       "bg-blue-50 text-blue-600",
+    red:
+    "bg-red-50 text-red-600",
     violet:
       "bg-violet-50 text-violet-600",
   };
@@ -488,17 +541,19 @@ function InventorySummary({
   value: number;
   color: SummaryColor;
 }) {
-  const colors: Record<
-    SummaryColor,
-    string
-  > = {
-    green:
-      "border-emerald-100 bg-emerald-50 text-emerald-700",
-    blue:
-      "border-blue-100 bg-blue-50 text-blue-700",
-    red:
-      "border-red-100 bg-red-50 text-red-700",
-  };
+const colors: Record<
+  SummaryColor,
+  string
+> = {
+  green:
+    "border-emerald-100 bg-emerald-50 text-emerald-700",
+
+  blue:
+    "border-blue-100 bg-blue-50 text-blue-700",
+
+  red:
+    "border-red-100 bg-red-50 text-red-700",
+};
 
   return (
     <div
@@ -518,24 +573,31 @@ function InventorySummary({
 function InventoryDonutChart({
   available,
   inUse,
+  damaged,
   shortage,
 }: {
   available: number;
   inUse: number;
+  damaged: number;
   shortage: number;
 }) {
   const total =
     available +
     inUse +
+    damaged +
     shortage;
 
-  const safeTotal = total || 1;
+  const safeTotal =
+    total || 1;
 
   const availablePercentage =
     (available / safeTotal) * 100;
 
   const inUsePercentage =
     (inUse / safeTotal) * 100;
+
+  const damagedPercentage =
+    (damaged / safeTotal) * 100;
 
   const shortagePercentage =
     (shortage / safeTotal) * 100;
@@ -544,8 +606,12 @@ function InventoryDonutChart({
     availablePercentage;
 
   const inUseEnd =
-    availablePercentage +
+    availableEnd +
     inUsePercentage;
+
+  const damagedEnd =
+    inUseEnd +
+    damagedPercentage;
 
   const chartBackground =
     total === 0
@@ -553,7 +619,8 @@ function InventoryDonutChart({
       : `conic-gradient(
           #10b981 0% ${availableEnd}%,
           #3b82f6 ${availableEnd}% ${inUseEnd}%,
-          #ef4444 ${inUseEnd}% 100%
+          #ef4444 ${inUseEnd}% ${damagedEnd}%,
+          #f59e0b ${damagedEnd}% 100%
         )`;
 
   return (
@@ -565,53 +632,70 @@ function InventoryDonutChart({
 
         <p className="mt-1 text-xs text-zinc-500">
           Comparação entre unidades
-          disponíveis, alocadas e déficit.
+          disponíveis, em uso, danificadas
+          e déficit.
         </p>
       </div>
 
- <div className="mt-4 flex flex-col items-center">
-  <div
-    className="relative flex h-36 w-36 items-center justify-center rounded-full shadow-inner"
-    style={{
-      background: chartBackground,
-    }}
-    role="img"
-    aria-label={`Gráfico do inventário: ${available} disponíveis, ${inUse} em uso e ${shortage} em déficit.`}
-  >
-    <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white shadow-sm">
-      <span className="text-2xl font-black text-zinc-900">
-        {total}
-      </span>
+      <div className="mt-4 flex flex-col items-center">
+        <div
+          className="relative flex h-36 w-36 items-center justify-center rounded-full shadow-inner"
+          style={{
+            background:
+              chartBackground,
+          }}
+          role="img"
+          aria-label={`Gráfico do inventário: ${available} disponíveis, ${inUse} em uso, ${damaged} danificadas e ${shortage} em déficit.`}
+        >
+          <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white shadow-sm">
+            <span className="text-2xl font-black text-zinc-900">
+              {total}
+            </span>
 
-      <span className="text-xs font-medium text-zinc-500">
-        unidades
-      </span>
-    </div>
-  </div>
+            <span className="text-xs font-medium text-zinc-500">
+              unidades
+            </span>
+          </div>
+        </div>
 
-  <div className="mt-4 grid w-full gap-2">
-    <ChartLegendItem
-      label="Disponíveis"
-      value={available}
-      percentage={availablePercentage}
-      colorClass="bg-emerald-500"
-    />
+        <div className="mt-4 grid w-full gap-2">
+          <ChartLegendItem
+            label="Disponíveis"
+            value={available}
+            percentage={
+              availablePercentage
+            }
+            colorClass="bg-emerald-500"
+          />
 
-    <ChartLegendItem
-      label="Em uso"
-      value={inUse}
-      percentage={inUsePercentage}
-      colorClass="bg-blue-500"
-    />
+          <ChartLegendItem
+            label="Em uso"
+            value={inUse}
+            percentage={
+              inUsePercentage
+            }
+            colorClass="bg-blue-500"
+          />
 
-    <ChartLegendItem
-      label="Déficit"
-      value={shortage}
-      percentage={shortagePercentage}
-      colorClass="bg-red-500"
-    />
-  </div>
-</div>
+          <ChartLegendItem
+            label="Danificadas"
+            value={damaged}
+            percentage={
+              damagedPercentage
+            }
+            colorClass="bg-red-500"
+          />
+
+          <ChartLegendItem
+            label="Déficit"
+            value={shortage}
+            percentage={
+              shortagePercentage
+            }
+            colorClass="bg-amber-500"
+          />
+        </div>
+      </div>
     </article>
   );
 }

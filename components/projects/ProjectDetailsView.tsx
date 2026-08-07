@@ -9,10 +9,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarDays,
+  CheckCircle2,
+  ChevronDown,
   Loader2,
   Package,
   Pencil,
   Printer,
+  RotateCcw,
   Save,
   Trash2,
   UserRound,
@@ -80,7 +83,13 @@ type ClientsResponse = {
 
 type ProjectEquipment = {
   id: string;
+
   quantity: number;
+
+  allocatedQuantity: number;
+  pendingAllocationQuantity: number;
+  hasAllocatedQuantity: boolean;
+
   notes: string | null;
 
   needed: number;
@@ -314,8 +323,7 @@ export function ProjectDetailsView({
     sessionUser?.role === "COMMERCIAL";
 
   const canDelete =
-    sessionUser?.role === "ADMIN" ||
-    sessionUser?.role === "COMMERCIAL";
+    sessionUser?.role === "ADMIN";
 
   const [project, setProject] =
     useState<Project | null>(null);
@@ -359,6 +367,76 @@ const [
     showDeleteModal,
     setShowDeleteModal,
   ] = useState(false);
+
+  const [
+  showStatusMenu,
+  setShowStatusMenu,
+] = useState(false);
+
+const [
+  showReopenModal,
+  setShowReopenModal,
+] = useState(false);
+
+const [
+  reopening,
+  setReopening,
+] = useState(false);
+
+const [
+  reopenError,
+  setReopenError,
+] = useState("");
+
+const [
+  showCompleteModal,
+  setShowCompleteModal,
+] = useState(false);
+
+const [
+  completing,
+  setCompleting,
+] = useState(false);
+
+const [
+  completeError,
+  setCompleteError,
+] = useState("");
+
+const [
+  completeFromEdit,
+  setCompleteFromEdit,
+] = useState(false);
+
+const [
+  changingStatus,
+  setChangingStatus,
+] = useState(false);
+
+const [
+  showAllocatedEquipmentModal,
+  setShowAllocatedEquipmentModal,
+] = useState(false);
+
+const [
+  returnQuantities,
+  setReturnQuantities,
+] = useState<Record<string, number>>({});
+
+const [
+  returningEquipmentId,
+  setReturningEquipmentId,
+] = useState<string | null>(null);
+
+const [
+  returnError,
+  setReturnError,
+] = useState("");
+
+const [
+  returnSuccess,
+  setReturnSuccess,
+] = useState("");
 
   const [error, setError] = useState("");
 
@@ -508,66 +586,112 @@ const [
   }, []);
 
   useEffect(() => {
-    void loadProject();
-  }, [loadProject]);
+  void loadProject();
+}, [loadProject]);
 
-  useEffect(() => {
-    if (
-      !showEditModal &&
-      !showDeleteModal
-    ) {
+useEffect(() => {
+  if (
+    !showEditModal &&
+    !showDeleteModal &&
+    !showReopenModal &&
+    !showCompleteModal &&
+    !showAllocatedEquipmentModal
+  ) {
+    return;
+  }
+
+  function handleKeyDown(
+    event: KeyboardEvent,
+  ) {
+    if (event.key !== "Escape") {
       return;
     }
 
-    function handleKeyDown(
-      event: KeyboardEvent,
+    if (
+      showEditModal &&
+      !saving
     ) {
-      if (event.key !== "Escape") {
-        return;
-      }
-
-      if (
-        showEditModal &&
-        !saving
-      ) {
-        setShowEditModal(false);
-        setModalError("");
-      }
-
-      if (
-        showDeleteModal &&
-        !deleting
-      ) {
-        setShowDeleteModal(false);
-        setDeleteError("");
-      }
+      setShowEditModal(false);
+      setModalError("");
     }
 
-    document.addEventListener(
+    if (
+      showDeleteModal &&
+      !deleting
+    ) {
+      setShowDeleteModal(false);
+      setDeleteError("");
+    }
+
+    if (
+      showReopenModal &&
+      !reopening
+    ) {
+      setShowReopenModal(false);
+      setReopenError("");
+    }
+
+    if (
+      showCompleteModal &&
+      !completing
+    ) {
+      setShowCompleteModal(false);
+      setCompleteError("");
+      setCompleteFromEdit(false);
+    }
+
+    if (
+      showAllocatedEquipmentModal &&
+      !returningEquipmentId
+    ) {
+      setShowAllocatedEquipmentModal(
+        false,
+      );
+
+      setReturnError("");
+      setReturnSuccess("");
+    }
+  }
+
+  document.addEventListener(
+    "keydown",
+    handleKeyDown,
+  );
+
+  const previousOverflow =
+    document.body.style.overflow;
+
+  document.body.style.overflow =
+    "hidden";
+
+  return () => {
+    document.removeEventListener(
       "keydown",
       handleKeyDown,
     );
 
     document.body.style.overflow =
-      "hidden";
-
-    return () => {
-      document.removeEventListener(
-        "keydown",
-        handleKeyDown,
-      );
-
-      document.body.style.overflow = "";
-    };
-  }, [
-    showEditModal,
-    showDeleteModal,
-    saving,
-    deleting,
-  ]);
+      previousOverflow;
+  };
+}, [
+  showEditModal,
+  showDeleteModal,
+  showReopenModal,
+  showCompleteModal,
+  showAllocatedEquipmentModal,
+  saving,
+  deleting,
+  reopening,
+  completing,
+  returningEquipmentId,
+]);
 
   async function openEditModal() {
-  if (!project || !canEdit) {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
     return;
   }
 
@@ -600,14 +724,18 @@ const [
     setModalError("");
   }
 
-  function openDeleteModal() {
-    if (!project || !canDelete) {
-      return;
-    }
-
-    setDeleteError("");
-    setShowDeleteModal(true);
+function openDeleteModal() {
+  if (
+    !project ||
+    !canDelete ||
+    project.status === "COMPLETED"
+  ) {
+    return;
   }
+
+  setDeleteError("");
+  setShowDeleteModal(true);
+}
 
   function closeDeleteModal() {
     if (deleting) {
@@ -617,6 +745,456 @@ const [
     setShowDeleteModal(false);
     setDeleteError("");
   }
+
+function toggleStatusMenu() {
+  if (
+    !project ||
+    !canEdit ||
+    changingStatus ||
+    completing ||
+    reopening
+  ) {
+    return;
+  }
+
+  setShowStatusMenu(
+    (currentValue) =>
+      !currentValue,
+  );
+}
+
+function openReopenModal() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status !== "COMPLETED"
+  ) {
+    return;
+  }
+
+  setShowStatusMenu(false);
+  setReopenError("");
+  setSuccessMessage("");
+  setShowReopenModal(true);
+}
+
+function closeReopenModal() {
+  if (reopening) {
+    return;
+  }
+
+  setShowReopenModal(false);
+  setReopenError("");
+}
+
+function openCompleteModal(
+  fromEdit = false,
+) {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
+    return;
+  }
+
+  setShowStatusMenu(false);
+  setCompleteError("");
+  setSuccessMessage("");
+  setCompleteFromEdit(fromEdit);
+
+  /*
+   * Quando a conclusão vem pelo topo,
+   * usamos os dados atuais do projeto.
+   *
+   * Quando vem do formulário de edição,
+   * mantemos o form atual.
+   */
+  if (!fromEdit) {
+    setForm(
+      projectToForm(project),
+    );
+  }
+
+  setShowCompleteModal(true);
+}
+
+function closeCompleteModal() {
+  if (completing) {
+    return;
+  }
+
+  setShowCompleteModal(false);
+  setCompleteError("");
+  setCompleteFromEdit(false);
+}
+
+async function handleCompleteProject() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
+    return;
+  }
+
+  /*
+   * Se a conclusão veio da edição,
+   * validamos os dados que serão salvos.
+   */
+  if (completeFromEdit) {
+    const validationError =
+      validateProjectForm(form);
+
+    if (validationError) {
+      setCompleteError(
+        validationError,
+      );
+
+      return;
+    }
+  }
+
+  try {
+    setCompleting(true);
+    setCompleteError("");
+    setSuccessMessage("");
+
+    const sourceForm =
+      completeFromEdit
+        ? form
+        : projectToForm(project);
+
+    const response = await fetch(
+      `/api/projects/${project.id}`,
+      {
+        method: "PUT",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          action: "COMPLETE",
+
+          name:
+            sourceForm.name.trim(),
+
+          clientId:
+            sourceForm.clientId ||
+            null,
+
+          clientName:
+            sourceForm.clientName.trim() ||
+            null,
+
+          description:
+            sourceForm.description.trim() ||
+            null,
+
+          status:
+            "COMPLETED",
+
+          priority:
+            sourceForm.priority,
+
+          startDate:
+            sourceForm.startDate ||
+            null,
+
+          dueDate:
+            sourceForm.dueDate ||
+            null,
+
+          completedAt:
+            sourceForm.completedAt ||
+            null,
+
+          salespersonId:
+            sourceForm.salespersonId ||
+            null,
+
+          responsibleId:
+            sourceForm.responsibleId ||
+            null,
+        }),
+      },
+    );
+
+    const data =
+      (await response.json()) as ProjectResponse;
+
+    if (
+      !response.ok ||
+      !data.success ||
+      !data.data
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível concluir o projeto.",
+      );
+    }
+
+    setProject(data.data);
+
+    setShowCompleteModal(false);
+    setShowStatusMenu(false);
+
+    if (completeFromEdit) {
+      setShowEditModal(false);
+    }
+
+    setCompleteFromEdit(false);
+
+    setSuccessMessage(
+      data.message ??
+        "Projeto concluído com sucesso. Os equipamentos pendentes foram baixados do estoque.",
+    );
+
+    window.setTimeout(() => {
+      setSuccessMessage("");
+    }, 5000);
+  } catch (completeProjectError) {
+    setCompleteError(
+      completeProjectError instanceof Error
+        ? completeProjectError.message
+        : "Não foi possível concluir o projeto.",
+    );
+  } finally {
+    setCompleting(false);
+  }
+}
+
+async function handleStatusChange(
+  nextStatus: ProjectStatus,
+) {
+  if (
+    !project ||
+    !canEdit ||
+    changingStatus
+  ) {
+    return;
+  }
+
+  setShowStatusMenu(false);
+
+  if (
+    nextStatus === project.status
+  ) {
+    return;
+  }
+
+  /*
+   * Conclusão nunca acontece diretamente.
+   * Sempre passa pelo modal e envia
+   * action: COMPLETE.
+   */
+  if (
+    nextStatus === "COMPLETED"
+  ) {
+    openCompleteModal(false);
+    return;
+  }
+
+  /*
+   * Projeto concluído só sai desse
+   * estado pela ação explícita REOPEN.
+   */
+  if (
+    project.status === "COMPLETED"
+  ) {
+    openReopenModal();
+    return;
+  }
+
+  try {
+    setChangingStatus(true);
+    setError("");
+    setSuccessMessage("");
+
+    const response = await fetch(
+      `/api/projects/${project.id}`,
+      {
+        method: "PUT",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          name: project.name,
+
+          clientId:
+            project.clientId,
+
+          clientName:
+            project.clientName,
+
+          description:
+            project.description,
+
+          notes:
+            project.notes,
+
+          status:
+            nextStatus,
+
+          priority:
+            project.priority,
+
+          startDate:
+            project.startDate,
+
+          dueDate:
+            project.dueDate,
+
+          completedAt: null,
+
+          salespersonId:
+            project.salespersonId,
+
+          responsibleId:
+            project.responsibleId,
+        }),
+      },
+    );
+
+    const data =
+      (await response.json()) as ProjectResponse;
+
+    if (
+      !response.ok ||
+      !data.success ||
+      !data.data
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível alterar o status do projeto.",
+      );
+    }
+
+    setProject(data.data);
+
+    setSuccessMessage(
+      `Status alterado para ${statusLabels[nextStatus]}.`,
+    );
+
+    window.setTimeout(() => {
+      setSuccessMessage("");
+    }, 4000);
+  } catch (statusError) {
+    setError(
+      statusError instanceof Error
+        ? statusError.message
+        : "Não foi possível alterar o status do projeto.",
+    );
+  } finally {
+    setChangingStatus(false);
+  }
+}
+
+async function handleReopenProject() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status !== "COMPLETED"
+  ) {
+    return;
+  }
+
+  try {
+    setReopening(true);
+    setReopenError("");
+    setSuccessMessage("");
+
+    const response = await fetch(
+      `/api/projects/${project.id}`,
+      {
+        method: "PUT",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          action: "REOPEN",
+
+          name: project.name,
+
+          clientId:
+            project.clientId,
+
+          clientName:
+            project.clientName,
+
+          description:
+            project.description,
+
+          notes:
+            project.notes,
+
+          status:
+            "IN_PROGRESS",
+
+          priority:
+            project.priority,
+
+          startDate:
+            project.startDate,
+
+          dueDate:
+            project.dueDate,
+
+          completedAt:
+            null,
+
+          salespersonId:
+            project.salespersonId,
+
+          responsibleId:
+            project.responsibleId,
+        }),
+      },
+    );
+
+    const data =
+      (await response.json()) as ProjectResponse;
+
+    if (
+      !response.ok ||
+      !data.success ||
+      !data.data
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível reabrir o projeto.",
+      );
+    }
+
+    setProject(data.data);
+    setShowReopenModal(false);
+    setShowStatusMenu(false);
+
+    setSuccessMessage(
+      "Projeto reaberto com sucesso. O estoque não foi alterado.",
+    );
+
+    window.setTimeout(() => {
+      setSuccessMessage("");
+    }, 5000);
+  } catch (reopenProjectError) {
+    setReopenError(
+      reopenProjectError instanceof Error
+        ? reopenProjectError.message
+        : "Não foi possível reabrir o projeto.",
+    );
+  } finally {
+    setReopening(false);
+  }
+}
 
   function handleInputChange(
     event: ChangeEvent<
@@ -633,8 +1211,12 @@ const [
     }));
   }
 
-  function openEquipmentModal() {
-  if (!canEdit) {
+function openEquipmentModal() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
     return;
   }
 
@@ -644,6 +1226,193 @@ const [
 
 function closeEquipmentModal() {
   setShowEquipmentModal(false);
+}
+
+function openAllocatedEquipmentModal() {
+  if (
+    !project ||
+    !canEdit
+  ) {
+    return;
+  }
+
+  const allocatedItems =
+    project.equipment.filter(
+      (item) =>
+        item.allocatedQuantity > 0,
+    );
+
+  if (allocatedItems.length === 0) {
+    return;
+  }
+
+  const initialQuantities: Record<
+    string,
+    number
+  > = {};
+
+  for (const item of allocatedItems) {
+    initialQuantities[item.id] = 1;
+  }
+
+  setReturnQuantities(
+    initialQuantities,
+  );
+
+  setReturnError("");
+  setReturnSuccess("");
+  setSuccessMessage("");
+
+  setShowAllocatedEquipmentModal(
+    true,
+  );
+}
+
+function closeAllocatedEquipmentModal() {
+  if (returningEquipmentId) {
+    return;
+  }
+
+  setShowAllocatedEquipmentModal(false);
+  setReturnError("");
+  setReturnSuccess("");
+}
+
+function changeReturnQuantity(
+  item: ProjectEquipment,
+  difference: number,
+) {
+  const currentQuantity =
+    returnQuantities[item.id] ?? 1;
+
+  const nextQuantity = Math.min(
+    Math.max(
+      currentQuantity + difference,
+      1,
+    ),
+    item.allocatedQuantity,
+  );
+
+  setReturnQuantities((current) => ({
+    ...current,
+    [item.id]: nextQuantity,
+  }));
+}
+
+function handleReturnQuantityInput(
+  item: ProjectEquipment,
+  value: string,
+) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return;
+  }
+
+  const normalizedValue = Math.min(
+    Math.max(
+      Math.trunc(numericValue),
+      1,
+    ),
+    item.allocatedQuantity,
+  );
+
+  setReturnQuantities((current) => ({
+    ...current,
+    [item.id]: normalizedValue,
+  }));
+}
+
+async function handleReturnEquipment(
+  item: ProjectEquipment,
+  condition: "NORMAL" | "DAMAGED",
+) {
+  if (
+    !project ||
+    !canEdit
+  ) {
+    return;
+  }
+
+  const quantity =
+    returnQuantities[item.id] ?? 1;
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity >
+      item.allocatedQuantity
+  ) {
+    setReturnError(
+      "Informe uma quantidade válida para devolução.",
+    );
+
+    return;
+  }
+
+  try {
+    setReturningEquipmentId(
+      item.id,
+    );
+
+    setReturnError("");
+    setReturnSuccess("");
+
+    const response = await fetch(
+      `/api/projects/${project.id}/equipment/${item.equipment.id}/return`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          quantity,
+          condition,
+        }),
+      },
+    );
+
+    const data =
+      (await response.json()) as {
+        success: boolean;
+        message?: string;
+      };
+
+    if (
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível registrar a devolução.",
+      );
+    }
+
+    setReturnSuccess(
+      data.message ??
+        "Devolução registrada com sucesso.",
+    );
+
+    setReturnQuantities(
+      (current) => ({
+        ...current,
+        [item.id]: 1,
+      }),
+    );
+
+    await loadProject();
+  } catch (returnEquipmentError) {
+    setReturnError(
+      returnEquipmentError instanceof Error
+        ? returnEquipmentError.message
+        : "Não foi possível registrar a devolução.",
+    );
+  } finally {
+    setReturningEquipmentId(null);
+  }
 }
 
   async function handleSubmit(
@@ -662,6 +1431,15 @@ function closeEquipmentModal() {
       setModalError(validationError);
       return;
     }
+
+    if (
+  form.status === "COMPLETED" &&
+  project.status !== "COMPLETED"
+) {
+  setModalError("");
+  openCompleteModal(true);
+  return;
+}
 
     try {
       setSaving(true);
@@ -817,6 +1595,9 @@ clientName:
     );
   }
 
+  const isProjectLocked =
+  project.status === "COMPLETED";
+
   const reservedUnits =
     project.equipment.reduce(
       (total, item) =>
@@ -829,6 +1610,15 @@ clientName:
       user.role === "ADMIN" ||
       user.role === "COMMERCIAL",
   );
+
+  const allocatedEquipment =
+  project.equipment.filter(
+    (item) =>
+      item.allocatedQuantity > 0,
+  );
+
+const hasAllocatedEquipment =
+  allocatedEquipment.length > 0;
 
 return (
   <>
@@ -855,18 +1645,140 @@ return (
               Voltar para projetos
             </Link>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge
-                status={project.status}
+<div className="flex flex-wrap items-center gap-2">
+  <div className="relative">
+    {canEdit ? (
+      <button
+        type="button"
+        onClick={toggleStatusMenu}
+        disabled={
+          changingStatus ||
+          completing ||
+          reopening
+        }
+        aria-haspopup="menu"
+        aria-expanded={showStatusMenu}
+        className="inline-flex items-center gap-1 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <StatusBadge
+          status={project.status}
+        />
+
+        {changingStatus ? (
+          <Loader2
+            size={13}
+            className="animate-spin text-zinc-400"
+          />
+        ) : (
+          <ChevronDown
+            size={13}
+            className={[
+              "text-zinc-500 transition-transform",
+              showStatusMenu
+                ? "rotate-180"
+                : "",
+            ].join(" ")}
+          />
+        )}
+      </button>
+    ) : (
+      <StatusBadge
+        status={project.status}
+      />
+    )}
+
+    {showStatusMenu &&
+    canEdit ? (
+      <div
+        role="menu"
+        className="absolute left-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl"
+      >
+        {project.status ===
+        "COMPLETED" ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={openReopenModal}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold text-zinc-700 transition hover:bg-orange-50 hover:text-[#F57B00]"
+          >
+            <RotateCcw size={16} />
+
+            Reabrir projeto
+          </button>
+        ) : (
+          <>
+            {project.status !==
+            "PLANNING" ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  void handleStatusChange(
+                    "PLANNING",
+                  );
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Planejamento
+              </button>
+            ) : null}
+
+            {project.status !==
+            "IN_PROGRESS" ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  void handleStatusChange(
+                    "IN_PROGRESS",
+                  );
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50"
+              >
+                Em andamento
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                openCompleteModal(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+            >
+              <CheckCircle2
+                size={16}
               />
 
-              <PriorityBadge
-                priority={
-                  project.priority
-                }
-              />
-            </div>
+              Concluir projeto
+            </button>
 
+            {project.status !==
+            "CANCELLED" ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  void handleStatusChange(
+                    "CANCELLED",
+                  );
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100"
+              >
+                Cancelar projeto
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
+    ) : null}
+  </div>
+
+  <PriorityBadge
+    priority={project.priority}
+  />
+</div>
             <h1 className="mt-3 text-2xl font-bold text-zinc-900">
               {project.name}
             </h1>
@@ -903,8 +1815,8 @@ return (
 </div>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row">
-             <button
+ <div className="flex flex-col gap-2 sm:flex-row">
+  <button
     type="button"
     onClick={() => window.print()}
     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
@@ -912,33 +1824,59 @@ return (
     <Printer size={16} />
     Imprimir / PDF
   </button>
-            {canEdit ? (
-              <button
-                type="button"
-                onClick={() => {
-                  void openEditModal();
-                }}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
-              >
-                
-                <Pencil size={16} />
-                Editar projeto
-              </button>
-            ) : null}
 
-            {canDelete ? (
-              <button
-                type="button"
-                onClick={
-                  openDeleteModal
-                }
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-              >
-                <Trash2 size={16} />
-                Excluir projeto
-              </button>
-            ) : null}
-          </div>
+  {canEdit &&
+  project.status !== "COMPLETED" &&
+  project.status !== "CANCELLED" ? (
+    <button
+      type="button"
+      onClick={() => {
+        openCompleteModal(false);
+      }}
+      disabled={
+        completing ||
+        changingStatus ||
+        reopening
+      }
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {completing ? (
+        <Loader2
+          size={16}
+          className="animate-spin"
+        />
+      ) : (
+        <CheckCircle2 size={16} />
+      )}
+
+      Concluir projeto
+    </button>
+  ) : null}
+
+  {canEdit && !isProjectLocked ? (
+    <button
+      type="button"
+      onClick={() => {
+        void openEditModal();
+      }}
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
+    >
+      <Pencil size={16} />
+      Editar projeto
+    </button>
+  ) : null}
+
+  {canDelete && !isProjectLocked ? (
+    <button
+      type="button"
+      onClick={openDeleteModal}
+      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+    >
+      <Trash2 size={16} />
+      Excluir projeto
+    </button>
+  ) : null}
+</div>
         </div>
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -999,7 +1937,7 @@ return (
                 </p>
               </div>
 
-              {canEdit ? (
+             {canEdit && !isProjectLocked ? (
   <div className="flex flex-wrap items-center justify-end gap-2">
     <button
       type="button"
@@ -1017,6 +1955,28 @@ return (
       <Wrench size={16} />
       Novo equipamento
     </Link>
+
+    <button
+  type="button"
+  onClick={openEquipmentModal}
+  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
+>
+  <Pencil size={14} />
+  Gerenciar reservas
+</button>
+{hasAllocatedEquipment ? (
+  <button
+    type="button"
+    onClick={
+      openAllocatedEquipmentModal
+    }
+    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100"
+  >
+    <RotateCcw size={14} />
+
+    Gerenciar itens baixados
+  </button>
+) : null}
   </div>
 ) : null}
             </header>
@@ -1076,6 +2036,28 @@ return (
                             ? ` ${item.equipment.model}`
                             : ""}
                         </p>
+
+                        {item.allocatedQuantity > 0 ? (
+  <div className="mt-2 flex flex-wrap items-center gap-2">
+    <span className="inline-flex rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+      {item.allocatedQuantity}{" "}
+      {item.allocatedQuantity === 1
+        ? "unidade já baixada"
+        : "unidades já baixadas"}
+    </span>
+
+    {item.pendingAllocationQuantity >
+    0 ? (
+      <span className="inline-flex rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+        {item.pendingAllocationQuantity}{" "}
+        {item.pendingAllocationQuantity ===
+        1
+          ? "unidade pendente"
+          : "unidades pendentes"}
+      </span>
+    ) : null}
+  </div>
+) : null}
                         
                         {item.hasShortage ? (
   <div className="mt-3">
@@ -1115,30 +2097,19 @@ return (
                       </div>
 
 <div className="flex items-center gap-2">
-<div
-  className={[
-    "rounded-lg px-3 py-2 text-sm font-semibold",
-    item.hasShortage
-      ? "bg-red-100 text-red-700"
-      : "bg-zinc-100 text-zinc-700",
-  ].join(" ")}
->
-  {item.quantity}{" "}
-  {item.quantity === 1
-    ? "unidade"
-    : "unidades"}
-</div>
-
-  {canEdit ? (
-    <button
-      type="button"
-      onClick={openEquipmentModal}
-      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
-    >
-      <Pencil size={15} />
-      Gerenciar
-    </button>
-  ) : null}
+  <div
+    className={[
+      "rounded-lg px-2 py-1.5 text-sm font-semibold",
+      item.hasShortage
+        ? "bg-red-100 text-red-700"
+        : "bg-zinc-100 text-zinc-700",
+    ].join(" ")}
+  >
+    {item.quantity}{" "}
+    {item.quantity === 1
+      ? "unidade"
+      : "unidades"}
+  </div>
 </div>
                     </div>
                   ),
@@ -1516,44 +2487,51 @@ return (
                     </select>
                   </FormField>
 
-                  <FormField
-                    label="Status"
-                    htmlFor="status"
-                    required
-                  >
-                    <select
-                      id="status"
-                      name="status"
-                      value={form.status}
-                      onChange={
-                        handleInputChange
-                      }
-                      disabled={saving}
-                      className={
-                        inputClassName
-                      }
-                    >
-                      {(
-                        Object.entries(
-                          statusLabels,
-                        ) as Array<
-                          [
-                            ProjectStatus,
-                            string,
-                          ]
-                        >
-                      ).map(
-                        ([value, label]) => (
-                          <option
-                            key={value}
-                            value={value}
-                          >
-                            {label}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </FormField>
+<FormField
+  label="Status"
+  htmlFor="status"
+  required
+>
+  <select
+    id="status"
+    name="status"
+    value={form.status}
+    onChange={handleInputChange}
+    disabled={
+      saving ||
+      project.status === "COMPLETED"
+    }
+    className={inputClassName}
+  >
+    {(
+      Object.entries(
+        statusLabels,
+      ) as Array<
+        [
+          ProjectStatus,
+          string,
+        ]
+      >
+    ).map(
+      ([value, label]) => (
+        <option
+          key={value}
+          value={value}
+        >
+          {label}
+        </option>
+      ),
+    )}
+  </select>
+
+  {project.status ===
+  "COMPLETED" ? (
+    <p className="mt-2 text-xs text-zinc-500">
+      Use a opção “Reabrir projeto” no
+      status exibido no topo da página.
+    </p>
+  ) : null}
+</FormField>
 
                   <FormField
                     label="Prioridade"
@@ -1735,6 +2713,159 @@ return (
         </div>
       ) : null}
 
+      {showCompleteModal ? (
+  <div
+    className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+    role="presentation"
+    onMouseDown={(event) => {
+      if (
+        event.target ===
+          event.currentTarget &&
+        !completing
+      ) {
+        closeCompleteModal();
+      }
+    }}
+  >
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="complete-project-title"
+      aria-describedby="complete-project-description"
+      className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+    >
+      <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+            <CheckCircle2 size={22} />
+          </div>
+
+          <div>
+            <h2
+              id="complete-project-title"
+              className="font-bold text-zinc-900"
+            >
+              Concluir projeto
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              Esta ação realizará a baixa
+              dos equipamentos pendentes.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={closeCompleteModal}
+          disabled={completing}
+          aria-label="Fechar confirmação"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <X size={20} />
+        </button>
+      </header>
+
+      <div className="px-5 py-5">
+        <p
+          id="complete-project-description"
+          className="text-sm leading-6 text-zinc-600"
+        >
+          Você está prestes a concluir o
+          projeto{" "}
+          <strong className="text-zinc-900">
+            {project.name}
+          </strong>
+          .
+        </p>
+
+        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-800">
+          As unidades ainda pendentes
+          serão baixadas do estoque
+          automaticamente.
+        </div>
+
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          Caso o projeto seja reaberto,
+          os equipamentos já entregues
+          não retornarão automaticamente
+          ao estoque.
+        </div>
+
+        <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm leading-6 text-zinc-700">
+          Qualquer devolução posterior
+          deverá ser registrada pela
+          opção{" "}
+          <strong>
+            Gerenciar itens baixados
+          </strong>
+          .
+        </div>
+
+        {completeFromEdit ? (
+          <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-800">
+            As alterações feitas no
+            formulário também serão
+            salvas junto com a conclusão.
+          </div>
+        ) : null}
+
+        {completeError ? (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+          >
+            <AlertTriangle
+              size={17}
+              className="mt-0.5 shrink-0"
+            />
+
+            <span>
+              {completeError}
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      <footer className="flex flex-col-reverse gap-3 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={closeCompleteModal}
+          disabled={completing}
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            void handleCompleteProject();
+          }}
+          disabled={completing}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {completing ? (
+            <>
+              <Loader2
+                size={16}
+                className="animate-spin"
+              />
+
+              Concluindo...
+            </>
+          ) : (
+            <>
+              <CheckCircle2 size={16} />
+              Confirmar conclusão
+            </>
+          )}
+        </button>
+      </footer>
+    </div>
+  </div>
+) : null}
+
       {showDeleteModal ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
@@ -1877,6 +3008,534 @@ return (
           </div>
         </div>
       ) : null}
+      {showReopenModal ? (
+  <div
+    className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+    role="presentation"
+    onMouseDown={(event) => {
+      if (
+        event.target ===
+          event.currentTarget &&
+        !reopening
+      ) {
+        closeReopenModal();
+      }
+    }}
+  >
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reopen-project-title"
+      aria-describedby="reopen-project-description"
+      className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+    >
+      <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
+            <RotateCcw size={22} />
+          </div>
+
+          <div>
+            <h2
+              id="reopen-project-title"
+              className="font-bold text-zinc-900"
+            >
+              Reabrir projeto
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              O projeto voltará para em andamento.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={closeReopenModal}
+          disabled={reopening}
+          aria-label="Fechar confirmação"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <X size={20} />
+        </button>
+      </header>
+
+      <div className="px-5 py-5">
+        <p
+          id="reopen-project-description"
+          className="text-sm leading-6 text-zinc-600"
+        >
+          Você está prestes a reabrir o
+          projeto{" "}
+          <strong className="text-zinc-900">
+            {project.name}
+          </strong>
+          .
+        </p>
+
+        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-800">
+          Os equipamentos já entregues não
+          voltarão automaticamente ao estoque.
+        </div>
+
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          Posteriormente, o retorno poderá ser
+          feito pelo gerenciamento específico de
+          equipamentos.
+        </div>
+
+        {reopenError ? (
+          <div
+            role="alert"
+            className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+          >
+            {reopenError}
+          </div>
+        ) : null}
+      </div>
+
+      <footer className="flex flex-col-reverse gap-3 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={closeReopenModal}
+          disabled={reopening}
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            void handleReopenProject();
+          }}
+          disabled={reopening}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {reopening ? (
+            <>
+              <Loader2
+                size={16}
+                className="animate-spin"
+              />
+
+              Reabrindo...
+            </>
+          ) : (
+            <>
+              <RotateCcw size={16} />
+
+              Confirmar reabertura
+            </>
+          )}
+        </button>
+      </footer>
+    </div>
+  </div>
+) : null}
+
+{showAllocatedEquipmentModal ? (
+  <div
+    className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
+    role="presentation"
+    onMouseDown={(event) => {
+      if (
+        event.target ===
+          event.currentTarget &&
+        !returningEquipmentId
+      ) {
+        closeAllocatedEquipmentModal();
+      }
+    }}
+  >
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="allocated-equipment-title"
+      className="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+    >
+      <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 sm:px-6">
+        <div>
+          <h2
+            id="allocated-equipment-title"
+            className="text-lg font-bold text-zinc-900"
+          >
+            Gerenciar itens baixados
+          </h2>
+
+          <p className="mt-1 text-sm text-zinc-500">
+            Registre a devolução dos
+            equipamentos que já tiveram saída
+            de estoque neste projeto.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={
+            closeAllocatedEquipmentModal
+          }
+          disabled={
+            returningEquipmentId !== null
+          }
+          aria-label="Fechar modal"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <X size={20} />
+        </button>
+      </header>
+
+      {(returnError ||
+        returnSuccess) ? (
+        <div className="border-b border-zinc-100 px-5 py-4 sm:px-6">
+          {returnError ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+            >
+              <AlertTriangle
+                size={17}
+                className="mt-0.5 shrink-0"
+              />
+
+              <span>
+                {returnError}
+              </span>
+            </div>
+          ) : null}
+
+          {returnSuccess ? (
+            <div
+              role="status"
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+            >
+              {returnSuccess}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex-1 overflow-y-auto">
+        {allocatedEquipment.length ===
+        0 ? (
+          <div className="flex min-h-64 flex-col items-center justify-center p-8 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+              <Package size={24} />
+            </div>
+
+            <h3 className="mt-4 font-bold text-zinc-900">
+              Nenhum item baixado
+            </h3>
+
+            <p className="mt-1 max-w-md text-sm text-zinc-500">
+              Todos os equipamentos deste
+              projeto já foram devolvidos.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-zinc-100">
+            {allocatedEquipment.map(
+              (item) => {
+                const returnQuantity =
+                  returnQuantities[
+                    item.id
+                  ] ?? 1;
+
+                const isReturning =
+                  returningEquipmentId ===
+                  item.id;
+
+                const anotherItemReturning =
+                  returningEquipmentId !==
+                    null &&
+                  !isReturning;
+
+                return (
+                  <article
+                    key={item.id}
+                    className="px-5 py-5 sm:px-6"
+                  >
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-zinc-900">
+                            {
+                              item
+                                .equipment
+                                .name
+                            }
+                          </h3>
+
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {
+                              item
+                                .equipment
+                                .category
+                            }
+
+                            {item.equipment
+                              .manufacturer
+                              ? ` · ${item.equipment.manufacturer}`
+                              : ""}
+
+                            {item.equipment
+                              .model
+                              ? ` ${item.equipment.model}`
+                              : ""}
+                          </p>
+
+                          {item.notes ? (
+                            <p className="mt-2 text-xs text-zinc-500">
+                              {
+                                item.notes
+                              }
+                            </p>
+                          ) : null}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-md bg-zinc-100 px-2.5 py-1.5 text-xs font-semibold text-zinc-700">
+                            Projeto:{" "}
+                            {
+                              item.quantity
+                            }
+                          </span>
+
+                          <span className="rounded-md bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700">
+                            Baixado:{" "}
+                            {
+                              item.allocatedQuantity
+                            }
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                          <div>
+                            <label
+                              htmlFor={`return-quantity-${item.id}`}
+                              className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                            >
+                              Quantidade da
+                              devolução
+                            </label>
+
+                            <div className="flex h-10 w-fit overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  changeReturnQuantity(
+                                    item,
+                                    -1,
+                                  );
+                                }}
+                                disabled={
+                                  isReturning ||
+                                  anotherItemReturning ||
+                                  returnQuantity <=
+                                    1
+                                }
+                                aria-label="Diminuir quantidade da devolução"
+                                className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                −
+                              </button>
+
+                              <input
+                                id={`return-quantity-${item.id}`}
+                                type="number"
+                                min={1}
+                                max={
+                                  item.allocatedQuantity
+                                }
+                                value={
+                                  returnQuantity
+                                }
+                                onChange={(
+                                  event,
+                                ) => {
+                                  handleReturnQuantityInput(
+                                    item,
+                                    event
+                                      .target
+                                      .value,
+                                  );
+                                }}
+                                disabled={
+                                  isReturning ||
+                                  anotherItemReturning
+                                }
+                                className="w-16 border-x border-zinc-200 text-center text-sm font-bold text-zinc-900 outline-none disabled:bg-zinc-100 disabled:text-zinc-400"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  changeReturnQuantity(
+                                    item,
+                                    1,
+                                  );
+                                }}
+                                disabled={
+                                  isReturning ||
+                                  anotherItemReturning ||
+                                  returnQuantity >=
+                                    item.allocatedQuantity
+                                }
+                                aria-label="Aumentar quantidade da devolução"
+                                className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <p className="mt-2 text-xs text-zinc-500">
+                              Máximo:{" "}
+                              <strong>
+                                {
+                                  item.allocatedQuantity
+                                }
+                              </strong>{" "}
+                              {item.allocatedQuantity ===
+                              1
+                                ? "unidade"
+                                : "unidades"}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleReturnEquipment(
+                                  item,
+                                  "NORMAL",
+                                );
+                              }}
+                              disabled={
+                                returningEquipmentId !==
+                                null
+                              }
+                              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isReturning ? (
+                                <Loader2
+                                  size={
+                                    16
+                                  }
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <RotateCcw
+                                  size={
+                                    16
+                                  }
+                                />
+                              )}
+
+                              Devolver ao
+                              estoque
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleReturnEquipment(
+                                  item,
+                                  "DAMAGED",
+                                );
+                              }}
+                              disabled={
+                                returningEquipmentId !==
+                                null
+                              }
+                              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isReturning ? (
+                                <Loader2
+                                  size={
+                                    16
+                                  }
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <AlertTriangle
+                                  size={
+                                    16
+                                  }
+                                />
+                              )}
+
+                              Registrar
+                              danificado
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5">
+                            <p className="text-xs font-semibold text-emerald-800">
+                              Devolver ao
+                              estoque
+                            </p>
+
+                            <p className="mt-1 text-xs leading-5 text-emerald-700">
+                              A unidade volta
+                              ao estoque
+                              disponível.
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                            <p className="text-xs font-semibold text-amber-800">
+                              Registrar
+                              danificado
+                            </p>
+
+                            <p className="mt-1 text-xs leading-5 text-amber-700">
+                              A unidade sai do
+                              projeto, mas não
+                              volta ao estoque
+                              disponível.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              },
+            )}
+          </div>
+        )}
+      </div>
+
+      <footer className="flex items-center justify-between gap-4 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:px-6">
+        <p className="text-sm text-zinc-500">
+          {allocatedEquipment.length}{" "}
+          {allocatedEquipment.length === 1
+            ? "item com baixa"
+            : "itens com baixa"}
+        </p>
+
+        <button
+          type="button"
+          onClick={
+            closeAllocatedEquipmentModal
+          }
+          disabled={
+            returningEquipmentId !== null
+          }
+          className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Fechar
+        </button>
+      </footer>
+    </div>
+  </div>
+) : null}
+
            <ProjectEquipmentModal
         open={showEquipmentModal}
         projectId={project.id}
