@@ -37,6 +37,7 @@ type EquipmentBody = {
   model?: unknown;
   serialNumber?: unknown;
   quantity?: unknown;
+  damagedQuantity?: unknown;
   invoiceNumber?: unknown;
   category?: unknown;
   status?: unknown;
@@ -478,11 +479,18 @@ export async function POST(
       (await request.json()) as EquipmentBody;
 
     const requestedQuantity =
-      parseNonNegativeInteger(
-        body.quantity,
-        "Quantidade",
-        0,
-      );
+  parseNonNegativeInteger(
+    body.quantity,
+    "Quantidade operacional",
+    0,
+  );
+
+const requestedDamagedQuantity =
+  parseNonNegativeInteger(
+    body.damagedQuantity,
+    "Quantidade danificada",
+    0,
+  );
 
     /*
      * ADMIN pode definir o estoque inicial.
@@ -496,6 +504,11 @@ export async function POST(
       isAdministrator
         ? requestedQuantity
         : 0;
+
+        const damagedQuantity =
+          isAdministrator
+            ? requestedDamagedQuantity
+            : 0;
 
     /*
      * O comercial não confirma entrada física,
@@ -546,6 +559,7 @@ export async function POST(
             )?.toUpperCase() ?? null,
 
           quantity,
+          damagedQuantity,
 
           /*
            * Regra fixa do sistema:
@@ -600,6 +614,8 @@ export async function POST(
           equipment.serialNumber,
         quantity:
           equipment.quantity,
+        damagedQuantity:
+          equipment.damagedQuantity,
         minimumStock:
           LOW_STOCK_THRESHOLD,
         invoiceNumber:

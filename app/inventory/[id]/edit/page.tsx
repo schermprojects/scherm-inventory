@@ -79,9 +79,9 @@ const availableStock = Math.max(
     manufacturer: equipment.manufacturer ?? "",
     model: equipment.model ?? "",
     quantity: String(equipment.quantity),
+    damagedQuantity: String(equipment.damagedQuantity ?? 0,),
     invoiceNumber: equipment.invoiceNumber ?? "",
     status: statusFromDatabase[equipment.status],
-    condition: conditionFromDatabase[equipment.condition],
     notes: equipment.notes ?? "",
   };
 

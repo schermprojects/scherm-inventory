@@ -27,6 +27,7 @@ type EquipmentRequestBody = {
   model?: unknown;
   serialNumber?: unknown;
   quantity?: unknown;
+  damagedQuantity?: unknown;
   category?: unknown;
   status?: unknown;
   condition?: unknown;
@@ -94,23 +95,25 @@ function optionalUppercaseText(
     : null;
 }
 
-function requiredQuantity(
+function requiredNonNegativeInteger(
   value: unknown,
+  label: string,
+  field: keyof EquipmentRequestBody,
 ): number {
-  const quantity = Number(value);
+  const parsedValue = Number(value);
 
   if (
-    !Number.isInteger(quantity) ||
-    quantity < 0 ||
-    quantity > 999999
+    !Number.isInteger(parsedValue) ||
+    parsedValue < 0 ||
+    parsedValue > 999999
   ) {
     throw new ValidationError(
-      "A quantidade deve ser um número inteiro igual ou maior que zero.",
-      "quantity",
+      `O campo "${label}" deve ser um número inteiro entre 0 e 999999.`,
+      field,
     );
   }
 
-  return quantity;
+  return parsedValue;
 }
 
 function parseStatus(
@@ -212,6 +215,7 @@ function serializeEquipmentForAudit(
     model: string | null;
     serialNumber: string | null;
     quantity: number;
+    damagedQuantity: number;
     category: string;
     status: EquipmentStatus;
     condition: EquipmentCondition;
@@ -230,6 +234,11 @@ function serializeEquipmentForAudit(
     serialNumber:
       equipment.serialNumber,
     quantity: equipment.quantity,
+    damagedQuantity:
+      equipment.damagedQuantity,
+    physicalStock:
+      equipment.quantity +
+      equipment.damagedQuantity,
     category: equipment.category,
     status: equipment.status,
     condition:
@@ -309,9 +318,26 @@ export async function GET(
     }
 
     return Response.json({
-      success: true,
-      data: equipment,
-    });
+  success: true,
+
+  data: {
+    ...equipment,
+
+    operationalStock:
+      equipment.quantity,
+
+    damagedQuantity:
+      equipment.damagedQuantity,
+
+    physicalStock:
+      equipment.quantity +
+      equipment.damagedQuantity,
+
+    hasDamagedUnits:
+      equipment.damagedQuantity > 0,
+  },
+});
+
   } catch (error) {
     console.error(
       "Erro ao buscar equipamento:",
@@ -383,6 +409,7 @@ export async function PATCH(
           model: true,
           serialNumber: true,
           quantity: true,
+          damagedQuantity: true,
           category: true,
           status: true,
           condition: true,
@@ -405,6 +432,20 @@ export async function PATCH(
         },
       );
     }
+
+    const quantity =
+      requiredNonNegativeInteger(
+      body.quantity,
+      "Quantidade operacional",
+      "quantity",
+      );
+
+    const damagedQuantity =
+      requiredNonNegativeInteger(
+      body.damagedQuantity ?? 0,
+      "Quantidade danificada",
+      "damagedQuantity",
+      );
 
     const equipment =
       await prisma.equipment.update({
@@ -439,10 +480,8 @@ export async function PATCH(
               body.serialNumber,
             ),
 
-          quantity:
-            requiredQuantity(
-              body.quantity,
-            ),
+          quantity,
+          damagedQuantity,
 
           invoiceNumber:
             optionalText(
@@ -605,6 +644,7 @@ export async function DELETE(
           model: true,
           serialNumber: true,
           quantity: true,
+          damagedQuantity: true,
           category: true,
           status: true,
           condition: true,
@@ -660,6 +700,7 @@ export async function DELETE(
           model: true,
           serialNumber: true,
           quantity: true,
+          damagedQuantity: true,
           category: true,
           status: true,
           condition: true,

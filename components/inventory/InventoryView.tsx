@@ -392,7 +392,7 @@ const canEdit =
       .trim()
       .toLocaleLowerCase("pt-BR");
 
-    return equipmentList.filter((equipment) => {
+    return equipmentList.filter((equipment: Equipment) => {
       const searchableValues = [
         equipment.name,
         equipment.manufacturer,

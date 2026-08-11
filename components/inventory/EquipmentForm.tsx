@@ -34,10 +34,6 @@ type EquipmentStatus =
   | "Em uso"
   | "Indisponível";
 
-type EquipmentCondition =
-  | "Novo"
-  | "Danificado";
-
 export type EquipmentFormData = {
   name: string;
   serialNumber: string;
@@ -45,9 +41,9 @@ export type EquipmentFormData = {
   manufacturer: string;
   model: string;
   quantity: string;
+  damagedQuantity: string;
   invoiceNumber: string;
   status: EquipmentStatus;
-  condition: EquipmentCondition;
   notes: string;
 };
 
@@ -60,7 +56,7 @@ type EquipmentStockInfo = {
 type EquipmentFormProps = {
   mode?: "create" | "edit";
   equipmentId?: string;
-  initialValues?: EquipmentFormData;
+  initialValues?: Partial<EquipmentFormData>;
   stockInfo?: EquipmentStockInfo;
 };
 
@@ -111,9 +107,9 @@ const initialFormData: EquipmentFormData = {
   manufacturer: "",
   model: "",
   quantity: "1",
+  damagedQuantity: "0",
   invoiceNumber: "",
   status: "Disponível",
-  condition: "Novo",
   notes: "",
 };
 
@@ -220,9 +216,9 @@ const [formData, setFormData] =
     manufacturer: initialValues?.manufacturer ?? "",
     model: initialValues?.model ?? "",
     quantity: initialValues?.quantity ?? "1",
+    damagedQuantity: initialValues?.damagedQuantity ?? "0",
     invoiceNumber: initialValues?.invoiceNumber ?? "",
     status: initialValues?.status ?? "Disponível",
-    condition: initialValues?.condition ?? "Novo",
     notes: initialValues?.notes ?? "",
   }));
 
@@ -347,17 +343,33 @@ const [formData, setFormData] =
     };
   }, [images]);
 
- const editedPhysicalStock =
+const editedOperationalStock =
   Number(formData.quantity);
 
+const editedDamagedQuantity =
+  Number(formData.damagedQuantity);
+
+const projectedPhysicalStock =
+  Number.isInteger(
+    editedOperationalStock,
+  ) &&
+  Number.isInteger(
+    editedDamagedQuantity,
+  )
+    ? editedOperationalStock +
+      editedDamagedQuantity
+    : stockInfo?.physicalStock ?? 0;
+
 const projectedAvailableStock =
-  Number.isInteger(editedPhysicalStock)
+  Number.isInteger(
+    editedOperationalStock,
+  )
     ? Math.max(
-        editedPhysicalStock -
+        editedOperationalStock -
           (stockInfo?.inUse ?? 0),
         0,
       )
-    : stockInfo?.availableStock ?? 0; 
+    : stockInfo?.availableStock ?? 0;
 
   const completionPercentage = useMemo(() => {
     const requiredFields: Array<
@@ -410,6 +422,22 @@ function validateForm(): boolean {
 
   const quantity = Number(formData.quantity);
 
+  const damagedQuantity =
+  Number(
+    formData.damagedQuantity,
+  );
+
+  if (
+  !Number.isInteger(
+    damagedQuantity,
+  ) ||
+  damagedQuantity < 0 ||
+  damagedQuantity > 999999
+) {
+  nextErrors.damagedQuantity =
+    "Informe uma quantidade danificada inteira igual ou maior que zero.";
+}
+
   if (
     !Number.isInteger(quantity) ||
     quantity < 0 ||
@@ -426,7 +454,7 @@ function validateForm(): boolean {
     quantity < stockInfo.inUse
   ) {
     nextErrors.quantity =
-      `O estoque físico não pode ser menor que as ${stockInfo.inUse} unidades atualmente em uso.`;
+  `O estoque operacional não pode ser menor que as ${stockInfo.inUse} unidades atualmente em uso.`;
   }
 
   setErrors(nextErrors);
@@ -571,16 +599,22 @@ function validateForm(): boolean {
 
           model: formData.model.trim() || null,
 
-          quantity: Number(formData.quantity),
+          quantity:
+            Number(
+            formData.quantity,
+            ),
+
+          damagedQuantity:
+            Number(
+            formData.damagedQuantity,
+            ),
 
           invoiceNumber:
             formData.invoiceNumber.trim() || null,
 
           status: mapStatusToApi(formData.status),
 
-          condition: mapConditionToApi(
-            formData.condition,
-          ),
+          condition: "NEW",
 
           notes: formData.notes.trim() || null,
         }),
@@ -892,56 +926,80 @@ function validateForm(): boolean {
       {mode === "edit" && stockInfo ? (
   <FormSection
     icon={Package}
-    title="Controle de estoque"
+    title="Resumo de estoque"
     description="Resumo das unidades físicas e das alocações em projetos ativos."
   >
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <StockSummaryCard
-        label="Estoque físico"
-        value={Number(formData.quantity) || 0}
-        description="Total físico informado"
-        className="border-orange-200 bg-orange-50"
-        valueClassName="text-[#D96D00]"
-      />
+<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+  <StockSummaryCard
+    label="Estoque físico"
+    value={projectedPhysicalStock}
+    description="Operacionais + danificadas"
+    className="border-orange-200 bg-orange-50"
+    valueClassName="text-[#D96D00]"
+  />
 
-      <StockSummaryCard
-        label="Em uso"
-        value={stockInfo.inUse}
-        description="Alocado em projetos ativos"
-        className="border-blue-200 bg-blue-50"
-        valueClassName="text-blue-700"
-      />
+  <StockSummaryCard
+    label="Em uso"
+    value={stockInfo.inUse}
+    description="Alocado em projetos ativos"
+    className="border-blue-200 bg-blue-50"
+    valueClassName="text-blue-700"
+  />
 
-      <StockSummaryCard
-        label="Disponível"
-        value={projectedAvailableStock}
-        description="Disponível após salvar"
-        className={
-          projectedAvailableStock === 0
-            ? "border-red-200 bg-red-50"
-            : projectedAvailableStock <=
-                  LOW_STOCK_THRESHOLD
-              ? "border-amber-200 bg-amber-50"
-              : "border-emerald-200 bg-emerald-50"
-        }
-        valueClassName={
-          projectedAvailableStock === 0
-            ? "text-red-700"
-            : projectedAvailableStock <=
-                LOW_STOCK_THRESHOLD
-              ? "text-amber-700"
-              : "text-emerald-700"
-        }
-      />
+  <StockSummaryCard
+    label="Disponível"
+    value={projectedAvailableStock}
+    description="Operacional disponível"
+    className={
+      projectedAvailableStock === 0
+        ? "border-red-200 bg-red-50"
+        : projectedAvailableStock <=
+            LOW_STOCK_THRESHOLD
+          ? "border-amber-200 bg-amber-50"
+          : "border-emerald-200 bg-emerald-50"
+    }
+    valueClassName={
+      projectedAvailableStock === 0
+        ? "text-red-700"
+        : projectedAvailableStock <=
+            LOW_STOCK_THRESHOLD
+          ? "text-amber-700"
+          : "text-emerald-700"
+    }
+  />
 
-      <StockSummaryCard
-        label="Limite de alerta"
-        value={LOW_STOCK_THRESHOLD}
-        description="Regra fixa do sistema"
-        className="border-violet-200 bg-violet-50"
-        valueClassName="text-violet-700"
-      />
-    </div>
+  <StockSummaryCard
+    label="Danificadas"
+    value={
+      Number(
+        formData.damagedQuantity,
+      ) || 0
+    }
+    description="Fora do estoque operacional"
+    className={
+      Number(
+        formData.damagedQuantity,
+      ) > 0
+        ? "border-red-200 bg-red-50"
+        : "border-zinc-200 bg-zinc-50"
+    }
+    valueClassName={
+      Number(
+        formData.damagedQuantity,
+      ) > 0
+        ? "text-red-700"
+        : "text-zinc-700"
+    }
+  />
+
+  <StockSummaryCard
+    label="Limite de alerta"
+    value={LOW_STOCK_THRESHOLD}
+    description="Regra fixa do sistema"
+    className="border-violet-200 bg-violet-50"
+    valueClassName="text-violet-700"
+  />
+</div>
   </FormSection>
 ) : null}
 
@@ -1047,14 +1105,18 @@ function validateForm(): boolean {
           </FormField>
 
 <FormField
-  label="Estoque físico"
+  label="Estoque operacional"
   required
   error={errors.quantity}
 >
   <input
     type="number"
     name="quantity"
-    min={stockInfo?.inUse ?? 0}
+    min={
+      mode === "edit"
+        ? stockInfo?.inUse ?? 0
+        : 0
+    }
     max={999999}
     step={1}
     value={formData.quantity}
@@ -1064,15 +1126,54 @@ function validateForm(): boolean {
     )}
   />
 
-  {mode === "edit" && stockInfo ? (
-    <span className="mt-1.5 block text-xs text-zinc-500">
-      Existem {stockInfo.inUse}{" "}
+  {mode === "edit" &&
+  stockInfo ? (
+    <p className="mt-1.5 text-xs text-zinc-500">
+      Existem{" "}
+      <strong>
+        {stockInfo.inUse}
+      </strong>{" "}
       {stockInfo.inUse === 1
         ? "unidade alocada"
         : "unidades alocadas"}{" "}
       em projetos ativos.
-    </span>
-  ) : null}
+    </p>
+  ) : (
+    <p className="mt-1.5 text-xs text-zinc-500">
+      Unidades aptas para uso ou
+      alocação em projetos.
+    </p>
+  )}
+</FormField>
+
+<FormField
+  label="Unidades danificadas"
+  error={
+    errors.damagedQuantity
+  }
+>
+  <input
+    type="number"
+    name="damagedQuantity"
+    min={0}
+    max={999999}
+    step={1}
+    value={
+      formData.damagedQuantity
+    }
+    onChange={handleChange}
+    className={inputClass(
+      Boolean(
+        errors.damagedQuantity,
+      ),
+    )}
+  />
+
+  <p className="mt-1.5 text-xs text-zinc-500">
+    Unidades físicas que existem
+    no estoque, mas não estão
+    disponíveis para utilização.
+  </p>
 </FormField>
 
           <FormField 
@@ -1087,48 +1188,35 @@ function validateForm(): boolean {
               />
             </FormField>
 
-          <FormField label="Status">
-            <select
-              name="status"
-              value={formData.status}
-              onChange={handleChange}
-              className={inputClass(false)}
-            >
-              <option value="Disponível">
-                Disponível
-              </option>
-              <option value="Em uso">
-                Em uso
-              </option>
-              <option value="Indisponível">
-                Indisponível
-              </option>
-            </select>
-          </FormField>
+<FormField label="Status">
+  <select
+    name="status"
+    value={formData.status}
+    onChange={handleChange}
+    className={inputClass(false)}
+  >
+    <option value="Disponível">
+      Disponível
+    </option>
 
-          <FormField label="Condição">
-            <select
-              name="condition"
-              value={formData.condition}
-              onChange={handleChange}
-              className={inputClass(false)}
-            >
-              <option value="Novo">
-                Novo
-              </option>
-              <option value="Danificado">
-                Danificado
-              </option>
-            </select>
-          </FormField>
-        </div>
-      </FormSection>
+    <option value="Em uso">
+      Em uso
+    </option>
 
-      <FormSection
-        icon={ImagePlus}
-        title="Imagens"
-        description={`Adicione até ${MAX_IMAGES} imagens em PNG, JPG ou WEBP.`}
-      >
+    <option value="Indisponível">
+      Indisponível
+    </option>
+  </select>
+</FormField>
+
+</div>
+</FormSection>
+
+<FormSection
+  icon={ImagePlus}
+  title="Imagens"
+  description={`Adicione até ${MAX_IMAGES} imagens em PNG, JPG ou WEBP.`}
+>
         <input
           ref={fileInputRef}
           type="file"
@@ -1516,17 +1604,5 @@ function mapStatusToApi(
 
     case "Indisponível":
       return "UNAVAILABLE";
-  }
-}
-
-function mapConditionToApi(
-  condition: EquipmentCondition,
-): "NEW" | "GOOD" | "REGULAR" | "DAMAGED" {
-  switch (condition) {
-    case "Novo":
-      return "NEW";
-
-    case "Danificado":
-      return "DAMAGED";
   }
 }

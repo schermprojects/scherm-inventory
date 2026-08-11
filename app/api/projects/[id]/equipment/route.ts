@@ -95,6 +95,26 @@ export async function GET(
     );
   }
 
+  const sessionUser =
+  session.user as SessionUser;
+
+if (
+  !canManageEquipment(
+    sessionUser.role,
+  )
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para gerenciar equipamentos do projeto.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
+
   try {
     const { id: projectId } =
       await context.params;
@@ -359,25 +379,6 @@ export async function POST(
               "Este equipamento já está vinculado ao projeto. Edite a quantidade da reserva existente.",
             );
           }
-
-          const reserved =
-            await transaction.projectEquipment.aggregate(
-              {
-                where: {
-                  equipmentId,
-                },
-                _sum: {
-                  quantity: true,
-                },
-              },
-            );
-
-          const totalReserved =
-            reserved._sum.quantity ?? 0;
-
-          const available =
-            equipment.quantity -
-            totalReserved;
 
           return transaction.projectEquipment.create(
             {
