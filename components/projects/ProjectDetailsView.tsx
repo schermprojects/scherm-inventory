@@ -2226,7 +2226,7 @@ return (
         </div>
       </div>
 
-      {showEditModal ? (
+      {canEdit && showEditModal ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="presentation"
@@ -2713,7 +2713,7 @@ return (
         </div>
       ) : null}
 
-      {showCompleteModal ? (
+      {canEdit && showCompleteModal ? (
   <div
     className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
     role="presentation"
@@ -2866,7 +2866,7 @@ return (
   </div>
 ) : null}
 
-      {showDeleteModal ? (
+      {canDelete && showDeleteModal ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
           role="presentation"
@@ -3008,7 +3008,7 @@ return (
           </div>
         </div>
       ) : null}
-      {showReopenModal ? (
+      {canEdit && showReopenModal ? (
   <div
     className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
     role="presentation"
@@ -3134,7 +3134,7 @@ return (
   </div>
 ) : null}
 
-{showAllocatedEquipmentModal ? (
+{canEdit && showAllocatedEquipmentModal ? (
   <div
     className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
     role="presentation"
@@ -3537,11 +3537,11 @@ return (
 ) : null}
 
            <ProjectEquipmentModal
-        open={showEquipmentModal}
-        projectId={project.id}
-        onClose={closeEquipmentModal}
-        onUpdated={loadProject}
-      />
+  open={canEdit && showEquipmentModal}
+  projectId={project.id}
+  onClose={closeEquipmentModal}
+  onUpdated={loadProject}
+/>
     </div>
   </>
 );

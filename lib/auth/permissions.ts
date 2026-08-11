@@ -37,6 +37,7 @@ export const permissions = {
     view: [
       "ADMIN",
       "COMMERCIAL",
+      "VIEWER",
     ],
     create: [
       "ADMIN",

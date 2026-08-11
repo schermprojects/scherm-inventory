@@ -324,6 +324,21 @@ export async function GET(
   const sessionUser =
     session.user as SessionUser;
 
+    if (
+  !canManageClients(sessionUser.role)
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para acessar os detalhes deste cliente.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
+
   const { id } = await params;
 
   try {

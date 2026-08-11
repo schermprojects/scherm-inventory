@@ -175,11 +175,7 @@ function canManageClients(
 function canViewSensitiveData(
   role: UserRole | undefined,
 ): boolean {
-  return (
-    role === UserRole.ADMIN ||
-    role === UserRole.COMMERCIAL ||
-    role === UserRole.VIEWER
-  );
+  return canManageClients(role);
 }
 
 function serializeClient(

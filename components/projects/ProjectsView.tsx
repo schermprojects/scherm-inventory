@@ -1,9 +1,12 @@
 "use client";
+
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
+  ChevronDown,
   CircleAlert,
   ClipboardList,
   FolderKanban,
@@ -58,6 +61,7 @@ type ClientOption = {
   name: string;
   active: boolean;
 };
+
 type ProjectClient = {
   id: string;
   clientCode: string | null;
@@ -74,9 +78,11 @@ type ProjectItem = {
   clientId: string | null;
   clientName: string | null;
   client: ProjectClient | null;
+
   description: string | null;
   status: ProjectStatus;
   priority: ProjectPriority;
+
   startDate: string | null;
   dueDate: string | null;
   completedAt: string | null;
@@ -92,9 +98,6 @@ type ProjectItem = {
 
   equipmentItems: number;
 
-  /*
-   * Campo correto da nova regra.
-   */
   neededUnits?: number;
 
   /*
@@ -127,25 +130,23 @@ type ProjectSummary = {
 type EquipmentOption = {
   id: string;
   name: string;
+
   category?: string | null;
   manufacturer?: string | null;
   model?: string | null;
   serialNumber?: string | null;
 
-  /*
-   * Estoque físico.
-   */
   quantity: number;
-
   minimumStock?: number;
+
   status?: string;
   condition?: string;
   notes?: string | null;
 
-physicalStock?: number;
-inUse?: number;
-availableStock?: number;
-shortage?: number;
+  physicalStock?: number;
+  inUse?: number;
+  availableStock?: number;
+  shortage?: number;
 };
 
 type ProjectEquipmentFormItem = {
@@ -235,20 +236,14 @@ const initialSummary: ProjectSummary = {
   projectsWithShortage: 0,
 };
 
-const statusLabels: Record<
-  ProjectStatus,
-  string
-> = {
+const statusLabels: Record<ProjectStatus, string> = {
   PLANNING: "Planejamento",
   IN_PROGRESS: "Em andamento",
   COMPLETED: "Concluído",
   CANCELLED: "Cancelado",
 };
 
-const priorityLabels: Record<
-  ProjectPriority,
-  string
-> = {
+const priorityLabels: Record<ProjectPriority, string> = {
   LOW: "Baixa",
   NORMAL: "Normal",
   HIGH: "Alta",
@@ -306,9 +301,7 @@ function createInitialEquipmentFormState(): NewEquipmentFormState {
     manufacturer: "",
     model: "",
     serialNumber: "",
-    minimumStock: String(
-      DEFAULT_MINIMUM_STOCK,
-    ),
+    minimumStock: String(DEFAULT_MINIMUM_STOCK),
     notes: "",
   };
 }
@@ -380,19 +373,21 @@ function getProjectShortageUnits(
 function sortEquipmentOptions(
   options: EquipmentOption[],
 ): EquipmentOption[] {
-  return [...options].sort((first, second) =>
-    first.name.localeCompare(
-      second.name,
-      "pt-BR",
-      {
-        sensitivity: "base",
-      },
-    ),
+  return [...options].sort(
+    (first, second) =>
+      first.name.localeCompare(
+        second.name,
+        "pt-BR",
+        {
+          sensitivity: "base",
+        },
+      ),
   );
 }
 
 export function ProjectsView() {
-  const { data: session } = useSession();
+  const { data: session } =
+    useSession();
 
   const sessionUser =
     session?.user as
@@ -403,44 +398,65 @@ export function ProjectsView() {
 
   const canManageProjects =
     sessionUser?.role === "ADMIN" ||
-    sessionUser?.role === "COMMERCIAL";
+    sessionUser?.role ===
+      "COMMERCIAL";
 
   const [projects, setProjects] =
     useState<ProjectItem[]>([]);
 
-  // resto dos states...
+  const [
+    expandedProjectIds,
+    setExpandedProjectIds,
+  ] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
 
   const [users, setUsers] =
     useState<ProjectUser[]>([]);
-  
+
   const [clients, setClients] =
     useState<ClientOption[]>([]);
 
-  const [loadingClients, setLoadingClients] =
-    useState(true);
+  const [
+    loadingClients,
+    setLoadingClients,
+  ] = useState(true);
 
-  const [equipmentOptions, setEquipmentOptions] =
-    useState<EquipmentOption[]>([]);
+  const [
+    equipmentOptions,
+    setEquipmentOptions,
+  ] =
+    useState<EquipmentOption[]>(
+      [],
+    );
 
   const [summary, setSummary] =
-    useState<ProjectSummary>(initialSummary);
+    useState(initialSummary);
 
   const [search, setSearch] =
     useState("");
 
-  const [statusFilter, setStatusFilter] =
-    useState<"" | ProjectStatus>("");
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] = useState<
+    "" | ProjectStatus
+  >("");
 
   const [
     priorityFilter,
     setPriorityFilter,
-  ] = useState<"" | ProjectPriority>("");
+  ] = useState<
+    "" | ProjectPriority
+  >("");
 
   const [loading, setLoading] =
     useState(true);
 
-  const [loadingUsers, setLoadingUsers] =
-    useState(true);
+  const [
+    loadingUsers,
+    setLoadingUsers,
+  ] = useState(true);
 
   const [
     loadingEquipment,
@@ -455,8 +471,10 @@ export function ProjectsView() {
     setSavingEquipment,
   ] = useState(false);
 
-  const [modalOpen, setModalOpen] =
-    useState(false);
+  const [
+    modalOpen,
+    setModalOpen,
+  ] = useState(false);
 
   const [
     equipmentModalOpen,
@@ -464,19 +482,21 @@ export function ProjectsView() {
   ] = useState(false);
 
   const [
-  equipmentPickerOpen,
-  setEquipmentPickerOpen,
-] = useState(false);
+    equipmentPickerOpen,
+    setEquipmentPickerOpen,
+  ] = useState(false);
 
-const [
-  equipmentPickerSearch,
-  setEquipmentPickerSearch,
-] = useState("");
+  const [
+    equipmentPickerSearch,
+    setEquipmentPickerSearch,
+  ] = useState("");
 
-const [
-  equipmentPickerQuantities,
-  setEquipmentPickerQuantities,
-] = useState<Record<string, number>>({});
+  const [
+    equipmentPickerQuantities,
+    setEquipmentPickerQuantities,
+  ] = useState<
+    Record<string, number>
+  >({});
 
   const [form, setForm] =
     useState<ProjectFormState>(
@@ -486,55 +506,85 @@ const [
   const [
     newEquipmentForm,
     setNewEquipmentForm,
-  ] = useState<NewEquipmentFormState>(
-    createInitialEquipmentFormState,
-  );
+  ] =
+    useState<NewEquipmentFormState>(
+      createInitialEquipmentFormState,
+    );
 
   const [
     newEquipmentError,
     setNewEquipmentError,
-  ] = useState<string | null>(null);
+  ] = useState<string | null>(
+    null,
+  );
 
-  const [feedback, setFeedback] =
-    useState<FeedbackState | null>(null);
+  const [
+    feedback,
+    setFeedback,
+  ] =
+    useState<FeedbackState | null>(
+      null,
+    );
 
-  const queryString = useMemo(() => {
-    const params = new URLSearchParams();
+  function toggleProjectExpanded(
+    projectId: string,
+  ) {
+    setExpandedProjectIds(
+      (current) => {
+        const next =
+          new Set(current);
 
-    if (search.trim()) {
-      params.set(
-        "search",
-        search.trim(),
-      );
-    }
+        if (next.has(projectId)) {
+          next.delete(projectId);
+        } else {
+          next.add(projectId);
+        }
 
-    if (statusFilter) {
-      params.set(
-        "status",
-        statusFilter,
-      );
-    }
+        return next;
+      },
+    );
+  }
 
-    if (priorityFilter) {
-      params.set(
-        "priority",
-        priorityFilter,
-      );
-    }
+  const queryString =
+    useMemo(() => {
+      const params =
+        new URLSearchParams();
 
-    return params.toString();
-  }, [
-    priorityFilter,
-    search,
-    statusFilter,
-  ]);
+      if (search.trim()) {
+        params.set(
+          "search",
+          search.trim(),
+        );
+      }
+
+      if (statusFilter) {
+        params.set(
+          "status",
+          statusFilter,
+        );
+      }
+
+      if (priorityFilter) {
+        params.set(
+          "priority",
+          priorityFilter,
+        );
+      }
+
+      return params.toString();
+    }, [
+      priorityFilter,
+      search,
+      statusFilter,
+    ]);
 
   const salespersonOptions =
     useMemo(() => {
       return users.filter(
         (user) =>
           user.active &&
-          (user.role === "COMMERCIAL" ||
+          (user.role ===
+            "COMMERCIAL" ||
             user.role === "ADMIN"),
       );
     }, [users]);
@@ -546,16 +596,17 @@ const [
       );
     }, [users]);
 
-  const equipmentById = useMemo(() => {
-    return new Map(
-      equipmentOptions.map(
-        (equipment) => [
-          equipment.id,
-          equipment,
-        ],
-      ),
-    );
-  }, [equipmentOptions]);
+  const equipmentById =
+    useMemo(() => {
+      return new Map(
+        equipmentOptions.map(
+          (equipment) => [
+            equipment.id,
+            equipment,
+          ],
+        ),
+      );
+    }, [equipmentOptions]);
 
   const selectedEquipmentIds =
     useMemo(() => {
@@ -568,96 +619,107 @@ const [
           .filter(Boolean),
       );
     }, [form.equipment]);
-  
+
   const filteredEquipmentOptions =
-  useMemo(() => {
-    const normalizedSearch =
-      equipmentPickerSearch
-        .trim()
-        .toLocaleLowerCase(
-          "pt-BR",
-        );
-
-    if (!normalizedSearch) {
-      return equipmentOptions;
-    }
-
-    return equipmentOptions.filter(
-      (equipment) => {
-        const searchableText = [
-          equipment.name,
-          equipment.category,
-          equipment.manufacturer,
-          equipment.model,
-          equipment.serialNumber,
-        ]
-          .filter(Boolean)
-          .join(" ")
+    useMemo(() => {
+      const normalizedSearch =
+        equipmentPickerSearch
+          .trim()
           .toLocaleLowerCase(
             "pt-BR",
           );
 
-        return searchableText.includes(
-          normalizedSearch,
-        );
-      },
-    );
-  }, [
-    equipmentOptions,
-    equipmentPickerSearch,
-  ]);
+      if (!normalizedSearch) {
+        return equipmentOptions;
+      }
+
+      return equipmentOptions.filter(
+        (equipment) => {
+          const searchableText =
+            [
+              equipment.name,
+              equipment.category,
+              equipment.manufacturer,
+              equipment.model,
+              equipment.serialNumber,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLocaleLowerCase(
+                "pt-BR",
+              );
+
+          return searchableText.includes(
+            normalizedSearch,
+          );
+        },
+      );
+    }, [
+      equipmentOptions,
+      equipmentPickerSearch,
+    ]);
 
   const formEquipmentSummary =
     useMemo(() => {
       let totalNeeded = 0;
-      let totalPhysicalStock = 0;
+      let totalAvailable = 0;
       let totalShortage = 0;
       let itemsWithShortage = 0;
 
-for (const item of form.equipment) {
-  if (!item.equipmentId) {
-    continue;
-  }
+      for (const item of form.equipment) {
+        if (!item.equipmentId) {
+          continue;
+        }
 
-  const equipment =
-    equipmentById.get(item.equipmentId);
+        const equipment =
+          equipmentById.get(
+            item.equipmentId,
+          );
 
-  if (!equipment) {
-    continue;
-  }
+        if (!equipment) {
+          continue;
+        }
 
-  const quantity = Number(item.quantity);
+        const quantity =
+          Number(item.quantity);
 
-  const needed =
-    Number.isInteger(quantity) &&
-    quantity > 0
-      ? quantity
-      : 0;
+        const needed =
+          Number.isInteger(
+            quantity,
+          ) && quantity > 0
+            ? quantity
+            : 0;
 
-  const physicalStock =
-    getPhysicalStock(equipment);
+        const physicalStock =
+          getPhysicalStock(
+            equipment,
+          );
 
-  const availableStock =
-    equipment.availableStock ??
-    physicalStock;
+        const availableStock =
+          equipment.availableStock ??
+          physicalStock;
 
-  const shortage = Math.max(
-    needed - availableStock,
-    0,
-  );
+        const shortage =
+          Math.max(
+            needed -
+              availableStock,
+            0,
+          );
 
-  totalNeeded += needed;
-  totalPhysicalStock += availableStock;
-  totalShortage += shortage;
+        totalNeeded += needed;
+        totalAvailable +=
+          availableStock;
+        totalShortage +=
+          shortage;
 
-  if (shortage > 0) {
-    itemsWithShortage += 1;
-  }
-}
+        if (shortage > 0) {
+          itemsWithShortage += 1;
+        }
+      }
 
       return {
         totalNeeded,
-        totalPhysicalStock,
+        totalAvailable,
         totalShortage,
         itemsWithShortage,
       };
@@ -666,26 +728,62 @@ for (const item of form.equipment) {
       form.equipment,
     ]);
 
+  const activeProjects =
+    useMemo(
+      () =>
+        projects.filter(
+          (project) =>
+            project.status ===
+              "PLANNING" ||
+            project.status ===
+              "IN_PROGRESS",
+        ),
+      [projects],
+    );
+
+  const completedProjects =
+    useMemo(
+      () =>
+        projects.filter(
+          (project) =>
+            project.status ===
+            "COMPLETED",
+        ),
+      [projects],
+    );
+
+  const cancelledProjects =
+    useMemo(
+      () =>
+        projects.filter(
+          (project) =>
+            project.status ===
+            "CANCELLED",
+        ),
+      [projects],
+    );
+
   const loadProjects =
     useCallback(async () => {
       setLoading(true);
 
       try {
-        const response = await fetch(
-          `/api/projects${
-            queryString
-              ? `?${queryString}`
-              : ""
-          }`,
-          {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-              Accept:
-                "application/json",
+        const response =
+          await fetch(
+            `/api/projects${
+              queryString
+                ? `?${queryString}`
+                : ""
+            }`,
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
             },
-          },
-        );
+          );
 
         const data =
           (await response.json()) as ProjectsResponse;
@@ -695,13 +793,17 @@ for (const item of form.equipment) {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(data) ??
+            getApiMessage(
+              data,
+            ) ??
               "Não foi possível carregar os projetos.",
           );
         }
 
         setProjects(
-          Array.isArray(data.data)
+          Array.isArray(
+            data.data,
+          )
             ? data.data
             : [],
         );
@@ -712,12 +814,16 @@ for (const item of form.equipment) {
         );
       } catch (error) {
         setProjects([]);
-        setSummary(initialSummary);
+        setSummary(
+          initialSummary,
+        );
 
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(error),
+            getErrorMessage(
+              error,
+            ),
         });
       } finally {
         setLoading(false);
@@ -729,17 +835,18 @@ for (const item of form.equipment) {
       setLoadingUsers(true);
 
       try {
-        const response = await fetch(
-          "/api/users/options",
-          {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-              Accept:
-                "application/json",
+        const response =
+          await fetch(
+            "/api/users/options",
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
             },
-          },
-        );
+          );
 
         const data =
           (await response.json()) as UsersOptionsResponse;
@@ -749,20 +856,26 @@ for (const item of form.equipment) {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(data) ??
+            getApiMessage(
+              data,
+            ) ??
               "Não foi possível carregar os usuários.",
           );
         }
 
         const activeUsers =
-          Array.isArray(data.users)
+          Array.isArray(
+            data.users,
+          )
             ? data.users.filter(
                 (user) =>
                   user.active,
               )
             : [];
 
-        setUsers(activeUsers);
+        setUsers(
+          activeUsers,
+        );
       } catch (error) {
         console.error(
           "Erro ao carregar usuários do projeto:",
@@ -774,61 +887,84 @@ for (const item of form.equipment) {
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(error),
+            getErrorMessage(
+              error,
+            ),
         });
       } finally {
-        setLoadingUsers(false);
+        setLoadingUsers(
+          false,
+        );
       }
     }, []);
 
   const loadClients =
-  useCallback(async () => {
-    setLoadingClients(true);
+    useCallback(async () => {
+      setLoadingClients(true);
 
-    try {
-      const response =
-        await fetch("/api/clients");
+      try {
+        const response =
+          await fetch(
+            "/api/clients",
+            {
+              cache:
+                "no-store",
+            },
+          );
 
-      const data =
-        await response.json();
+        const data =
+          await response.json();
 
-      if (!response.ok) {
-        throw new Error(
-          data.message ??
-            "Erro ao carregar clientes.",
+        if (!response.ok) {
+          throw new Error(
+            data.message ??
+              "Erro ao carregar clientes.",
+          );
+        }
+
+        setClients(
+          (
+            data.data ?? []
+          ).filter(
+            (
+              client: ClientOption,
+            ) =>
+              client.active,
+          ),
+        );
+      } catch (error) {
+        console.error(
+          "Erro ao carregar clientes:",
+          error,
+        );
+
+        setClients([]);
+      } finally {
+        setLoadingClients(
+          false,
         );
       }
-
-      setClients(
-        (data.data ?? []).filter(
-          (client: ClientOption) =>
-            client.active,
-        ),
-      );
-    } catch (error) {
-      console.error(error);
-      setClients([]);
-    } finally {
-      setLoadingClients(false);
-    }
-  }, []);
+    }, []);
 
   const loadEquipment =
     useCallback(async () => {
-      setLoadingEquipment(true);
+      setLoadingEquipment(
+        true,
+      );
 
       try {
-        const response = await fetch(
-          "/api/equipment",
-          {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-              Accept:
-                "application/json",
+        const response =
+          await fetch(
+            "/api/equipment",
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
             },
-          },
-        );
+          );
 
         const data =
           (await response.json()) as EquipmentResponse;
@@ -838,13 +974,17 @@ for (const item of form.equipment) {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(data) ??
+            getApiMessage(
+              data,
+            ) ??
               "Não foi possível carregar os equipamentos.",
           );
         }
 
         const options =
-          Array.isArray(data.data)
+          Array.isArray(
+            data.data,
+          )
             ? data.data
             : Array.isArray(
                   data.equipment,
@@ -852,12 +992,10 @@ for (const item of form.equipment) {
               ? data.equipment
               : [];
 
-        /*
-         * Equipamentos com estoque zero permanecem
-         * disponíveis para seleção.
-         */
         setEquipmentOptions(
-          sortEquipmentOptions(options),
+          sortEquipmentOptions(
+            options,
+          ),
         );
       } catch (error) {
         console.error(
@@ -865,40 +1003,51 @@ for (const item of form.equipment) {
           error,
         );
 
-        setEquipmentOptions([]);
+        setEquipmentOptions(
+          [],
+        );
 
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(error),
+            getErrorMessage(
+              error,
+            ),
         });
       } finally {
-        setLoadingEquipment(false);
+        setLoadingEquipment(
+          false,
+        );
       }
     }, []);
 
-useEffect(() => {
-  if (!canManageProjects) {
-    return;
-  }
+  useEffect(() => {
+    if (
+      !canManageProjects
+    ) {
+      return;
+    }
 
-  void Promise.all([
-    loadUsers(),
-    loadClients(),
-    loadEquipment(),
+    void Promise.all([
+      loadUsers(),
+      loadClients(),
+      loadEquipment(),
+    ]);
+  }, [
+    canManageProjects,
+    loadClients,
+    loadEquipment,
+    loadUsers,
   ]);
-}, [
-  canManageProjects,
-  loadClients,
-  loadEquipment,
-  loadUsers,
-]);
 
   useEffect(() => {
     const timeout =
-      window.setTimeout(() => {
-        void loadProjects();
-      }, 250);
+      window.setTimeout(
+        () => {
+          void loadProjects();
+        },
+        250,
+      );
 
     return () => {
       window.clearTimeout(
@@ -907,52 +1056,85 @@ useEffect(() => {
     };
   }, [loadProjects]);
 
-function openCreateModal() {
-  if (!canManageProjects) {
-    return;
+  function openCreateModal() {
+    if (
+      !canManageProjects
+    ) {
+      return;
+    }
+
+    setForm(
+      createInitialFormState(),
+    );
+
+    setNewEquipmentForm(
+      createInitialEquipmentFormState(),
+    );
+
+    setNewEquipmentError(
+      null,
+    );
+
+    setEquipmentModalOpen(
+      false,
+    );
+
+    setFeedback(null);
+
+    setModalOpen(true);
+
+    setEquipmentPickerOpen(
+      false,
+    );
+
+    setEquipmentPickerSearch(
+      "",
+    );
+
+    if (
+      users.length === 0 &&
+      !loadingUsers
+    ) {
+      void loadUsers();
+    }
+
+    if (
+      equipmentOptions.length ===
+        0 &&
+      !loadingEquipment
+    ) {
+      void loadEquipment();
+    }
   }
-
-  setForm(
-    createInitialFormState(),
-  );
-
-  setNewEquipmentForm(
-    createInitialEquipmentFormState(),
-  );
-
-  setNewEquipmentError(null);
-  setEquipmentModalOpen(false);
-  setFeedback(null);
-  setModalOpen(true);
-  setEquipmentPickerOpen(false);
-  setEquipmentPickerSearch("");
-
-  if (
-    users.length === 0 &&
-    !loadingUsers
-  ) {
-    void loadUsers();
-  }
-
-  if (
-    equipmentOptions.length === 0 &&
-    !loadingEquipment
-  ) {
-    void loadEquipment();
-  }
-}
 
   function closeCreateModal() {
-if (equipmentPickerOpen) {
-  setEquipmentPickerOpen(false);
-  setEquipmentPickerSearch("");
+    if (
+      equipmentPickerOpen
+    ) {
+      setEquipmentPickerOpen(
+        false,
+      );
 
-  return;
-}
-    if (equipmentModalOpen) {
-      if (!savingEquipment) {
-        setEquipmentModalOpen(false);
-        setNewEquipmentError(null);
+      setEquipmentPickerSearch(
+        "",
+      );
+
+      return;
+    }
+
+    if (
+      equipmentModalOpen
+    ) {
+      if (
+        !savingEquipment
+      ) {
+        setEquipmentModalOpen(
+          false,
+        );
+
+        setNewEquipmentError(
+          null,
+        );
       }
 
       return;
@@ -963,8 +1145,13 @@ if (equipmentPickerOpen) {
     }
 
     setModalOpen(false);
-    setEquipmentModalOpen(false);
-    setNewEquipmentError(null);
+    setEquipmentModalOpen(
+      false,
+    );
+
+    setNewEquipmentError(
+      null,
+    );
 
     setForm(
       createInitialFormState(),
@@ -975,203 +1162,235 @@ if (equipmentPickerOpen) {
     );
   }
 
-function openCreateEquipmentModal() {
-  if (!canManageProjects) {
-    return;
-  }
-
-  setNewEquipmentForm(
-    createInitialEquipmentFormState(),
-  );
-
-  setNewEquipmentError(null);
-  setEquipmentModalOpen(true);
-}
-
-function closeCreateEquipmentModal() {
-  if (savingEquipment) {
-    return;
-  }
-
-  setEquipmentModalOpen(false);
-  setNewEquipmentError(null);
-
-  setNewEquipmentForm(
-    createInitialEquipmentFormState(),
-  );
-}
-
-function openEquipmentPicker() {
-  if (!canManageProjects) {
-    return;
-  }
-
-  setEquipmentPickerSearch("");
-
-  const quantities: Record<
-    string,
-    number
-  > = {};
-
-  for (const item of form.equipment) {
-    if (!item.equipmentId) {
-      continue;
+  function openCreateEquipmentModal() {
+    if (
+      !canManageProjects
+    ) {
+      return;
     }
 
-    const parsedQuantity =
-      Number(item.quantity);
+    setNewEquipmentForm(
+      createInitialEquipmentFormState(),
+    );
 
-    quantities[item.equipmentId] =
-      Number.isInteger(
-        parsedQuantity,
-      ) &&
-      parsedQuantity > 0
-        ? parsedQuantity
-        : 1;
+    setNewEquipmentError(
+      null,
+    );
+
+    setEquipmentModalOpen(
+      true,
+    );
   }
 
-  setEquipmentPickerQuantities(
-    quantities,
-  );
+  function closeCreateEquipmentModal() {
+    if (
+      savingEquipment
+    ) {
+      return;
+    }
 
-  setEquipmentPickerOpen(true);
-}
-
-function closeEquipmentPicker() {
-  setEquipmentPickerOpen(false);
-  setEquipmentPickerSearch("");
-}
-
-function getPickerQuantity(
-  equipmentId: string,
-): number {
-  return (
-    equipmentPickerQuantities[
-      equipmentId
-    ] ?? 1
-  );
-}
-
-function setPickerQuantity(
-  equipmentId: string,
-  quantity: number,
-) {
-  const normalizedQuantity =
-    Math.min(
-      Math.max(
-        Math.trunc(quantity),
-        1,
-      ),
-      MAX_EQUIPMENT_QUANTITY,
+    setEquipmentModalOpen(
+      false,
     );
 
-  setEquipmentPickerQuantities(
-    (current) => ({
-      ...current,
-      [equipmentId]:
-        normalizedQuantity,
-    }),
-  );
-}
-
-function changePickerQuantity(
-  equipmentId: string,
-  difference: number,
-) {
-  const currentQuantity =
-    getPickerQuantity(
-      equipmentId,
+    setNewEquipmentError(
+      null,
     );
 
-  setPickerQuantity(
-    equipmentId,
-    currentQuantity +
-      difference,
-  );
-}
+    setNewEquipmentForm(
+      createInitialEquipmentFormState(),
+    );
+  }
 
-function saveEquipmentFromPicker(
-  equipment: EquipmentOption,
-) {
-  const quantity =
-    getPickerQuantity(
-      equipment.id,
+  function openEquipmentPicker() {
+    if (
+      !canManageProjects
+    ) {
+      return;
+    }
+
+    setEquipmentPickerSearch(
+      "",
     );
 
-  setForm((current) => {
-    const existing =
-      current.equipment.find(
-        (item) =>
-          item.equipmentId ===
-          equipment.id,
+    const quantities: Record<
+      string,
+      number
+    > = {};
+
+    for (const item of form.equipment) {
+      if (
+        !item.equipmentId
+      ) {
+        continue;
+      }
+
+      const parsedQuantity =
+        Number(
+          item.quantity,
+        );
+
+      quantities[
+        item.equipmentId
+      ] =
+        Number.isInteger(
+          parsedQuantity,
+        ) &&
+        parsedQuantity > 0
+          ? parsedQuantity
+          : 1;
+    }
+
+    setEquipmentPickerQuantities(
+      quantities,
+    );
+
+    setEquipmentPickerOpen(
+      true,
+    );
+  }
+
+  function closeEquipmentPicker() {
+    setEquipmentPickerOpen(
+      false,
+    );
+
+    setEquipmentPickerSearch(
+      "",
+    );
+  }
+
+  function getPickerQuantity(
+    equipmentId: string,
+  ): number {
+    return (
+      equipmentPickerQuantities[
+        equipmentId
+      ] ?? 1
+    );
+  }
+
+  function setPickerQuantity(
+    equipmentId: string,
+    quantity: number,
+  ) {
+    const normalizedQuantity =
+      Math.min(
+        Math.max(
+          Math.trunc(
+            quantity,
+          ),
+          1,
+        ),
+        MAX_EQUIPMENT_QUANTITY,
       );
 
-    if (existing) {
+    setEquipmentPickerQuantities(
+      (current) => ({
+        ...current,
+        [equipmentId]:
+          normalizedQuantity,
+      }),
+    );
+  }
+
+  function changePickerQuantity(
+    equipmentId: string,
+    difference: number,
+  ) {
+    const currentQuantity =
+      getPickerQuantity(
+        equipmentId,
+      );
+
+    setPickerQuantity(
+      equipmentId,
+      currentQuantity +
+        difference,
+    );
+  }
+
+  function saveEquipmentFromPicker(
+    equipment: EquipmentOption,
+  ) {
+    const quantity =
+      getPickerQuantity(
+        equipment.id,
+      );
+
+    setForm((current) => {
+      const existing =
+        current.equipment.find(
+          (item) =>
+            item.equipmentId ===
+            equipment.id,
+        );
+
+      if (existing) {
+        return {
+          ...current,
+          equipment:
+            current.equipment.map(
+              (item) =>
+                item.rowId ===
+                existing.rowId
+                  ? {
+                      ...item,
+                      quantity:
+                        String(
+                          quantity,
+                        ),
+                    }
+                  : item,
+            ),
+        };
+      }
+
       return {
         ...current,
-
-        equipment:
-          current.equipment.map(
-            (item) =>
-              item.rowId ===
-              existing.rowId
-                ? {
-                    ...item,
-
-                    quantity:
-                      String(
-                        quantity,
-                      ),
-                  }
-                : item,
-          ),
+        equipment: [
+          ...current.equipment,
+          {
+            ...createEquipmentRow(
+              equipment.id,
+            ),
+            quantity:
+              String(
+                quantity,
+              ),
+          },
+        ],
       };
-    }
+    });
+  }
 
-    return {
+  function removeEquipmentFromPicker(
+    equipmentId: string,
+  ) {
+    setForm((current) => ({
       ...current,
+      equipment:
+        current.equipment.filter(
+          (item) =>
+            item.equipmentId !==
+            equipmentId,
+        ),
+    }));
 
-      equipment: [
-        ...current.equipment,
-        {
-          ...createEquipmentRow(
-            equipment.id,
-          ),
+    setEquipmentPickerQuantities(
+      (current) => {
+        const next = {
+          ...current,
+        };
 
-          quantity:
-            String(quantity),
-        },
-      ],
-    };
-  });
-}
+        delete next[
+          equipmentId
+        ];
 
-function removeEquipmentFromPicker(
-  equipmentId: string,
-) {
-  setForm((current) => ({
-    ...current,
-
-    equipment:
-      current.equipment.filter(
-        (item) =>
-          item.equipmentId !==
-          equipmentId,
-      ),
-  }));
-
-  setEquipmentPickerQuantities(
-    (current) => {
-      const next = {
-        ...current,
-      };
-
-      delete next[equipmentId];
-
-      return next;
-    },
-  );
-} 
+        return next;
+      },
+    );
+  }
 
   function updateForm<
     Field extends Exclude<
@@ -1206,37 +1425,15 @@ function removeEquipmentFromPicker(
     equipmentId: string,
   ) {
     setForm((current) => {
-      const existingIndex =
-        current.equipment.findIndex(
+      const existing =
+        current.equipment.find(
           (item) =>
             item.equipmentId ===
             equipmentId,
         );
 
-      if (existingIndex >= 0) {
+      if (existing) {
         return current;
-      }
-
-      const emptyIndex =
-        current.equipment.findIndex(
-          (item) =>
-            !item.equipmentId,
-        );
-
-      if (emptyIndex >= 0) {
-        return {
-          ...current,
-          equipment:
-            current.equipment.map(
-              (item, index) =>
-                index === emptyIndex
-                  ? {
-                      ...item,
-                      equipmentId,
-                    }
-                  : item,
-            ),
-        };
       }
 
       return {
@@ -1259,7 +1456,8 @@ function removeEquipmentFromPicker(
       equipment:
         current.equipment.filter(
           (item) =>
-            item.rowId !== rowId,
+            item.rowId !==
+            rowId,
         ),
     }));
   }
@@ -1278,7 +1476,8 @@ function removeEquipmentFromPicker(
       equipment:
         current.equipment.map(
           (item) =>
-            item.rowId === rowId
+            item.rowId ===
+            rowId
               ? {
                   ...item,
                   ...patch,
@@ -1306,13 +1505,18 @@ function removeEquipmentFromPicker(
 
     for (
       let index = 0;
-      index < form.equipment.length;
+      index <
+      form.equipment.length;
       index += 1
     ) {
       const item =
-        form.equipment[index];
+        form.equipment[
+          index
+        ];
 
-      if (!item.equipmentId) {
+      if (
+        !item.equipmentId
+      ) {
         setFeedback({
           type: "error",
           message: `Selecione o equipamento da linha ${
@@ -1337,12 +1541,15 @@ function removeEquipmentFromPicker(
         return null;
       }
 
-      const quantity = Number(
-        item.quantity,
-      );
+      const quantity =
+        Number(
+          item.quantity,
+        );
 
       if (
-        !Number.isInteger(quantity) ||
+        !Number.isInteger(
+          quantity,
+        ) ||
         quantity <= 0 ||
         quantity >
           MAX_EQUIPMENT_QUANTITY
@@ -1374,20 +1581,24 @@ function removeEquipmentFromPicker(
     return normalized;
   }
 
-async function handleCreateEquipment(
-  event: FormEvent,
-) {
-  event.preventDefault();
+  async function handleCreateEquipment(
+    event: FormEvent,
+  ) {
+    event.preventDefault();
 
-  if (!canManageProjects) {
+    if (
+      !canManageProjects
+    ) {
+      setNewEquipmentError(
+        "Você não possui permissão para cadastrar equipamentos.",
+      );
+
+      return;
+    }
+
     setNewEquipmentError(
-      "Você não possui permissão para cadastrar equipamentos.",
+      null,
     );
-
-    return;
-  }
-
-    setNewEquipmentError(null);
 
     const name =
       newEquipmentForm.name.trim();
@@ -1395,9 +1606,10 @@ async function handleCreateEquipment(
     const category =
       newEquipmentForm.category.trim();
 
-    const minimumStock = Number(
-      newEquipmentForm.minimumStock,
-    );
+    const minimumStock =
+      Number(
+        newEquipmentForm.minimumStock,
+      );
 
     if (!name) {
       setNewEquipmentError(
@@ -1416,7 +1628,9 @@ async function handleCreateEquipment(
     }
 
     if (
-      !Number.isInteger(minimumStock) ||
+      !Number.isInteger(
+        minimumStock,
+      ) ||
       minimumStock < 0 ||
       minimumStock >
         MAX_EQUIPMENT_QUANTITY
@@ -1428,60 +1642,63 @@ async function handleCreateEquipment(
       return;
     }
 
-    setSavingEquipment(true);
+    setSavingEquipment(
+      true,
+    );
 
     try {
-      const response = await fetch(
-        "/api/equipment",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-            Accept:
-              "application/json",
+      const response =
+        await fetch(
+          "/api/equipment",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              Accept:
+                "application/json",
+            },
+            body: JSON.stringify(
+              {
+                name,
+                category,
+
+                manufacturer:
+                  newEquipmentForm.manufacturer.trim() ||
+                  null,
+
+                model:
+                  newEquipmentForm.model.trim() ||
+                  null,
+
+                serialNumber:
+                  newEquipmentForm.serialNumber.trim() ||
+                  null,
+
+                minimumStock,
+
+                notes:
+                  newEquipmentForm.notes.trim() ||
+                  null,
+
+                quantity: 0,
+              },
+            ),
           },
-          body: JSON.stringify({
-            name,
-            category,
-
-            manufacturer:
-              newEquipmentForm.manufacturer.trim() ||
-              null,
-
-            model:
-              newEquipmentForm.model.trim() ||
-              null,
-
-            serialNumber:
-              newEquipmentForm.serialNumber.trim() ||
-              null,
-
-            minimumStock,
-
-            notes:
-              newEquipmentForm.notes.trim() ||
-              null,
-
-            /*
-             * Para COMMERCIAL a API sempre força 0.
-             * Para ADMIN o cadastro rápido também
-             * cria com estoque inicial zerado.
-             */
-            quantity: 0,
-          }),
-        },
-      );
+        );
 
       const data =
         (await response.json()) as CreateEquipmentResponse;
 
       if (
         !response.ok ||
-        data.success === false
+        data.success ===
+          false
       ) {
         throw new Error(
-          getApiMessage(data) ??
+          getApiMessage(
+            data,
+          ) ??
             "Não foi possível cadastrar o equipamento.",
         );
       }
@@ -1507,20 +1724,26 @@ async function handleCreateEquipment(
               : 0,
 
           physicalStock:
-            data.data.physicalStock ??
-            data.data.quantity ??
+            data.data
+              .physicalStock ??
+            data.data
+              .quantity ??
             0,
 
-inUse:
-  data.data.inUse ?? 0,
+          inUse:
+            data.data
+              .inUse ?? 0,
 
-availableStock:
-  data.data.availableStock ??
-  data.data.quantity ??
-  0,
+          availableStock:
+            data.data
+              .availableStock ??
+            data.data
+              .quantity ??
+            0,
 
           shortage:
-            data.data.shortage ?? 0,
+            data.data
+              .shortage ?? 0,
         };
 
       setEquipmentOptions(
@@ -1532,10 +1755,12 @@ availableStock:
                 createdEquipment.id,
             );
 
-          return sortEquipmentOptions([
-            ...withoutDuplicate,
-            createdEquipment,
-          ]);
+          return sortEquipmentOptions(
+            [
+              ...withoutDuplicate,
+              createdEquipment,
+            ],
+          );
         },
       );
 
@@ -1543,13 +1768,17 @@ availableStock:
         createdEquipment.id,
       );
 
-      setEquipmentModalOpen(false);
+      setEquipmentModalOpen(
+        false,
+      );
 
       setNewEquipmentForm(
         createInitialEquipmentFormState(),
       );
 
-      setNewEquipmentError(null);
+      setNewEquipmentError(
+        null,
+      );
 
       setFeedback({
         type: "success",
@@ -1559,27 +1788,34 @@ availableStock:
       });
     } catch (error) {
       setNewEquipmentError(
-        getErrorMessage(error),
+        getErrorMessage(
+          error,
+        ),
       );
     } finally {
-      setSavingEquipment(false);
+      setSavingEquipment(
+        false,
+      );
     }
   }
 
-async function handleCreateProject(
-  event: FormEvent,
-) {
-  event.preventDefault();
+  async function handleCreateProject(
+    event: FormEvent,
+  ) {
+    event.preventDefault();
 
-  if (!canManageProjects) {
-    setFeedback({
-      type: "error",
-      message:
-        "Você não possui permissão para cadastrar projetos.",
-    });
+    if (
+      !canManageProjects
+    ) {
+      setFeedback({
+        type: "error",
+        message:
+          "Você não possui permissão para cadastrar projetos.",
+      });
 
-    return;
-  }
+      return;
+    }
+
     setFeedback(null);
 
     const name =
@@ -1598,8 +1834,12 @@ async function handleCreateProject(
     if (
       form.startDate &&
       form.dueDate &&
-      new Date(form.dueDate) <
-        new Date(form.startDate)
+      new Date(
+        form.dueDate,
+      ) <
+        new Date(
+          form.startDate,
+        )
     ) {
       setFeedback({
         type: "error",
@@ -1614,7 +1854,8 @@ async function handleCreateProject(
       validateEquipmentRows();
 
     if (
-      normalizedEquipment === null
+      normalizedEquipment ===
+      null
     ) {
       return;
     }
@@ -1622,68 +1863,83 @@ async function handleCreateProject(
     setSaving(true);
 
     try {
-      const response = await fetch(
-        "/api/projects",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-            Accept:
-              "application/json",
+      const response =
+        await fetch(
+          "/api/projects",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              Accept:
+                "application/json",
+            },
+            body: JSON.stringify(
+              {
+                name,
+
+                clientId:
+                  form.clientId ||
+                  null,
+
+                description:
+                  form.description.trim() ||
+                  null,
+
+                salespersonId:
+                  form.salespersonId ||
+                  null,
+
+                responsibleId:
+                  form.responsibleId ||
+                  null,
+
+                status:
+                  form.status,
+
+                priority:
+                  form.priority,
+
+                startDate:
+                  form.startDate ||
+                  null,
+
+                dueDate:
+                  form.dueDate ||
+                  null,
+
+                equipment:
+                  normalizedEquipment,
+              },
+            ),
           },
-          body: JSON.stringify({
-            name,
-
-            clientId:
-  form.clientId || null,
-
-            description:
-              form.description.trim() ||
-              null,
-
-            salespersonId:
-              form.salespersonId ||
-              null,
-
-            responsibleId:
-              form.responsibleId ||
-              null,
-
-            status: form.status,
-            priority: form.priority,
-
-            startDate:
-              form.startDate || null,
-
-            dueDate:
-              form.dueDate || null,
-
-            /*
-             * Quantidade representa necessidade.
-             * Pode ser maior que o estoque físico.
-             */
-            equipment:
-              normalizedEquipment,
-          }),
-        },
-      );
+        );
 
       const data =
         (await response.json()) as CreateProjectResponse;
 
       if (
         !response.ok ||
-        data.success === false
+        data.success ===
+          false
       ) {
         throw new Error(
-          getApiMessage(data) ??
+          getApiMessage(
+            data,
+          ) ??
             "Não foi possível criar o projeto.",
         );
       }
 
       setModalOpen(false);
-      setEquipmentModalOpen(false);
+
+      setEquipmentModalOpen(
+        false,
+      );
+
+      setEquipmentPickerOpen(
+        false,
+      );
 
       setForm(
         createInitialFormState(),
@@ -1708,7 +1964,9 @@ async function handleCreateProject(
       setFeedback({
         type: "error",
         message:
-          getErrorMessage(error),
+          getErrorMessage(
+            error,
+          ),
       });
     } finally {
       setSaving(false);
@@ -1721,7 +1979,8 @@ async function handleCreateProject(
         <div
           className={[
             "flex items-start justify-between gap-4 rounded-xl border px-4 py-3 text-sm",
-            feedback.type === "success"
+            feedback.type ===
+            "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-700",
           ].join(" ")}
@@ -1733,7 +1992,9 @@ async function handleCreateProject(
           <button
             type="button"
             onClick={() =>
-              setFeedback(null)
+              setFeedback(
+                null,
+              )
             }
             aria-label="Fechar mensagem"
             className="shrink-0"
@@ -1746,7 +2007,9 @@ async function handleCreateProject(
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Projetos cadastrados"
-          value={summary.total}
+          value={
+            summary.total
+          }
           icon={
             <FolderKanban
               size={20}
@@ -1757,7 +2020,9 @@ async function handleCreateProject(
 
         <SummaryCard
           title="Em planejamento"
-          value={summary.planning}
+          value={
+            summary.planning
+          }
           icon={
             <ClipboardList
               size={20}
@@ -1768,7 +2033,9 @@ async function handleCreateProject(
 
         <SummaryCard
           title="Em andamento"
-          value={summary.inProgress}
+          value={
+            summary.inProgress
+          }
           icon={
             <CircleAlert
               size={20}
@@ -1813,9 +2080,13 @@ async function handleCreateProject(
               <input
                 type="search"
                 value={search}
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   setSearch(
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 placeholder="Buscar por projeto, cliente, vendedor ou responsável..."
@@ -1826,8 +2097,12 @@ async function handleCreateProject(
             </label>
 
             <select
-              value={statusFilter}
-              onChange={(event) =>
+              value={
+                statusFilter
+              }
+              onChange={(
+                event,
+              ) =>
                 setStatusFilter(
                   event.target
                     .value as
@@ -1839,7 +2114,8 @@ async function handleCreateProject(
               className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 xl:w-52"
             >
               <option value="">
-                Todos os status
+                Todos os
+                status
               </option>
 
               <option value="PLANNING">
@@ -1860,8 +2136,12 @@ async function handleCreateProject(
             </select>
 
             <select
-              value={priorityFilter}
-              onChange={(event) =>
+              value={
+                priorityFilter
+              }
+              onChange={(
+                event,
+              ) =>
                 setPriorityFilter(
                   event.target
                     .value as
@@ -1873,7 +2153,8 @@ async function handleCreateProject(
               className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 xl:w-44"
             >
               <option value="">
-                Todas as prioridades
+                Todas as
+                prioridades
               </option>
 
               <option value="LOW">
@@ -1894,23 +2175,30 @@ async function handleCreateProject(
             </select>
 
             {canManageProjects ? (
-  <button
-    type="button"
-    onClick={openCreateModal}
-    className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-  >
-    <Plus size={17} />
-    Novo projeto
-  </button>
-) : null}
+              <button
+                type="button"
+                onClick={
+                  openCreateModal
+                }
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+              >
+                <Plus
+                  size={17}
+                />
+
+                Novo projeto
+              </button>
+            ) : null}
           </div>
         </div>
 
         {loading ? (
           <div className="flex min-h-72 items-center justify-center text-sm text-zinc-500">
-            Carregando projetos...
+            Carregando
+            projetos...
           </div>
-        ) : projects.length === 0 ? (
+        ) : projects.length ===
+          0 ? (
           <div className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
               <FolderKanban
@@ -1924,38 +2212,180 @@ async function handleCreateProject(
             </h2>
 
             <p className="mt-1 max-w-md text-sm text-zinc-500">
-  {canManageProjects
-    ? "Ajuste os filtros ou cadastre o primeiro projeto do sistema."
-    : "Ajuste a pesquisa ou os filtros para localizar um projeto."}
-</p>
+              {canManageProjects
+                ? "Ajuste os filtros ou cadastre o primeiro projeto do sistema."
+                : "Ajuste a pesquisa ou os filtros para localizar um projeto."}
+            </p>
 
-{canManageProjects ? (
-  <button
-    type="button"
-    onClick={openCreateModal}
-    className="mt-4 inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-  >
-    <Plus size={17} />
-    Criar projeto
-  </button>
-) : null}
+            {canManageProjects ? (
+              <button
+                type="button"
+                onClick={
+                  openCreateModal
+                }
+                className="mt-4 inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+              >
+                <Plus
+                  size={17}
+                />
+
+                Criar projeto
+              </button>
+            ) : null}
           </div>
         ) : (
-          <div className="grid gap-4 p-4 md:grid-cols-2 2xl:grid-cols-3">
-            {projects.map(
-              (project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                />
-              ),
-            )}
+          <div>
+            {activeProjects.length >
+            0 ? (
+              <section className="p-4">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-zinc-900">
+                      Projetos
+                      ativos
+                    </h2>
+
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Projetos em
+                      planejamento ou
+                      em andamento.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-[#F57B00]">
+                    {
+                      activeProjects.length
+                    }
+                  </span>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                  {activeProjects.map(
+                    (
+                      project,
+                    ) => (
+                      <ProjectCard
+                        key={
+                          project.id
+                        }
+                        project={
+                          project
+                        }
+                        expanded={expandedProjectIds.has(
+                          project.id,
+                        )}
+                        onToggle={() =>
+                          toggleProjectExpanded(
+                            project.id,
+                          )
+                        }
+                      />
+                    ),
+                  )}
+                </div>
+              </section>
+            ) : null}
+
+            {cancelledProjects.length >
+            0 ? (
+              <section className="border-t border-zinc-200 p-4">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-zinc-900">
+                      Projetos
+                      cancelados
+                    </h2>
+
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Projetos que
+                      não estão mais
+                      em execução.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600">
+                    {
+                      cancelledProjects.length
+                    }
+                  </span>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                  {cancelledProjects.map(
+                    (
+                      project,
+                    ) => (
+                      <CompactProjectRow
+                        key={
+                          project.id
+                        }
+                        project={
+                          project
+                        }
+                      />
+                    ),
+                  )}
+                </div>
+              </section>
+            ) : null}
+
+            {completedProjects.length >
+            0 ? (
+              <section className="border-t border-zinc-200 bg-zinc-50/60 p-4">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2
+                        size={
+                          18
+                        }
+                        className="text-emerald-600"
+                      />
+
+                      <h2 className="text-sm font-bold text-zinc-900">
+                        Projetos
+                        concluídos
+                      </h2>
+                    </div>
+
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Histórico dos
+                      projetos
+                      finalizados.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    {
+                      completedProjects.length
+                    }
+                  </span>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                  {completedProjects.map(
+                    (
+                      project,
+                    ) => (
+                      <CompactProjectRow
+                        key={
+                          project.id
+                        }
+                        project={
+                          project
+                        }
+                      />
+                    ),
+                  )}
+                </div>
+              </section>
+            ) : null}
           </div>
         )}
       </section>
 
       {canManageProjects &&
-modalOpen ? (
+      modalOpen ? (
         <Modal
           title="Novo projeto"
           titleId="project-modal-title"
@@ -1974,7 +2404,8 @@ modalOpen ? (
             <section className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-zinc-900">
-                  Dados do projeto
+                  Dados do
+                  projeto
                 </h3>
 
                 <p className="mt-1 text-xs text-zinc-500">
@@ -1991,13 +2422,16 @@ modalOpen ? (
                 >
                   <input
                     type="text"
-                    value={form.name}
+                    value={
+                      form.name
+                    }
                     onChange={(
                       event,
                     ) =>
                       updateForm(
                         "name",
-                        event.target
+                        event
+                          .target
                           .value,
                       )
                     }
@@ -2005,42 +2439,65 @@ modalOpen ? (
                     className={
                       fieldClassName
                     }
-                    maxLength={150}
+                    maxLength={
+                      150
+                    }
                     autoFocus
                     required
                   />
                 </FormField>
 
                 <FormField label="Cliente">
-  <select
-    value={form.clientId}
-    onChange={(event) =>
-      updateForm(
-        "clientId",
-        event.target.value,
-      )
-    }
-    disabled={loadingClients}
-    className={fieldClassName}
-  >
-    <option value="">
-      {loadingClients
-        ? "Carregando clientes..."
-        : "Selecione um cliente"}
-    </option>
+                  <select
+                    value={
+                      form.clientId
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateForm(
+                        "clientId",
+                        event
+                          .target
+                          .value,
+                      )
+                    }
+                    disabled={
+                      loadingClients
+                    }
+                    className={
+                      fieldClassName
+                    }
+                  >
+                    <option value="">
+                      {loadingClients
+                        ? "Carregando clientes..."
+                        : "Selecione um cliente"}
+                    </option>
 
-    {clients.map((client) => (
-      <option
-        key={client.id}
-        value={client.id}
-      >
-        {client.clientCode} •{" "}
-        {client.shortName ??
-          client.name}
-      </option>
-    ))}
-  </select>
-</FormField>
+                    {clients.map(
+                      (
+                        client,
+                      ) => (
+                        <option
+                          key={
+                            client.id
+                          }
+                          value={
+                            client.id
+                          }
+                        >
+                          {
+                            client.clientCode
+                          }{" "}
+                          •{" "}
+                          {client.shortName ??
+                            client.name}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </FormField>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -2054,7 +2511,8 @@ modalOpen ? (
                     ) =>
                       updateForm(
                         "salespersonId",
-                        event.target
+                        event
+                          .target
                           .value,
                       )
                     }
@@ -2072,7 +2530,9 @@ modalOpen ? (
                     </option>
 
                     {salespersonOptions.map(
-                      (user) => (
+                      (
+                        user,
+                      ) => (
                         <option
                           key={
                             user.id
@@ -2100,7 +2560,8 @@ modalOpen ? (
                     ) =>
                       updateForm(
                         "responsibleId",
-                        event.target
+                        event
+                          .target
                           .value,
                       )
                     }
@@ -2118,7 +2579,9 @@ modalOpen ? (
                     </option>
 
                     {responsibleOptions.map(
-                      (user) => (
+                      (
+                        user,
+                      ) => (
                         <option
                           key={
                             user.id
@@ -2138,10 +2601,12 @@ modalOpen ? (
               </div>
 
               {!loadingUsers &&
-              users.length === 0 ? (
+              users.length ===
+                0 ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                  Nenhum usuário ativo
-                  foi encontrado para
+                  Nenhum usuário
+                  ativo foi
+                  encontrado para
                   seleção.
                 </div>
               ) : null}
@@ -2151,15 +2616,21 @@ modalOpen ? (
                   value={
                     form.description
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateForm(
                       "description",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
                   placeholder="Descreva o objetivo do projeto"
                   rows={3}
-                  maxLength={1000}
+                  maxLength={
+                    1000
+                  }
                   className={`${fieldClassName} h-auto resize-y py-2.5`}
                 />
               </FormField>
@@ -2170,13 +2641,16 @@ modalOpen ? (
                   required
                 >
                   <select
-                    value={form.status}
+                    value={
+                      form.status
+                    }
                     onChange={(
                       event,
                     ) =>
                       updateForm(
                         "status",
-                        event.target
+                        event
+                          .target
                           .value as ProjectStatus,
                       )
                     }
@@ -2196,7 +2670,6 @@ modalOpen ? (
                     <option value="COMPLETED">
                       Concluído
                     </option>
-                    
                   </select>
                 </FormField>
 
@@ -2213,7 +2686,8 @@ modalOpen ? (
                     ) =>
                       updateForm(
                         "priority",
-                        event.target
+                        event
+                          .target
                           .value as ProjectPriority,
                       )
                     }
@@ -2253,7 +2727,8 @@ modalOpen ? (
                     ) =>
                       updateForm(
                         "startDate",
-                        event.target
+                        event
+                          .target
                           .value,
                       )
                     }
@@ -2278,7 +2753,8 @@ modalOpen ? (
                     ) =>
                       updateForm(
                         "dueDate",
-                        event.target
+                        event
+                          .target
                           .value,
                       )
                     }
@@ -2299,30 +2775,37 @@ modalOpen ? (
                   </h3>
 
                   <p className="mt-1 text-xs leading-5 text-zinc-500">
-                    A quantidade informa
-                    a necessidade do
-                    projeto. É permitido
+                    A quantidade
+                    informa a
+                    necessidade do
+                    projeto. É
+                    permitido
                     solicitar mais
-                    unidades do que há
-                    em estoque.
+                    unidades do que
+                    há em estoque.
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button
-  type="button"
-  onClick={
-    openEquipmentPicker
-  }
-  disabled={
-    loadingEquipment
-  }
-  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
->
-  <Plus size={16} />
+                    type="button"
+                    onClick={
+                      openEquipmentPicker
+                    }
+                    disabled={
+                      loadingEquipment
+                    }
+                    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus
+                      size={
+                        16
+                      }
+                    />
 
-  Adicionar equipamento
-</button>
+                    Adicionar
+                    equipamento
+                  </button>
 
                   <button
                     type="button"
@@ -2331,8 +2814,14 @@ modalOpen ? (
                     }
                     className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
                   >
-                    <Wrench size={16} />
-                    Novo equipamento
+                    <Wrench
+                      size={
+                        16
+                      }
+                    />
+
+                    Novo
+                    equipamento
                   </button>
                 </div>
               </div>
@@ -2344,17 +2833,23 @@ modalOpen ? (
                 />
 
                 <span>
-                  Quando um equipamento
-                  ainda não existir,
-                  cadastre-o pelo botão{" "}
+                  Quando um
+                  equipamento
+                  ainda não
+                  existir,
+                  cadastre-o pelo
+                  botão{" "}
                   <strong>
-                    Novo equipamento
+                    Novo
+                    equipamento
                   </strong>
-                  . Ele será criado com
-                  estoque físico zerado
-                  e selecionado
-                  automaticamente neste
-                  projeto.
+                  . Ele será
+                  criado com
+                  estoque físico
+                  zerado e
+                  selecionado
+                  automaticamente
+                  neste projeto.
                 </span>
               </div>
 
@@ -2363,54 +2858,29 @@ modalOpen ? (
                   Carregando
                   equipamentos...
                 </div>
-              ) : equipmentOptions.length ===
-                  0 &&
-                form.equipment.length ===
-                  0 ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle
-                      size={19}
-                      className="mt-0.5 shrink-0 text-amber-600"
-                    />
-
-                    <div>
-                      <p className="text-sm font-semibold text-amber-800">
-                        Nenhum equipamento
-                        encontrado no
-                        inventário.
-                      </p>
-
-                      <p className="mt-1 text-xs leading-5 text-amber-700">
-                        Use o botão{" "}
-                        <strong>
-                          Novo equipamento
-                        </strong>{" "}
-                        para cadastrar o
-                        primeiro item sem
-                        sair do projeto.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : form.equipment.length ===
-                0 ? (
+              ) : form
+                  .equipment
+                  .length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center">
                   <Package
-                    size={24}
+                    size={
+                      24
+                    }
                     className="mx-auto text-zinc-400"
                   />
 
                   <p className="mt-2 text-sm font-medium text-zinc-700">
-                    Nenhum equipamento
+                    Nenhum
+                    equipamento
                     adicionado
                   </p>
 
                   <p className="mt-1 text-xs text-zinc-500">
-                    O projeto pode ser
-                    criado sem
+                    O projeto pode
+                    ser criado sem
                     equipamentos e
-                    atualizado depois.
+                    atualizado
+                    depois.
                   </p>
                 </div>
               ) : (
@@ -2425,19 +2895,20 @@ modalOpen ? (
                           item.equipmentId,
                         );
 
-const physicalStock =
-  equipment
-    ? getPhysicalStock(
-        equipment,
-      )
-    : 0;
+                      const physicalStock =
+                        equipment
+                          ? getPhysicalStock(
+                              equipment,
+                            )
+                          : 0;
 
-const inUse =
-  equipment?.inUse ?? 0;
+                      const inUse =
+                        equipment?.inUse ??
+                        0;
 
-const availableStock =
-  equipment?.availableStock ??
-  physicalStock;
+                      const availableStock =
+                        equipment?.availableStock ??
+                        physicalStock;
 
                       const needed =
                         Number(
@@ -2448,14 +2919,17 @@ const availableStock =
                         Number.isInteger(
                           needed,
                         ) &&
-                        needed > 0
+                        needed >
+                          0
                           ? needed
                           : 0;
 
-           const shortage = Math.max(
-  validNeeded - availableStock,
-  0,
-);
+                      const shortage =
+                        Math.max(
+                          validNeeded -
+                            availableStock,
+                          0,
+                        );
 
                       return (
                         <div
@@ -2467,7 +2941,8 @@ const availableStock =
                           <div className="flex items-center justify-between gap-3">
                             <p className="text-sm font-bold text-zinc-800">
                               Equipamento{" "}
-                              {index + 1}
+                              {index +
+                                1}
                             </p>
 
                             <button
@@ -2570,7 +3045,9 @@ const availableStock =
                                         {details
                                           ? ` — ${details}`
                                           : ""}
-                                        {" — Estoque: "}
+                                        {
+                                          " — Estoque: "
+                                        }
                                         {
                                           stock
                                         }
@@ -2587,11 +3064,15 @@ const availableStock =
                             >
                               <input
                                 type="number"
-                                min={1}
+                                min={
+                                  1
+                                }
                                 max={
                                   MAX_EQUIPMENT_QUANTITY
                                 }
-                                step={1}
+                                step={
+                                  1
+                                }
                                 value={
                                   item.quantity
                                 }
@@ -2619,47 +3100,39 @@ const availableStock =
                           {equipment ? (
                             <div className="mt-3 grid gap-2 sm:grid-cols-3">
                               <EquipmentMetric
-  label="Estoque físico"
-  value={physicalStock}
-  tone="zinc"
-/>
+                                label="Estoque físico"
+                                value={
+                                  physicalStock
+                                }
+                                tone="zinc"
+                              />
 
-<EquipmentMetric
-  label="Em uso"
-  value={inUse}
-  tone="blue"
-/>
+                              <EquipmentMetric
+                                label="Em uso"
+                                value={
+                                  inUse
+                                }
+                                tone="blue"
+                              />
 
-<EquipmentMetric
-  label="Disponível"
-  value={availableStock}
-  tone={
-    availableStock === 0
-      ? "red"
-      : "green"
-  }
-/>
-
-<EquipmentMetric
-  label="Necessário"
-  value={validNeeded}
-  tone="blue"
-/>
-
-<EquipmentMetric
-  label="Comprar / déficit"
-  value={shortage}
-  tone={
-    shortage > 0
-      ? "red"
-      : "green"
-  }
-/>
+                              <EquipmentMetric
+                                label="Disponível"
+                                value={
+                                  availableStock
+                                }
+                                tone={
+                                  availableStock ===
+                                  0
+                                    ? "red"
+                                    : "green"
+                                }
+                              />
                             </div>
                           ) : null}
 
                           {equipment &&
-                          shortage > 0 ? (
+                          shortage >
+                            0 ? (
                             <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                               <AlertTriangle
                                 size={
@@ -2669,20 +3142,28 @@ const availableStock =
                               />
 
                               <span>
-                                O projeto
-                                precisa de{" "}
+                                O
+                                projeto
+                                precisa
+                                de{" "}
                                 <strong>
                                   {
                                     validNeeded
                                   }
                                 </strong>{" "}
                                 unidade(s),
-                                mas existem apenas{" "}
-                                <strong> {availableStock}
+                                mas
+                                existem
+                                apenas{" "}
+                                <strong>
+                                  {
+                                    availableStock
+                                  }
                                 </strong>
                                 . Será
                                 registrado
-                                um déficit
+                                um
+                                déficit
                                 de{" "}
                                 <strong>
                                   {
@@ -2690,7 +3171,8 @@ const availableStock =
                                   }
                                 </strong>{" "}
                                 unidade(s)
-                                para compra.
+                                para
+                                compra.
                               </span>
                             </div>
                           ) : equipment ? (
@@ -2704,7 +3186,7 @@ const availableStock =
 
                               <span>
                                 O estoque
-                                físico
+                                disponível
                                 cobre esta
                                 necessidade.
                               </span>
@@ -2748,7 +3230,8 @@ const availableStock =
                 </div>
               )}
 
-              {form.equipment.length >
+              {form.equipment
+                .length >
               0 ? (
                 <div className="grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 sm:grid-cols-3">
                   <EquipmentMetric
@@ -2760,9 +3243,9 @@ const availableStock =
                   />
 
                   <EquipmentMetric
-                    label="Estoque dos itens"
+                    label="Disponível dos itens"
                     value={
-                      formEquipmentSummary.totalPhysicalStock
+                      formEquipmentSummary.totalAvailable
                     }
                     tone="zinc"
                   />
@@ -2789,7 +3272,9 @@ const availableStock =
                 onClick={
                   closeCreateModal
                 }
-                disabled={saving}
+                disabled={
+                  saving
+                }
                 className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancelar
@@ -2805,7 +3290,9 @@ const availableStock =
                 }
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Plus size={17} />
+                <Plus
+                  size={17}
+                />
 
                 {saving
                   ? "Salvando..."
@@ -2817,419 +3304,426 @@ const availableStock =
       ) : null}
 
       {canManageProjects &&
-modalOpen &&
-equipmentPickerOpen ? (
-  <Modal
-    title="Equipamentos do projeto"
-    titleId="project-equipment-picker-title"
-    onClose={
-      closeEquipmentPicker
-    }
-    maxWidthClass="max-w-5xl"
-    zIndexClass="z-[115]"
-  >
-    <div className="space-y-4">
-      <div className="relative">
-        <Search
-          size={17}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-        />
-
-        <input
-          type="search"
-          value={
-            equipmentPickerSearch
-          }
-          onChange={(event) =>
-            setEquipmentPickerSearch(
-              event.target.value,
-            )
-          }
-          placeholder="Buscar por nome, categoria, fabricante, modelo ou número de série"
-          autoFocus
-          className="h-11 w-full rounded-lg border border-zinc-200 bg-white pl-10 pr-10 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
-        />
-
-        {equipmentPickerSearch ? (
-          <button
-            type="button"
-            onClick={() =>
-              setEquipmentPickerSearch(
-                "",
-              )
-            }
-            aria-label="Limpar busca"
-            className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <X size={15} />
-          </button>
-        ) : null}
-      </div>
-
-      {filteredEquipmentOptions.length ===
-      0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-8 text-center">
-          <Package
-            size={28}
-            className="text-zinc-400"
-          />
-
-          <p className="mt-3 text-sm font-semibold text-zinc-800">
-            Nenhum equipamento
-            encontrado
-          </p>
-
-          <p className="mt-1 max-w-md text-xs leading-5 text-zinc-500">
-            Tente outra busca ou
-            cadastre um novo
-            equipamento.
-          </p>
-
-          <button
-            type="button"
-            onClick={() => {
-              closeEquipmentPicker();
-
-              openCreateEquipmentModal();
-            }}
-            className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100"
-          >
-            <Wrench size={15} />
-
-            Novo equipamento
-          </button>
-        </div>
-      ) : (
-        <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200">
-          {filteredEquipmentOptions.map(
-            (equipment) => {
-              const selectedItem =
-                form.equipment.find(
-                  (item) =>
-                    item.equipmentId ===
-                    equipment.id,
-                );
-
-              const isSelected =
-                Boolean(
-                  selectedItem,
-                );
-
-              const quantity =
-                getPickerQuantity(
-                  equipment.id,
-                );
-
-              const physicalStock =
-                getPhysicalStock(
-                  equipment,
-                );
-
-              const inUse =
-                equipment.inUse ??
-                0;
-
-              const availableStock =
-                equipment.availableStock ??
-                physicalStock;
-
-              const requestedShortage =
-                Math.max(
-                  quantity -
-                    availableStock,
-                  0,
-                );
-
-              const unavailable =
-                equipment.status ===
-                "UNAVAILABLE";
-
-              return (
-                <article
-                  key={
-                    equipment.id
-                  }
-                  className={[
-                    "p-4 transition sm:p-5",
-                    isSelected
-                      ? "bg-orange-50/40"
-                      : "bg-white",
-                  ].join(" ")}
-                >
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-bold text-zinc-900">
-                          {
-                            equipment.name
-                          }
-                        </h3>
-
-                        {isSelected ? (
-                          <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-700">
-                            Adicionado ao
-                            projeto
-                          </span>
-                        ) : null}
-
-                        {unavailable ? (
-                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
-                            Indisponível
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                            Disponível
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="mt-1 text-sm text-zinc-500">
-                        {
-                          equipment.category
-                        }
-
-                        {equipment.manufacturer
-                          ? ` · ${equipment.manufacturer}`
-                          : ""}
-
-                        {equipment.model
-                          ? ` ${equipment.model}`
-                          : ""}
-                      </p>
-
-                      {equipment.serialNumber ? (
-                        <p className="mt-1 text-xs text-zinc-400">
-                          Série:{" "}
-                          {
-                            equipment.serialNumber
-                          }
-                        </p>
-                      ) : null}
-
-                      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-                        <span className="text-zinc-500">
-                          Estoque:{" "}
-                          <strong className="text-zinc-800">
-                            {
-                              physicalStock
-                            }
-                          </strong>
-                        </span>
-
-                        <span className="text-blue-600">
-                          Em uso:{" "}
-                          <strong>
-                            {inUse}
-                          </strong>
-                        </span>
-
-                        <span className="text-emerald-600">
-                          Disponível:{" "}
-                          <strong>
-                            {
-                              availableStock
-                            }
-                          </strong>
-                        </span>
-
-                        {requestedShortage >
-                        0 ? (
-                          <span className="font-semibold text-red-600">
-                            Déficit:{" "}
-                            {
-                              requestedShortage
-                            }
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-end gap-2">
-                      <div>
-                        <label
-                          htmlFor={`new-project-equipment-${equipment.id}`}
-                          className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
-                        >
-                          Quantidade
-                        </label>
-
-                        <div className="flex h-10 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              changePickerQuantity(
-                                equipment.id,
-                                -1,
-                              )
-                            }
-                            disabled={
-                              quantity <=
-                              1
-                            }
-                            aria-label={`Diminuir quantidade de ${equipment.name}`}
-                            className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            −
-                          </button>
-
-                          <input
-                            id={`new-project-equipment-${equipment.id}`}
-                            type="number"
-                            min={1}
-                            max={
-                              MAX_EQUIPMENT_QUANTITY
-                            }
-                            step={1}
-                            value={
-                              quantity
-                            }
-                            onChange={(
-                              event,
-                            ) => {
-                              const value =
-                                Number(
-                                  event
-                                    .target
-                                    .value,
-                                );
-
-                              if (
-                                !Number.isFinite(
-                                  value,
-                                )
-                              ) {
-                                return;
-                              }
-
-                              setPickerQuantity(
-                                equipment.id,
-                                value,
-                              );
-                            }}
-                            className="w-16 border-x border-zinc-200 text-center text-sm font-bold text-zinc-900 outline-none"
-                          />
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              changePickerQuantity(
-                                equipment.id,
-                                1,
-                              )
-                            }
-                            aria-label={`Aumentar quantidade de ${equipment.name}`}
-                            className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          saveEquipmentFromPicker(
-                            equipment,
-                          )
-                        }
-                        disabled={
-                          unavailable
-                        }
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Plus
-                          size={16}
-                        />
-
-                        {isSelected
-                          ? "Atualizar"
-                          : "Adicionar"}
-                      </button>
-
-                      {isSelected ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removeEquipmentFromPicker(
-                              equipment.id,
-                            )
-                          }
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                        >
-                          <Trash2
-                            size={15}
-                          />
-
-                          Remover
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {!unavailable &&
-                  requestedShortage >
-                    0 ? (
-                    <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                      <AlertTriangle
-                        size={15}
-                        className="mt-0.5 shrink-0"
-                      />
-
-                      <span>
-                        É permitido
-                        solicitar{" "}
-                        <strong>
-                          {quantity}
-                        </strong>{" "}
-                        unidade(s). O
-                        déficit de{" "}
-                        <strong>
-                          {
-                            requestedShortage
-                          }
-                        </strong>{" "}
-                        unidade(s) será
-                        considerado para
-                        compra.
-                      </span>
-                    </div>
-                  ) : null}
-                </article>
-              );
-            },
-          )}
-        </div>
-      )}
-
-      <footer className="flex flex-col gap-3 border-t border-zinc-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-zinc-500">
-          {
-            form.equipment.length
-          }{" "}
-          {form.equipment.length ===
-          1
-            ? "equipamento selecionado"
-            : "equipamentos selecionados"}
-        </p>
-
-        <button
-          type="button"
-          onClick={
+      modalOpen &&
+      equipmentPickerOpen ? (
+        <Modal
+          title="Equipamentos do projeto"
+          titleId="project-equipment-picker-title"
+          onClose={
             closeEquipmentPicker
           }
-          className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
+          maxWidthClass="max-w-5xl"
+          zIndexClass="z-[115]"
         >
-          Concluir
-        </button>
-      </footer>
-    </div>
-  </Modal>
-) : null}
+          <div className="space-y-4">
+            <div className="relative">
+              <Search
+                size={17}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+              />
 
-{canManageProjects &&
-modalOpen &&
-equipmentModalOpen ? (
-  <Modal
+              <input
+                type="search"
+                value={
+                  equipmentPickerSearch
+                }
+                onChange={(
+                  event,
+                ) =>
+                  setEquipmentPickerSearch(
+                    event
+                      .target
+                      .value,
+                  )
+                }
+                placeholder="Buscar por nome, categoria, fabricante, modelo ou número de série"
+                autoFocus
+                className="h-11 w-full rounded-lg border border-zinc-200 bg-white pl-10 pr-10 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
+              />
+
+              {equipmentPickerSearch ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEquipmentPickerSearch(
+                      "",
+                    )
+                  }
+                  aria-label="Limpar busca"
+                  className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                >
+                  <X
+                    size={
+                      15
+                    }
+                  />
+                </button>
+              ) : null}
+            </div>
+
+            {filteredEquipmentOptions.length ===
+            0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-8 text-center">
+                <Package
+                  size={28}
+                  className="text-zinc-400"
+                />
+
+                <p className="mt-3 text-sm font-semibold text-zinc-800">
+                  Nenhum
+                  equipamento
+                  encontrado
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeEquipmentPicker();
+                    openCreateEquipmentModal();
+                  }}
+                  className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100"
+                >
+                  <Wrench
+                    size={
+                      15
+                    }
+                  />
+
+                  Novo
+                  equipamento
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200">
+                {filteredEquipmentOptions.map(
+                  (
+                    equipment,
+                  ) => {
+                    const isSelected =
+                      form.equipment.some(
+                        (
+                          item,
+                        ) =>
+                          item.equipmentId ===
+                          equipment.id,
+                      );
+
+                    const quantity =
+                      getPickerQuantity(
+                        equipment.id,
+                      );
+
+                    const physicalStock =
+                      getPhysicalStock(
+                        equipment,
+                      );
+
+                    const inUse =
+                      equipment.inUse ??
+                      0;
+
+                    const availableStock =
+                      equipment.availableStock ??
+                      physicalStock;
+
+                    const requestedShortage =
+                      Math.max(
+                        quantity -
+                          availableStock,
+                        0,
+                      );
+
+                    const unavailable =
+                      equipment.status ===
+                      "UNAVAILABLE";
+
+                    return (
+                      <article
+                        key={
+                          equipment.id
+                        }
+                        className={[
+                          "p-4 transition sm:p-5",
+                          isSelected
+                            ? "bg-orange-50/40"
+                            : "bg-white",
+                        ].join(
+                          " ",
+                        )}
+                      >
+                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-bold text-zinc-900">
+                                {
+                                  equipment.name
+                                }
+                              </h3>
+
+                              {isSelected ? (
+                                <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-700">
+                                  Adicionado
+                                  ao
+                                  projeto
+                                </span>
+                              ) : null}
+
+                              {unavailable ? (
+                                <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                                  Indisponível
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                  Disponível
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="mt-1 text-sm text-zinc-500">
+                              {
+                                equipment.category
+                              }
+
+                              {equipment.manufacturer
+                                ? ` · ${equipment.manufacturer}`
+                                : ""}
+
+                              {equipment.model
+                                ? ` ${equipment.model}`
+                                : ""}
+                            </p>
+
+                            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
+                              <span className="text-zinc-500">
+                                Estoque:{" "}
+                                <strong className="text-zinc-800">
+                                  {
+                                    physicalStock
+                                  }
+                                </strong>
+                              </span>
+
+                              <span className="text-blue-600">
+                                Em
+                                uso:{" "}
+                                <strong>
+                                  {
+                                    inUse
+                                  }
+                                </strong>
+                              </span>
+
+                              <span className="text-emerald-600">
+                                Disponível:{" "}
+                                <strong>
+                                  {
+                                    availableStock
+                                  }
+                                </strong>
+                              </span>
+
+                              {requestedShortage >
+                              0 ? (
+                                <span className="font-semibold text-red-600">
+                                  Déficit:{" "}
+                                  {
+                                    requestedShortage
+                                  }
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div>
+                              <label
+                                htmlFor={`new-project-equipment-${equipment.id}`}
+                                className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                              >
+                                Quantidade
+                              </label>
+
+                              <div className="flex h-10 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    changePickerQuantity(
+                                      equipment.id,
+                                      -1,
+                                    )
+                                  }
+                                  disabled={
+                                    quantity <=
+                                    1
+                                  }
+                                  className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
+                                >
+                                  −
+                                </button>
+
+                                <input
+                                  id={`new-project-equipment-${equipment.id}`}
+                                  type="number"
+                                  min={
+                                    1
+                                  }
+                                  max={
+                                    MAX_EQUIPMENT_QUANTITY
+                                  }
+                                  value={
+                                    quantity
+                                  }
+                                  onChange={(
+                                    event,
+                                  ) =>
+                                    setPickerQuantity(
+                                      equipment.id,
+                                      Number(
+                                        event
+                                          .target
+                                          .value,
+                                      ),
+                                    )
+                                  }
+                                  className="w-16 border-x border-zinc-200 text-center text-sm font-bold outline-none"
+                                />
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    changePickerQuantity(
+                                      equipment.id,
+                                      1,
+                                    )
+                                  }
+                                  className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                saveEquipmentFromPicker(
+                                  equipment,
+                                )
+                              }
+                              disabled={
+                                unavailable
+                              }
+                              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:opacity-50"
+                            >
+                              <Plus
+                                size={
+                                  16
+                                }
+                              />
+
+                              {isSelected
+                                ? "Atualizar"
+                                : "Adicionar"}
+                            </button>
+
+                            {isSelected ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeEquipmentFromPicker(
+                                    equipment.id,
+                                  )
+                                }
+                                className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                              >
+                                <Trash2
+                                  size={
+                                    15
+                                  }
+                                />
+
+                                Remover
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {!unavailable &&
+                        requestedShortage >
+                          0 ? (
+                          <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                            <AlertTriangle
+                              size={
+                                15
+                              }
+                              className="mt-0.5 shrink-0"
+                            />
+
+                            <span>
+                              É
+                              permitido
+                              solicitar{" "}
+                              <strong>
+                                {
+                                  quantity
+                                }
+                              </strong>{" "}
+                              unidade(s).
+                              O déficit
+                              de{" "}
+                              <strong>
+                                {
+                                  requestedShortage
+                                }
+                              </strong>{" "}
+                              unidade(s)
+                              será
+                              considerado
+                              para
+                              compra.
+                            </span>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  },
+                )}
+              </div>
+            )}
+
+            <footer className="flex flex-col gap-3 border-t border-zinc-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-zinc-500">
+                {
+                  form
+                    .equipment
+                    .length
+                }{" "}
+                {form
+                  .equipment
+                  .length ===
+                1
+                  ? "equipamento selecionado"
+                  : "equipamentos selecionados"}
+              </p>
+
+              <button
+                type="button"
+                onClick={
+                  closeEquipmentPicker
+                }
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Concluir
+              </button>
+            </footer>
+          </div>
+        </Modal>
+      ) : null}
+
+      {canManageProjects &&
+      modalOpen &&
+      equipmentModalOpen ? (
+        <Modal
           title="Novo equipamento"
           titleId="quick-equipment-modal-title"
           onClose={
@@ -3245,24 +3739,29 @@ equipmentModalOpen ? (
             className="space-y-5"
           >
             <div className="flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#F57B00] shadow-sm">
-                <Package size={18} />
-              </div>
+              <Package
+                size={20}
+                className="mt-0.5 shrink-0 text-[#F57B00]"
+              />
 
               <div>
                 <p className="text-sm font-semibold text-orange-900">
-                  Cadastro rápido para
-                  o projeto
+                  Cadastro
+                  rápido para o
+                  projeto
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-orange-700">
-                  O equipamento será
-                  criado com estoque
-                  físico inicial igual a{" "}
-                  <strong>0</strong> e
-                  selecionado
-                  automaticamente no
-                  projeto.
+                  O equipamento
+                  será criado com
+                  estoque físico
+                  inicial igual a{" "}
+                  <strong>
+                    0
+                  </strong>{" "}
+                  e selecionado
+                  automaticamente
+                  no projeto.
                 </p>
               </div>
             </div>
@@ -3275,7 +3774,9 @@ equipmentModalOpen ? (
                 />
 
                 <span>
-                  {newEquipmentError}
+                  {
+                    newEquipmentError
+                  }
                 </span>
               </div>
             ) : null}
@@ -3290,14 +3791,19 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.name
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "name",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
-                  placeholder="Ex.: Rack 42U"
-                  maxLength={150}
+                  maxLength={
+                    150
+                  }
                   className={
                     fieldClassName
                   }
@@ -3315,14 +3821,19 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.category
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "category",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
-                  placeholder="Ex.: Infraestrutura"
-                  maxLength={100}
+                  maxLength={
+                    100
+                  }
                   className={
                     fieldClassName
                   }
@@ -3338,14 +3849,19 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.manufacturer
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "manufacturer",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
-                  placeholder="Ex.: Furukawa"
-                  maxLength={120}
+                  maxLength={
+                    120
+                  }
                   className={
                     fieldClassName
                   }
@@ -3358,14 +3874,19 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.model
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "model",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
-                  placeholder="Ex.: Rack fechado 42U"
-                  maxLength={120}
+                  maxLength={
+                    120
+                  }
                   className={
                     fieldClassName
                   }
@@ -3380,14 +3901,19 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.serialNumber
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "serialNumber",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
-                  placeholder="Opcional"
-                  maxLength={150}
+                  maxLength={
+                    150
+                  }
                   className={
                     fieldClassName
                   }
@@ -3405,10 +3931,14 @@ equipmentModalOpen ? (
                   value={
                     newEquipmentForm.minimumStock
                   }
-                  onChange={(event) =>
+                  onChange={(
+                    event,
+                  ) =>
                     updateNewEquipmentForm(
                       "minimumStock",
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
                   className={
@@ -3424,15 +3954,20 @@ equipmentModalOpen ? (
                 value={
                   newEquipmentForm.notes
                 }
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   updateNewEquipmentForm(
                     "notes",
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
-                placeholder="Informações adicionais sobre o equipamento"
                 rows={3}
-                maxLength={1000}
+                maxLength={
+                  1000
+                }
                 className={`${fieldClassName} h-auto resize-y py-2.5`}
               />
             </FormField>
@@ -3446,11 +3981,13 @@ equipmentModalOpen ? (
 
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
                 <p className="text-[11px] font-medium opacity-75">
-                  Situação inicial
+                  Situação
+                  inicial
                 </p>
 
                 <p className="mt-0.5 text-sm font-bold">
-                  Sem estoque físico
+                  Sem estoque
+                  físico
                 </p>
               </div>
             </div>
@@ -3464,7 +4001,7 @@ equipmentModalOpen ? (
                 disabled={
                   savingEquipment
                 }
-                className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -3474,9 +4011,11 @@ equipmentModalOpen ? (
                 disabled={
                   savingEquipment
                 }
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:opacity-60"
               >
-                <Plus size={17} />
+                <Plus
+                  size={17}
+                />
 
                 {savingEquipment
                   ? "Cadastrando..."
@@ -3492,147 +4031,344 @@ equipmentModalOpen ? (
 
 function ProjectCard({
   project,
+  expanded,
+  onToggle,
 }: {
   project: ProjectItem;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   const neededUnits =
-    getProjectNeededUnits(project);
+    getProjectNeededUnits(
+      project,
+    );
 
   const shortageUnits =
-    getProjectShortageUnits(project);
+    getProjectShortageUnits(
+      project,
+    );
 
   const hasShortage =
     project.hasShortage ??
     shortageUnits > 0;
 
+  const clientName =
+    project.client
+      ?.shortName ??
+    project.client?.name ??
+    project.clientName ??
+    "Cliente não informado";
+
+  return (
+    <article
+      className={[
+        "overflow-hidden rounded-xl border bg-white transition-shadow",
+        hasShortage
+          ? "border-amber-200"
+          : "border-zinc-200",
+        expanded
+          ? "shadow-sm"
+          : "",
+      ].join(" ")}
+    >
+      <div className="flex items-start gap-3 p-4">
+        <Link
+          href={`/projects/${project.id}`}
+          className="min-w-0 flex-1 rounded-lg outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-orange-200"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              status={
+                project.status
+              }
+            />
+
+            <PriorityBadge
+              priority={
+                project.priority
+              }
+            />
+
+            {hasShortage ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                <AlertTriangle
+                  size={13}
+                />
+
+                Déficit:{" "}
+                {
+                  shortageUnits
+                }
+              </span>
+            ) : null}
+          </div>
+
+          <h2 className="mt-3 truncate text-base font-bold text-zinc-900">
+            {project.name}
+          </h2>
+
+          <p className="mt-1 truncate text-sm text-zinc-500">
+            {project.client
+              ?.clientCode
+              ? `${project.client.clientCode} · `
+              : ""}
+
+            {clientName}
+          </p>
+        </Link>
+
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={
+            expanded
+          }
+          aria-label={
+            expanded
+              ? `Recolher projeto ${project.name}`
+              : `Expandir projeto ${project.name}`
+          }
+          title={
+            expanded
+              ? "Recolher"
+              : "Expandir"
+          }
+          className={[
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition",
+            expanded
+              ? "border-orange-200 bg-orange-50 text-[#F57B00]"
+              : "border-zinc-200 bg-white text-zinc-500 hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]",
+          ].join(" ")}
+        >
+          <ChevronDown
+            size={18}
+            className={[
+              "transition-transform duration-200",
+              expanded
+                ? "rotate-180"
+                : "",
+            ].join(" ")}
+          />
+        </button>
+      </div>
+
+      {expanded ? (
+        <div className="border-t border-zinc-100">
+          <Link
+            href={`/projects/${project.id}`}
+            className="block px-4 pb-4 pt-3 transition hover:bg-zinc-50/70"
+          >
+            {project.description ? (
+              <p className="line-clamp-2 text-sm leading-6 text-zinc-500">
+                {
+                  project.description
+                }
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-400">
+                Sem descrição
+                informada.
+              </p>
+            )}
+
+            {hasShortage ? (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                <AlertTriangle
+                  size={15}
+                  className="shrink-0"
+                />
+
+                Faltam{" "}
+                {
+                  shortageUnits
+                }{" "}
+                unidade(s) para
+                atender este
+                projeto.
+              </div>
+            ) : null}
+
+            <div className="mt-4 grid gap-2 text-sm text-zinc-600">
+              <div className="flex items-center gap-2">
+                <UserRound
+                  size={16}
+                  className="shrink-0 text-zinc-400"
+                />
+
+                <span className="truncate">
+                  Vendedor:{" "}
+                  {project
+                    .salesperson
+                    ?.name ??
+                    "Não informado"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <UserRound
+                  size={16}
+                  className="shrink-0 text-zinc-400"
+                />
+
+                <span className="truncate">
+                  Responsável:{" "}
+                  {project
+                    .responsible
+                    ?.name ??
+                    "Não informado"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <CalendarDays
+                  size={16}
+                  className="shrink-0 text-zinc-400"
+                />
+
+                <span>
+                  Prazo:{" "}
+                  {formatDate(
+                    project.dueDate,
+                  )}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Package
+                  size={16}
+                  className="shrink-0 text-zinc-400"
+                />
+
+                <span>
+                  {
+                    project.equipmentItems
+                  }{" "}
+                  item(ns) ·{" "}
+                  {
+                    neededUnits
+                  }{" "}
+                  unidade(s)
+                  necessária(s)
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-100 pt-3">
+              <p className="text-xs text-zinc-400">
+                Criado em{" "}
+                {formatDate(
+                  project.createdAt,
+                )}
+              </p>
+
+              <span className="text-xs font-semibold text-[#F57B00]">
+                Abrir projeto →
+              </span>
+            </div>
+          </Link>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CompactProjectRow({
+  project,
+}: {
+  project: ProjectItem;
+}) {
+  const neededUnits =
+    getProjectNeededUnits(
+      project,
+    );
+
+  const clientName =
+    project.client
+      ?.shortName ??
+    project.client?.name ??
+    project.clientName ??
+    "Cliente não informado";
+
   return (
     <Link
       href={`/projects/${project.id}`}
-      className={[
-        "group flex min-h-72 flex-col rounded-xl border bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md",
-        hasShortage
-          ? "border-amber-200 hover:border-amber-300"
-          : "border-zinc-200 hover:border-orange-200",
-      ].join(" ")}
+      className="group block border-b border-zinc-100 px-4 py-3 transition last:border-b-0 hover:bg-zinc-50"
     >
-      <div className="flex items-start justify-between gap-3">
-        <StatusBadge
-          status={project.status}
-        />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <StatusBadge
+              status={
+                project.status
+              }
+            />
 
-        <PriorityBadge
-          priority={
-            project.priority
-          }
-        />
-      </div>
+            <PriorityBadge
+              priority={
+                project.priority
+              }
+            />
 
-      <div className="mt-4">
-        <h2 className="line-clamp-2 text-lg font-bold text-zinc-900">
-          {project.name}
-        </h2>
+            <h3 className="min-w-0 truncate text-sm font-bold text-zinc-900 group-hover:text-[#F57B00]">
+              {project.name}
+            </h3>
+          </div>
 
-        <div className="mt-1">
-  <p className="truncate text-sm text-zinc-500">
-    {project.client?.name ??
-      project.clientName ??
-      "Cliente não informado"}
+          <p className="mt-1 truncate text-xs text-zinc-500">
+            {project.client
+              ?.clientCode
+              ? `${project.client.clientCode} · `
+              : ""}
 
-    {project.client?.contactName
-      ? ` · ${project.client.contactName}`
-      : ""}
-  </p>
+            {clientName}
 
-  {project.client?.clientCode ? (
-    <p className="mt-0.5 font-mono text-xs font-semibold text-[#F57B00]">
-      {project.client.clientCode}
-    </p>
-  ) : null}
-</div>
-      </div>
-
-      {project.description ? (
-        <p className="mt-3 line-clamp-2 text-sm leading-6 text-zinc-500">
-          {project.description}
-        </p>
-      ) : null}
-
-      {hasShortage ? (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-          <AlertTriangle
-            size={15}
-            className="shrink-0"
-          />
-
-          Faltam {shortageUnits} unidade(s)
+            {project
+              .responsible
+              ?.name
+              ? ` · Responsável: ${project.responsible.name}`
+              : ""}
+          </p>
         </div>
-      ) : null}
 
-      <div className="mt-4 space-y-2 text-sm text-zinc-600">
-        <div className="flex items-center gap-2">
-          <UserRound
-            size={16}
-            className="shrink-0 text-zinc-400"
-          />
+        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+          <span className="inline-flex items-center gap-1.5">
+            <Package
+              size={14}
+            />
 
-          <span className="truncate">
-            Vendedor:{" "}
-            {project.salesperson
-              ?.name ??
-              "Não informado"}
+            {
+              project.equipmentItems
+            }{" "}
+            item(ns)
           </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <UserRound
-            size={16}
-            className="shrink-0 text-zinc-400"
-          />
-
-          <span className="truncate">
-            Responsável:{" "}
-            {project.responsible
-              ?.name ??
-              "Não informado"}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <CalendarDays
-            size={16}
-            className="shrink-0 text-zinc-400"
-          />
 
           <span>
-            Prazo:{" "}
-            {formatDate(
-              project.dueDate,
-            )}
+            {neededUnits}{" "}
+            unidade(s)
           </span>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Package
-            size={16}
-            className="shrink-0 text-zinc-400"
-          />
-
-          <span>
-            {project.equipmentItems}{" "}
-            item(ns) ·{" "}
-            {neededUnits} unidade(s)
-            necessária(s)
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-auto border-t border-zinc-100 pt-4">
-        <p className="text-xs text-zinc-400">
-          Criado em{" "}
-          {formatDate(
-            project.createdAt,
+          {project.status ===
+          "COMPLETED" ? (
+            <span className="font-medium text-emerald-700">
+              {project.completedAt
+                ? `Concluído em ${formatDate(
+                    project.completedAt,
+                  )}`
+                : "Concluído"}
+            </span>
+          ) : (
+            <span>
+              Atualizado em{" "}
+              {formatDate(
+                project.updatedAt,
+              )}
+            </span>
           )}
-        </p>
+
+          <span className="font-semibold text-zinc-400 transition group-hover:text-[#F57B00]">
+            Abrir →
+          </span>
+        </div>
       </div>
     </Link>
   );
@@ -3757,7 +4493,7 @@ function SummaryCard({
   return (
     <article className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
       <div>
-        <p className="text-xs font-medium text-zinc-500">
+        <p className="text-sm font-medium text-zinc-500">
           {title}
         </p>
 
@@ -3785,8 +4521,8 @@ function FormField({
   children: ReactNode;
 }) {
   return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium text-zinc-700">
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-semibold text-zinc-700">
         {label}
 
         {required ? (
@@ -3821,7 +4557,8 @@ function Modal({
       event: KeyboardEvent,
     ) {
       if (
-        event.key === "Escape"
+        event.key ===
+        "Escape"
       ) {
         onClose();
       }
@@ -3833,7 +4570,8 @@ function Modal({
     );
 
     const previousOverflow =
-      document.body.style.overflow;
+      document.body.style
+        .overflow;
 
     document.body.style.overflow =
       "hidden";
@@ -3854,8 +4592,12 @@ function Modal({
       className={`fixed inset-0 ${zIndexClass} flex items-center justify-center bg-black/40 p-4 backdrop-blur-[1px]`}
       role="dialog"
       aria-modal="true"
-      aria-labelledby={titleId}
-      onMouseDown={(event) => {
+      aria-labelledby={
+        titleId
+      }
+      onMouseDown={(
+        event,
+      ) => {
         if (
           event.target ===
           event.currentTarget
@@ -3870,7 +4612,7 @@ function Modal({
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-200 bg-white px-5 py-4">
           <h2
             id={titleId}
-            className="text-lg font-bold text-zinc-900"
+            className="text-base font-bold text-zinc-900"
           >
             {title}
           </h2>

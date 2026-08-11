@@ -292,6 +292,8 @@ export function ClientsView() {
   const canEdit =
     role === "ADMIN" ||
     role === "COMMERCIAL";
+  
+  const canViewClientDetails = canEdit;
 
   const [clients, setClients] =
     useState<ClientItem[]>([]);
@@ -903,7 +905,11 @@ export function ClientsView() {
                       .value,
                   )
                 }
-                placeholder="Buscar por código, sigla, cliente, contato, cidade, e-mail ou documento..."
+                placeholder={
+                  canEdit
+                    ? "Buscar por código, sigla, cliente, contato, cidade, e-mail ou documento..."
+                    : "Buscar por código, sigla, cliente, contato ou cidade..."
+                }
                 className={
                   inputClassName
                 }
@@ -996,37 +1002,35 @@ export function ClientsView() {
             {clients.map(
               (client) => (
                 <ClientAccordionRow
-                  key={client.id}
-                  client={
-                    client
-                  }
-                  canEdit={
-                    canEdit
-                  }
-                  expanded={
-                    expandedClientId ===
-                    client.id
-                  }
-                  deleting={
-                    deletingClientId ===
-                    client.id
-                  }
-                  onToggle={() =>
-                    toggleClient(
-                      client.id,
-                    )
-                  }
-                  onEdit={() =>
-                    openEditModal(
-                      client,
-                    )
-                  }
-                  onDelete={() =>
-                    void handleDeleteClient(
-                      client,
-                    )
-                  }
-                />
+  key={client.id}
+  client={client}
+  canEdit={canEdit}
+  canViewDetails={
+    canViewClientDetails
+  }
+  expanded={
+    canViewClientDetails &&
+    expandedClientId === client.id
+  }
+  deleting={
+    deletingClientId === client.id
+  }
+  onToggle={() => {
+    if (!canViewClientDetails) {
+      return;
+    }
+
+    toggleClient(client.id);
+  }}
+  onEdit={() =>
+    openEditModal(client)
+  }
+  onDelete={() =>
+    void handleDeleteClient(
+      client,
+    )
+  }
+/>
               ),
             )}
           </div>
@@ -1656,6 +1660,7 @@ function ClientAccordionRow({
   expanded,
   deleting,
   canEdit,
+  canViewDetails,
   onToggle,
   onEdit,
   onDelete,
@@ -1664,12 +1669,13 @@ function ClientAccordionRow({
   expanded: boolean;
   deleting: boolean;
   canEdit: boolean;
+  canViewDetails: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   function handleEdit(
-    event: MouseEvent<HTMLButtonElement>,
+    event: MouseEvent,
   ) {
     event.stopPropagation();
 
@@ -1681,7 +1687,7 @@ function ClientAccordionRow({
   }
 
   function handleDelete(
-    event: MouseEvent<HTMLButtonElement>,
+    event: MouseEvent,
   ) {
     event.stopPropagation();
 
@@ -1691,6 +1697,62 @@ function ClientAccordionRow({
 
     onDelete();
   }
+
+  const rowContent = (
+    <>
+      <span className="font-mono text-xs font-semibold text-[#F57B00]">
+        {client.clientCode ??
+          "SEM-CÓDIGO"}
+      </span>
+
+      <span className="min-w-0">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="truncate text-sm font-bold text-zinc-900 sm:text-[15px]">
+            {client.name}
+          </span>
+
+          {client.shortName ? (
+            <span className="shrink-0 text-[11px] text-zinc-400">
+              {client.shortName}
+            </span>
+          ) : null}
+        </span>
+
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-zinc-500 sm:text-sm">
+          <UserRound
+            size={14}
+            className="shrink-0 text-zinc-400"
+          />
+
+          <span className="truncate">
+            {client.contactName}
+
+            {client.position
+              ? ` · ${client.position}`
+              : ""}
+          </span>
+        </span>
+      </span>
+
+      <span className="flex flex-wrap items-center gap-2 lg:justify-end">
+        <ClientStatusBadge
+          active={client.active}
+        />
+
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500 sm:text-sm">
+          <FolderKanban
+            size={14}
+            className="text-zinc-400"
+          />
+
+          {client.projectCount}{" "}
+          {client.projectCount === 1
+            ? "projeto"
+            : "projetos"}
+        </span>
+      </span>
+    </>
+  );
 
   return (
     <article
@@ -1704,96 +1766,37 @@ function ClientAccordionRow({
           : "",
       ].join(" ")}
     >
-      <div className="flex items-center gap-2 px-4 py-3">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={
-            expanded
-          }
-          aria-label={
-            expanded
-              ? `Recolher detalhes de ${client.name}`
-              : `Expandir detalhes de ${client.name}`
-          }
-          className="grid min-w-0 flex-1 gap-2 rounded-lg p-2 text-left outline-none transition hover:bg-orange-50/60 focus-visible:ring-2 focus-visible:ring-orange-200 lg:grid-cols-[130px_minmax(0,1fr)_auto] lg:items-center"
-        >
-          <span className="font-mono text-xs font-bold text-[#F57B00] sm:text-sm">
-            {client.clientCode ??
-              "SEM-CÓDIGO"}
-          </span>
-
-          <span className="min-w-0">
-            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="truncate text-sm font-bold text-zinc-900 sm:text-[15px]">
-                {client.name}
-              </span>
-
-              {client.shortName ? (
-                <span className="shrink-0 text-[11px] text-zinc-400">
-                  {
-                    client.shortName
-                  }
-                </span>
-              ) : null}
-            </span>
-
-            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-zinc-500 sm:text-sm">
-              <UserRound
-                size={14}
-                className="shrink-0 text-zinc-400"
-              />
-
-              <span className="truncate">
-                {
-                  client.contactName
-                }
-
-                {client.position
-                  ? ` · ${client.position}`
-                  : ""}
-              </span>
-            </span>
-          </span>
-
-          <span className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <ClientStatusBadge
-              active={
-                client.active
-              }
-            />
-
-            <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500 sm:text-sm">
-              <FolderKanban
-                size={14}
-                className="text-zinc-400"
-              />
-
-              {
-                client.projectCount
-              }{" "}
-              {client.projectCount ===
-              1
-                ? "projeto"
-                : "projetos"}
-            </span>
-          </span>
-        </button>
+      <div className="flex items-center gap-2 px-3 py-2">
+        {canViewDetails ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={
+              expanded
+                ? `Recolher detalhes de ${client.name}`
+                : `Expandir detalhes de ${client.name}`
+            }
+            className="grid min-w-0 flex-1 gap-2 rounded-lg p-2 text-left outline-none transition hover:bg-orange-50/60 focus-visible:ring-2 focus-visible:ring-orange-200 lg:grid-cols-[130px_minmax(0,1fr)_auto] lg:items-center"
+          >
+            {rowContent}
+          </button>
+        ) : (
+          <div className="grid min-w-0 flex-1 gap-2 rounded-lg p-2 text-left lg:grid-cols-[130px_minmax(0,1fr)_auto] lg:items-center">
+            {rowContent}
+          </div>
+        )}
 
         {canEdit ? (
           <>
             <button
               type="button"
-              onClick={
-                handleEdit
-              }
+              onClick={handleEdit}
               aria-label={`Editar ${client.name}`}
               title="Editar cliente"
               className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-zinc-600 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-200 sm:h-9 sm:px-3"
             >
-              <Pencil
-                size={15}
-              />
+              <Pencil size={15} />
 
               <span className="hidden text-xs font-semibold sm:inline">
                 Editar
@@ -1802,35 +1805,26 @@ function ClientAccordionRow({
 
             <button
               type="button"
-              onClick={
-                handleDelete
-              }
-              disabled={
-                deleting
-              }
+              onClick={handleDelete}
+              disabled={deleting}
               aria-label={
-                client.projectCount >
-                0
+                client.projectCount > 0
                   ? `Inativar ${client.name}`
                   : `Excluir ${client.name}`
               }
               title={
-                client.projectCount >
-                0
+                client.projectCount > 0
                   ? "Inativar cliente"
                   : "Excluir cliente"
               }
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
             >
-              <Trash2
-                size={15}
-              />
+              <Trash2 size={15} />
 
               <span className="hidden text-xs font-semibold xl:inline">
                 {deleting
                   ? "Processando..."
-                  : client.projectCount >
-                      0
+                  : client.projectCount > 0
                     ? "Inativar"
                     : "Excluir"}
               </span>
@@ -1838,39 +1832,37 @@ function ClientAccordionRow({
           </>
         ) : null}
 
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={
-            expanded
-          }
-          aria-label={
-            expanded
-              ? "Recolher detalhes"
-              : "Expandir detalhes"
-          }
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 sm:h-9 sm:w-9"
-        >
-          <ChevronDown
-            size={18}
-            className={[
-              "transition-transform duration-200",
+        {canViewDetails ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={
               expanded
-                ? "rotate-180"
-                : "",
-            ].join(" ")}
-          />
-        </button>
+                ? "Recolher detalhes"
+                : "Expandir detalhes"
+            }
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 sm:h-9 sm:w-9"
+          >
+            <ChevronDown
+              size={18}
+              className={[
+                "transition-transform duration-200",
+                expanded
+                  ? "rotate-180"
+                  : "",
+              ].join(" ")}
+            />
+          </button>
+        ) : null}
       </div>
 
-      {expanded ? (
+      {canViewDetails && expanded ? (
         <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-5">
           <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
             <ClientDetail
               label="Contato"
-              value={
-                client.contactName
-              }
+              value={client.contactName}
             />
 
             <ClientDetail
@@ -1923,9 +1915,7 @@ function ClientAccordionRow({
             <ClientDetail
               label="Endereço"
               value={
-                formatAddress(
-                  client,
-                ) ||
+                formatAddress(client) ||
                 "Não informado"
               }
             />
@@ -1963,9 +1953,7 @@ function ClientAccordionRow({
                   size={15}
                 />
 
-                {
-                  client.website
-                }
+                {client.website}
               </a>
             </div>
           ) : null}

@@ -45,7 +45,6 @@ function isViewerBlockedRoute(
   pathname: string,
 ): boolean {
   if (
-    matchesPrefix(pathname, "/projects") ||
     matchesPrefix(pathname, "/purchases") ||
     matchesPrefix(pathname, "/users")
   ) {
