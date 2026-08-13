@@ -1,6 +1,6 @@
 import {
-  EquipmentStatus,
   Prisma,
+  ProjectStatus,
   UserRole,
 } from "@/generated/prisma/client";
 import { auth } from "@/auth";
@@ -24,6 +24,13 @@ type SessionUser = {
   id?: string;
   role?: UserRole;
 };
+
+const MAX_EQUIPMENT_QUANTITY = 999999;
+
+const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
+  ProjectStatus.PLANNING,
+  ProjectStatus.IN_PROGRESS,
+];
 
 function canManageEquipment(
   role: UserRole | undefined,
@@ -53,15 +60,19 @@ function requiredId(
 function requiredQuantity(
   value: unknown,
 ) {
-  const quantity = Number(value);
+  const quantity =
+    Number(value);
 
   if (
-    !Number.isInteger(quantity) ||
+    !Number.isInteger(
+      quantity,
+    ) ||
     quantity < 1 ||
-    quantity > 999999
+    quantity >
+      MAX_EQUIPMENT_QUANTITY
   ) {
     throw new Error(
-      "A quantidade deve ser um número inteiro maior que zero.",
+      `A quantidade deve ser um número inteiro entre 1 e ${MAX_EQUIPMENT_QUANTITY}.`,
     );
   }
 
@@ -71,23 +82,32 @@ function requiredQuantity(
 /**
  * GET /api/projects/[id]/equipment
  *
- * Retorna os equipamentos do estoque com:
- * - quantidade total;
- * - quantidade reservada;
- * - quantidade reservada neste projeto;
- * - disponibilidade para este projeto.
+ * Retorna os equipamentos disponíveis
+ * para gerenciamento no projeto.
+ *
+ * Regras:
+ *
+ * - quantity do equipamento = estoque operacional;
+ * - ProjectEquipment.quantity = necessidade do projeto;
+ * - allocatedQuantity = quantidade efetivamente atendida;
+ * - estoque zerado NÃO impede solicitação;
+ * - diferença entre necessidade e alocação vira déficit.
  */
 export async function GET(
   _request: Request,
   context: RouteContext,
 ) {
-  const session = await auth();
+  const session =
+    await auth();
 
-  if (!session?.user) {
+  if (
+    !session?.user
+  ) {
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -96,44 +116,53 @@ export async function GET(
   }
 
   const sessionUser =
-  session.user as SessionUser;
+    session.user as SessionUser;
 
-if (
-  !canManageEquipment(
-    sessionUser.role,
-  )
-) {
-  return Response.json(
-    {
-      success: false,
-      message:
-        "Você não possui permissão para gerenciar equipamentos do projeto.",
-    },
-    {
-      status: 403,
-    },
-  );
-}
+  if (
+    !canManageEquipment(
+      sessionUser.role,
+    )
+  ) {
+    return Response.json(
+      {
+        success: false,
+        message:
+          "Você não possui permissão para gerenciar equipamentos do projeto.",
+      },
+      {
+        status: 403,
+      },
+    );
+  }
 
   try {
-    const { id: projectId } =
+    const {
+      id: projectId,
+    } =
       await context.params;
 
     const project =
-      await prisma.project.findUnique({
-        where: {
-          id: projectId,
-        },
-        select: {
-          id: true,
-        },
-      });
+      await prisma.project.findUnique(
+        {
+          where: {
+            id: projectId,
+          },
 
-    if (!project) {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      );
+
+    if (
+      !project
+    ) {
       return Response.json(
         {
           success: false,
-          message: "Projeto não encontrado.",
+          message:
+            "Projeto não encontrado.",
         },
         {
           status: 404,
@@ -142,95 +171,256 @@ if (
     }
 
     const equipment =
-      await prisma.equipment.findMany({
-        include: {
-          images: {
-            orderBy: {
-              position: "asc",
+      await prisma.equipment.findMany(
+        {
+          include: {
+            images: {
+              orderBy: {
+                position:
+                  "asc",
+              },
+
+              take: 1,
             },
-            take: 1,
+
+            projects: {
+              select: {
+                projectId:
+                  true,
+
+                quantity:
+                  true,
+
+                allocatedQuantity:
+                  true,
+
+                project: {
+                  select: {
+                    status:
+                      true,
+                  },
+                },
+              },
+            },
           },
 
-          projects: {
-            select: {
-              projectId: true,
-              quantity: true,
+          orderBy: [
+            {
+              name: "asc",
             },
-          },
+            {
+              createdAt:
+                "desc",
+            },
+          ],
         },
-
-        orderBy: [
-          {
-            name: "asc",
-          },
-          {
-            createdAt: "desc",
-          },
-        ],
-      });
-
-    const data = equipment.map((item) => {
-      const totalReserved =
-        item.projects.reduce(
-          (total, reservation) =>
-            total + reservation.quantity,
-          0,
-        );
-
-      const currentReservation =
-        item.projects.find(
-          (reservation) =>
-            reservation.projectId ===
-            projectId,
-        );
-
-      const currentProjectQuantity =
-        currentReservation?.quantity ?? 0;
-
-      const reservedByOtherProjects =
-        totalReserved -
-        currentProjectQuantity;
-
-      /*
-       * Ao editar a reserva atual, as unidades já
-       * reservadas pelo próprio projeto podem ser
-       * reutilizadas.
-       */
-      const availableForProject = Math.max(
-        item.quantity -
-          reservedByOtherProjects,
-        0,
       );
 
-      return {
-        id: item.id,
-        name: item.name,
-        category: item.category,
-        manufacturer: item.manufacturer,
-        model: item.model,
-        serialNumber: item.serialNumber,
-        quantity: item.quantity,
-        status: item.status,
-        condition: item.condition,
-        image: item.images[0] ?? null,
+    const data =
+      equipment.map(
+        (item) => {
+          /*
+           * Relação deste equipamento
+           * com o projeto atual.
+           */
+          const currentReservation =
+            item.projects.find(
+              (
+                reservation,
+              ) =>
+                reservation.projectId ===
+                projectId,
+            );
 
-        totalReserved,
-        reservedByOtherProjects,
-        currentProjectQuantity,
-        availableForProject,
-        availableNow: Math.max(
-          item.quantity - totalReserved,
-          0,
-        ),
-      };
-    });
+          const currentProjectQuantity =
+            currentReservation
+              ?.quantity ??
+            0;
 
-    return Response.json({
-      success: true,
-      data,
-      total: data.length,
-    });
-  } catch (error) {
+          const currentProjectAllocated =
+            currentReservation
+              ?.allocatedQuantity ??
+            0;
+
+          /*
+           * Só projetos ativos ocupam
+           * estoque operacional.
+           */
+          const activeReservations =
+            item.projects.filter(
+              (
+                reservation,
+              ) =>
+                ACTIVE_PROJECT_STATUSES.includes(
+                  reservation
+                    .project
+                    .status,
+                ),
+            );
+
+          /*
+           * Quantidade efetivamente
+           * alocada em projetos ativos.
+           *
+           * IMPORTANTE:
+           *
+           * Não usamos reservation.quantity
+           * aqui, porque quantity representa
+           * a necessidade total.
+           */
+          const totalAllocated =
+            activeReservations.reduce(
+              (
+                total,
+                reservation,
+              ) =>
+                total +
+                Math.max(
+                  reservation
+                    .allocatedQuantity,
+                  0,
+                ),
+              0,
+            );
+
+          /*
+           * Alocação dos outros projetos.
+           */
+          const allocatedByOtherProjects =
+            activeReservations.reduce(
+              (
+                total,
+                reservation,
+              ) => {
+                if (
+                  reservation.projectId ===
+                  projectId
+                ) {
+                  return total;
+                }
+
+                return (
+                  total +
+                  Math.max(
+                    reservation
+                      .allocatedQuantity,
+                    0,
+                  )
+                );
+              },
+              0,
+            );
+
+          /*
+           * Estoque operacional.
+           */
+          const operationalStock =
+            Math.max(
+              item.quantity,
+              0,
+            );
+
+          /*
+           * Disponível para qualquer
+           * nova demanda agora.
+           */
+          const availableNow =
+            Math.max(
+              operationalStock -
+                totalAllocated,
+              0,
+            );
+
+          /*
+           * Ao editar a necessidade
+           * deste projeto, devolvemos
+           * virtualmente a alocação dele
+           * para o cálculo.
+           */
+          const availableForProject =
+            Math.max(
+              operationalStock -
+                allocatedByOtherProjects,
+              0,
+            );
+
+          /*
+           * Déficit atual deste projeto.
+           */
+          const currentProjectShortage =
+            Math.max(
+              currentProjectQuantity -
+                currentProjectAllocated,
+              0,
+            );
+
+          return {
+            id: item.id,
+            name: item.name,
+            category:
+              item.category,
+
+            manufacturer:
+              item.manufacturer,
+
+            model:
+              item.model,
+
+            serialNumber:
+              item.serialNumber,
+
+            quantity:
+              operationalStock,
+
+            status:
+              item.status,
+
+            condition:
+              item.condition,
+
+            image:
+              item.images[0] ??
+              null,
+
+            /*
+             * Mantemos o nome
+             * totalReserved porque
+             * o frontend atual utiliza
+             * essa propriedade.
+             *
+             * Agora, porém, ele representa
+             * quantidade REALMENTE alocada.
+             */
+            totalReserved:
+              totalAllocated,
+
+            reservedByOtherProjects:
+              allocatedByOtherProjects,
+
+            currentProjectQuantity,
+
+            currentProjectAllocated,
+
+            currentProjectShortage,
+
+            availableForProject,
+
+            availableNow,
+          };
+        },
+      );
+
+    return Response.json(
+      {
+        success: true,
+        data,
+        total:
+          data.length,
+      },
+    );
+  } catch (
+    error
+  ) {
     console.error(
       "Erro ao carregar equipamentos do projeto:",
       error,
@@ -253,22 +443,38 @@ if (
  * POST /api/projects/[id]/equipment
  *
  * Body:
+ *
  * {
  *   equipmentId: string;
  *   quantity: number;
  * }
+ *
+ * A quantidade solicitada pode ser
+ * MAIOR que o estoque disponível.
+ *
+ * Exemplo:
+ *
+ * estoque = 3
+ * solicitado = 6
+ *
+ * allocatedQuantity = 3
+ * déficit = 3
  */
 export async function POST(
   request: Request,
   context: RouteContext,
 ) {
-  const session = await auth();
+  const session =
+    await auth();
 
-  if (!session?.user) {
+  if (
+    !session?.user
+  ) {
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -297,133 +503,310 @@ export async function POST(
   }
 
   try {
-    const { id: projectId } =
+    const {
+      id: projectId,
+    } =
       await context.params;
 
     const body =
       (await request.json()) as AddEquipmentBody;
 
-    const equipmentId = requiredId(
-      body.equipmentId,
-      "Equipamento",
-    );
+    const equipmentId =
+      requiredId(
+        body.equipmentId,
+        "Equipamento",
+      );
 
-    const quantity = requiredQuantity(
-      body.quantity,
-    );
+    const quantity =
+      requiredQuantity(
+        body.quantity,
+      );
 
-    const projectEquipment =
+    const result =
       await prisma.$transaction(
-        async (transaction) => {
+        async (
+          transaction,
+        ) => {
           const project =
-            await transaction.project.findUnique({
-              where: {
-                id: projectId,
-              },
-              select: {
-                id: true,
-              },
-            });
+            await transaction.project.findUnique(
+              {
+                where: {
+                  id: projectId,
+                },
 
-          if (!project) {
+                select: {
+                  id: true,
+                  status:
+                    true,
+                },
+              },
+            );
+
+          if (
+            !project
+          ) {
             throw new Error(
               "Projeto não encontrado.",
             );
           }
 
           const equipment =
-            await transaction.equipment.findUnique({
-              where: {
-                id: equipmentId,
-              },
-              select: {
-                id: true,
-                name: true,
-                quantity: true,
-                status: true,
-              },
-            });
+            await transaction.equipment.findUnique(
+              {
+                where: {
+                  id:
+                    equipmentId,
+                },
 
-          if (!equipment) {
+                select: {
+                  id: true,
+                  name: true,
+                  quantity:
+                    true,
+                  status:
+                    true,
+                  condition:
+                    true,
+                },
+              },
+            );
+
+          if (
+            !equipment
+          ) {
             throw new Error(
               "Equipamento não encontrado.",
             );
           }
 
-          if (
-            equipment.status ===
-            EquipmentStatus.UNAVAILABLE
-          ) {
-            throw new Error(
-              "Este equipamento está indisponível.",
-            );
-          }
+          /*
+           * IMPORTANTE:
+           *
+           * NÃO bloqueamos status UNAVAILABLE.
+           *
+           * No sistema atual, um equipamento
+           * com estoque operacional zerado pode
+           * aparecer como UNAVAILABLE.
+           *
+           * Mesmo assim, ele precisa poder ser
+           * solicitado no projeto para gerar
+           * déficit e futura compra.
+           */
 
           const existing =
             await transaction.projectEquipment.findUnique(
               {
                 where: {
-                  projectId_equipmentId: {
-                    projectId,
-                    equipmentId,
-                  },
+                  projectId_equipmentId:
+                    {
+                      projectId,
+                      equipmentId,
+                    },
                 },
+
                 select: {
                   id: true,
                 },
               },
             );
 
-          if (existing) {
+          if (
+            existing
+          ) {
             throw new Error(
               "Este equipamento já está vinculado ao projeto. Edite a quantidade da reserva existente.",
             );
           }
 
-          return transaction.projectEquipment.create(
-            {
-              data: {
-                projectId,
-                equipmentId,
-                quantity,
-              },
+          /*
+           * Verificamos quanto deste equipamento
+           * já está efetivamente alocado em
+           * OUTROS projetos ativos.
+           */
+          const allocations =
+            await transaction.projectEquipment.findMany(
+              {
+                where: {
+                  equipmentId,
 
-              include: {
-                equipment: {
-                  select: {
-                    id: true,
-                    name: true,
-                    category: true,
-                    manufacturer: true,
-                    model: true,
-                    quantity: true,
-                    status: true,
-                    condition: true,
+                  projectId: {
+                    not:
+                      projectId,
+                  },
+
+                  project: {
+                    status: {
+                      in:
+                        ACTIVE_PROJECT_STATUSES,
+                    },
+                  },
+                },
+
+                select: {
+                  allocatedQuantity:
+                    true,
+                },
+              },
+            );
+
+          const allocatedByOtherProjects =
+            allocations.reduce(
+              (
+                total,
+                allocation,
+              ) =>
+                total +
+                Math.max(
+                  allocation
+                    .allocatedQuantity,
+                  0,
+                ),
+              0,
+            );
+
+          const operationalStock =
+            Math.max(
+              equipment.quantity,
+              0,
+            );
+
+          /*
+           * Estoque ainda disponível
+           * para este novo projeto.
+           */
+          const availableStock =
+            Math.max(
+              operationalStock -
+                allocatedByOtherProjects,
+              0,
+            );
+
+          /*
+           * Atendemos somente aquilo que
+           * existe fisicamente.
+           *
+           * O restante continua registrado
+           * em quantity e será interpretado
+           * como déficit.
+           */
+          const allocatedQuantity =
+            Math.min(
+              quantity,
+              availableStock,
+            );
+
+          const shortage =
+            Math.max(
+              quantity -
+                allocatedQuantity,
+              0,
+            );
+
+          const projectEquipment =
+            await transaction.projectEquipment.create(
+              {
+                data: {
+                  projectId,
+                  equipmentId,
+                  quantity,
+                  allocatedQuantity,
+                },
+
+                include: {
+                  equipment: {
+                    select: {
+                      id: true,
+                      name: true,
+                      category:
+                        true,
+
+                      manufacturer:
+                        true,
+
+                      model:
+                        true,
+
+                      quantity:
+                        true,
+
+                      status:
+                        true,
+
+                      condition:
+                        true,
+                    },
                   },
                 },
               },
-            },
-          );
+            );
+
+          return {
+            projectEquipment,
+            allocatedQuantity,
+            shortage,
+            availableStock,
+          };
         },
         {
           isolationLevel:
-            Prisma.TransactionIsolationLevel
+            Prisma
+              .TransactionIsolationLevel
               .Serializable,
         },
       );
 
+    const {
+      projectEquipment,
+      allocatedQuantity,
+      shortage,
+    } = result;
+
+    let message: string;
+
+    if (
+      shortage > 0 &&
+      allocatedQuantity >
+        0
+    ) {
+      message =
+        `Equipamento adicionado ao projeto. ` +
+        `${allocatedQuantity} unidade(s) foram atendidas pelo estoque e ` +
+        `${shortage} unidade(s) ficaram como déficit para compra.`;
+    } else if (
+      shortage >
+      0
+    ) {
+      message =
+        `Equipamento adicionado ao projeto. ` +
+        `As ${shortage} unidade(s) solicitadas ficaram como déficit para compra.`;
+    } else {
+      message =
+        "Equipamento adicionado ao projeto com sucesso. O estoque disponível cobre a necessidade.";
+    }
+
     return Response.json(
       {
         success: true,
-        message:
-          "Equipamento adicionado ao projeto com sucesso.",
-        data: projectEquipment,
+        message,
+        data:
+          projectEquipment,
+
+        stock: {
+          requestedQuantity:
+            projectEquipment.quantity,
+
+          allocatedQuantity,
+
+          shortage,
+        },
       },
       {
         status: 201,
       },
     );
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
       "Erro ao adicionar equipamento ao projeto:",
       error,
@@ -432,7 +815,8 @@ export async function POST(
     if (
       error instanceof
         Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
+      error.code ===
+        "P2002"
     ) {
       return Response.json(
         {
@@ -449,7 +833,8 @@ export async function POST(
     if (
       error instanceof
         Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2034"
+      error.code ===
+        "P2034"
     ) {
       return Response.json(
         {
@@ -463,7 +848,10 @@ export async function POST(
       );
     }
 
-    if (error instanceof SyntaxError) {
+    if (
+      error instanceof
+        SyntaxError
+    ) {
       return Response.json(
         {
           success: false,
@@ -476,7 +864,10 @@ export async function POST(
       );
     }
 
-    if (error instanceof Error) {
+    if (
+      error instanceof
+        Error
+    ) {
       const isNotFound =
         error.message ===
           "Projeto não encontrado." ||
@@ -486,22 +877,21 @@ export async function POST(
       const isConflict =
         error.message.includes(
           "já está vinculado",
-        ) ||
-        error.message.includes(
-          "Quantidade indisponível",
         );
 
       return Response.json(
         {
           success: false,
-          message: error.message,
+          message:
+            error.message,
         },
         {
-          status: isNotFound
-            ? 404
-            : isConflict
-              ? 409
-              : 400,
+          status:
+            isNotFound
+              ? 404
+              : isConflict
+                ? 409
+                : 400,
         },
       );
     }

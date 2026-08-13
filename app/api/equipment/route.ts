@@ -223,19 +223,18 @@ export async function GET() {
     const equipment =
       equipmentRecords.map((item) => {
         const requested =
-          item.projects.reduce(
-            (
-              total,
-              projectEquipment,
-            ) =>
-              total +
-              Math.max(
-              projectEquipment.quantity -
-          projectEquipment.allocatedQuantity,
+  item.projects.reduce(
+    (
+      total,
+      projectEquipment,
+    ) =>
+      total +
+      Math.max(
+        projectEquipment.quantity,
         0,
       ),
-            0,
-          );
+    0,
+  );
 
         const {
   physicalStock,

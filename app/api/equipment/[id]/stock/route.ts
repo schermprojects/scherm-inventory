@@ -1,4 +1,7 @@
-import { Prisma } from "@/generated/prisma/client";
+import {
+  EquipmentStatus,
+  Prisma,
+} from "@/generated/prisma/client";
 import { auth } from "@/auth";
 import {
   AuditAction,
@@ -70,7 +73,8 @@ function optionalText(
     );
   }
 
-  const normalizedValue = value.trim();
+  const normalizedValue =
+    value.trim();
 
   if (!normalizedValue) {
     return null;
@@ -126,7 +130,8 @@ export async function PATCH(
   }
 
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     if (!id) {
       return Response.json(
@@ -150,23 +155,27 @@ export async function PATCH(
         "Quantidade recebida",
       );
 
-    const projectId = optionalText(
-  body.projectId,
-  191,
-  "Projeto",
-);
+    const projectId =
+      optionalText(
+        body.projectId,
+        191,
+        "Projeto",
+      );
 
-const invoiceNumber = optionalText(
-  body.invoiceNumber,
-  150,
-  "Número da nota fiscal",
-);
+    const invoiceNumber =
+      optionalText(
+        body.invoiceNumber,
+        150,
+        "Número da nota fiscal",
+      );
 
-const notes = optionalText(
-  body.notes,
-  1000,
-  "Observações",
-);
+    const notes =
+      optionalText(
+        body.notes,
+        1000,
+        "Observações",
+      );
+
     const result =
       await prisma.$transaction(
         async (transaction) => {
@@ -181,6 +190,7 @@ const notes = optionalText(
                   id: true,
                   name: true,
                   quantity: true,
+                  status: true,
                   invoiceNumber: true,
                   notes: true,
                 },
@@ -194,33 +204,56 @@ const notes = optionalText(
           }
 
           let selectedProject:
-  | {
-      id: string;
-      name: string;
-      requiredQuantity: number;
-      previousAllocatedQuantity: number;
-      currentAllocatedQuantity: number;
-      missingQuantity: number;
-      allocationQuantity: number;
-      freeStockQuantity: number;
-    }
-  | null = null;
+            | {
+                id: string;
+                name: string;
+                requiredQuantity: number;
 
+                previousAllocatedQuantity: number;
+                currentAllocatedQuantity: number;
+
+                pendingQuantity: number;
+
+                allocationQuantity: number;
+                freeStockQuantity: number;
+
+                missingQuantity: number;
+              }
+            | null = null;
+
+          /*
+           * Quando a entrada estiver
+           * relacionada a um projeto,
+           * validamos o vínculo.
+           *
+           * IMPORTANTE:
+           *
+           * A entrada NÃO altera
+           * allocatedQuantity.
+           *
+           * allocatedQuantity continua
+           * representando somente unidades
+           * que já tiveram baixa física
+           * do estoque.
+           */
           if (projectId) {
             const projectEquipment =
               await transaction.projectEquipment.findUnique(
                 {
                   where: {
-                    projectId_equipmentId: {
-                      projectId,
-                      equipmentId: id,
-                    },
+                    projectId_equipmentId:
+                      {
+                        projectId,
+                        equipmentId:
+                          id,
+                      },
                   },
 
                   select: {
                     id: true,
                     quantity: true,
-                    allocatedQuantity: true,
+                    allocatedQuantity:
+                      true,
 
                     project: {
                       select: {
@@ -240,9 +273,11 @@ const notes = optionalText(
             }
 
             if (
-              projectEquipment.project.status !==
+              projectEquipment.project
+                .status !==
                 ProjectStatus.PLANNING &&
-              projectEquipment.project.status !==
+              projectEquipment.project
+                .status !==
                 ProjectStatus.IN_PROGRESS
             ) {
               throw new Error(
@@ -250,73 +285,99 @@ const notes = optionalText(
               );
             }
 
-            const missingQuantity = Math.max(
-              projectEquipment.quantity -
-                projectEquipment.allocatedQuantity,
-              0,
-            );
+            const requiredQuantity =
+              Math.max(
+                projectEquipment.quantity,
+                0,
+              );
 
-            const allocationQuantity = Math.min(
-  entryQuantity,
-  missingQuantity,
-);
+            const currentAllocatedQuantity =
+              Math.max(
+                projectEquipment
+                  .allocatedQuantity,
+                0,
+              );
 
-const freeStockQuantity =
-  entryQuantity - allocationQuantity;
+            /*
+             * Necessidade que ainda não
+             * sofreu baixa física.
+             *
+             * Esta quantidade NÃO é
+             * incrementada durante a
+             * entrada de compra.
+             */
+            const pendingQuantity =
+              Math.max(
+                requiredQuantity -
+                  currentAllocatedQuantity,
+                0,
+              );
 
-            if (missingQuantity === 0) {
+            if (
+              pendingQuantity === 0
+            ) {
               throw new Error(
                 "PROJECT_ALREADY_FULFILLED",
               );
             }
 
-            const updatedProjectEquipment =
-              await transaction.projectEquipment.update(
-                {
-                  where: {
-                    id: projectEquipment.id,
-                  },
-
-                  data: {
-  allocatedQuantity: {
-    increment:
-      allocationQuantity,
-  },
-},
-
-                  select: {
-                    quantity: true,
-                    allocatedQuantity: true,
-                  },
-                },
+            /*
+             * Quantidade desta entrada
+             * relacionada à necessidade
+             * do projeto.
+             *
+             * O excedente permanece
+             * como estoque livre.
+             */
+            const allocationQuantity =
+              Math.min(
+                entryQuantity,
+                pendingQuantity,
               );
 
+            const freeStockQuantity =
+              entryQuantity -
+              allocationQuantity;
+
             selectedProject = {
-  id:
-    projectEquipment.project.id,
+              id:
+                projectEquipment
+                  .project.id,
 
-  name:
-    projectEquipment.project.name,
+              name:
+                projectEquipment
+                  .project.name,
 
-  requiredQuantity:
-    updatedProjectEquipment.quantity,
+              requiredQuantity,
 
-  previousAllocatedQuantity:
-    projectEquipment.allocatedQuantity,
+              previousAllocatedQuantity:
+                currentAllocatedQuantity,
 
-  currentAllocatedQuantity:
-    updatedProjectEquipment.allocatedQuantity,
+              currentAllocatedQuantity:
+                currentAllocatedQuantity,
 
-  missingQuantity: Math.max(
-    updatedProjectEquipment.quantity -
-      updatedProjectEquipment.allocatedQuantity,
-    0,
-  ),
+              pendingQuantity,
 
-  allocationQuantity,
+              allocationQuantity,
 
-  freeStockQuantity,
-};
+              freeStockQuantity,
+
+              /*
+               * Valor informativo da
+               * operação atual.
+               *
+               * A persistência definitiva
+               * da pendência será tratada
+               * pelo cálculo de estoque/
+               * compras no próximo ajuste.
+               */
+              missingQuantity:
+                Math.max(
+                  pendingQuantity -
+                    allocationQuantity,
+                  0,
+                ),
+            };
           }
 
           const previousQuantity =
@@ -326,6 +387,34 @@ const freeStockQuantity =
             previousQuantity +
             entryQuantity;
 
+          /*
+ * Uma entrada física torna o equipamento
+ * novamente operacional quando ele estava
+ * indisponível por ausência de estoque.
+ *
+ * Não usamos IN_USE aqui, pois "em uso"
+ * é calculado pelas alocações dos projetos,
+ * e não deve substituir o status cadastral
+ * do equipamento.
+ */
+const nextStatus =
+  existingEquipment.status ===
+    EquipmentStatus.UNAVAILABLE &&
+  previousQuantity <= 0 &&
+  currentQuantity > 0
+    ? EquipmentStatus.AVAILABLE
+    : existingEquipment.status;
+
+          /*
+           * Toda entrada aumenta o estoque
+           * operacional físico.
+           *
+           * Quando houver projeto de destino,
+           * a necessidade ativa fará essas
+           * unidades serem consideradas
+           * comprometidas / em uso pelos
+           * cálculos do sistema.
+           */
           const equipment =
             await transaction.equipment.update(
               {
@@ -338,6 +427,8 @@ const freeStockQuantity =
                     increment:
                       entryQuantity,
                   },
+
+                   status: nextStatus,
 
                   invoiceNumber:
                     invoiceNumber ??
@@ -366,6 +457,14 @@ const freeStockQuantity =
               },
             );
 
+          /*
+           * A movimentação registra a
+           * origem da entrada.
+           *
+           * Se houver projeto selecionado,
+           * projectId preserva a
+           * rastreabilidade da compra.
+           */
           const movement =
             await transaction.equipmentMovement.create(
               {
@@ -398,7 +497,8 @@ const freeStockQuantity =
                   id: true,
                   type: true,
                   quantity: true,
-                  previousQuantity: true,
+                  previousQuantity:
+                    true,
                   currentQuantity: true,
                   invoiceNumber: true,
                   notes: true,
@@ -411,84 +511,161 @@ const freeStockQuantity =
             );
 
           return {
-  equipment,
-  movement,
-  project: selectedProject,
-  previousQuantity,
-  currentQuantity,
-  previousEquipment: existingEquipment,
-};
+            equipment,
+            movement,
+            project:
+              selectedProject,
+
+            previousQuantity,
+            currentQuantity,
+          };
         },
         {
           isolationLevel:
-            Prisma.TransactionIsolationLevel
+            Prisma
+              .TransactionIsolationLevel
               .Serializable,
         },
       );
 
-    const projectMessage = result.project
-  ? result.project.freeStockQuantity > 0
-    ? ` ${result.project.allocationQuantity} unidade(s) foram alocadas ao projeto "${result.project.name}" e ${result.project.freeStockQuantity} unidade(s) ficaram no estoque livre.`
-    : ` ${result.project.allocationQuantity} unidade(s) foram alocadas ao projeto "${result.project.name}".`
-  : " As unidades foram adicionadas ao estoque livre.";
+    const projectMessage =
+      result.project
+        ? result.project
+            .freeStockQuantity >
+          0
+          ? ` ${result.project.allocationQuantity} unidade(s) foram destinadas ao projeto "${result.project.name}" e ${result.project.freeStockQuantity} unidade(s) ficaram no estoque livre.`
+          : ` ${result.project.allocationQuantity} unidade(s) foram destinadas ao projeto "${result.project.name}".`
+        : " As unidades foram adicionadas ao estoque livre.";
 
-  await logAudit({
-  action: AuditAction.STOCK_ENTRY,
-  entity: AuditEntity.EQUIPMENT,
-  entityId: result.equipment.id,
-  userId: sessionUser.id ?? null,
-  description: `Entrada de ${entryQuantity} unidade(s) no equipamento "${result.equipment.name}".`,
-  newData: {
-    equipmentId: result.equipment.id,
-    equipmentName: result.equipment.name,
+    /*
+     * Auditoria da entrada física.
+     */
+    await logAudit({
+      action:
+        AuditAction.STOCK_ENTRY,
 
-    previousQuantity: result.previousQuantity,
-    entryQuantity,
-    currentQuantity: result.currentQuantity,
+      entity:
+        AuditEntity.EQUIPMENT,
 
-    invoiceNumber,
-    notes,
+      entityId:
+        result.equipment.id,
 
-    movementId: result.movement.id,
-  },
-});
+      userId:
+        sessionUser.id ??
+        null,
 
-if (
-  result.project &&
-  result.project.allocationQuantity > 0
-) {
-  await logAudit({
-    action: AuditAction.ALLOCATE,
-    entity: AuditEntity.PROJECT,
-    entityId: result.project.id,
-    userId: sessionUser.id ?? null,
-    description:
-      `${result.project.allocationQuantity} unidade(s) do equipamento "${result.equipment.name}" foram alocadas ao projeto "${result.project.name}".`,
-    newData: {
-      projectId: result.project.id,
-      projectName: result.project.name,
+      description:
+        `Entrada de ${entryQuantity} unidade(s) no equipamento "${result.equipment.name}".`,
 
-      equipmentId: result.equipment.id,
-      equipmentName: result.equipment.name,
+      newData: {
+        equipmentId:
+          result.equipment.id,
 
-      allocatedQuantity:
-        result.project.allocationQuantity,
+        equipmentName:
+          result.equipment.name,
 
-      requiredQuantity:
-        result.project.requiredQuantity,
+        previousQuantity:
+          result.previousQuantity,
 
-      currentAllocatedQuantity:
-        result.project.currentAllocatedQuantity,
+        entryQuantity,
 
-      missingQuantity:
-        result.project.missingQuantity,
-    },
-  });
-}
+        currentQuantity:
+          result.currentQuantity,
+
+        invoiceNumber,
+        notes,
+
+        movementId:
+          result.movement.id,
+
+        projectId:
+          result.project?.id ??
+          null,
+
+        projectName:
+          result.project?.name ??
+          null,
+      },
+    });
+
+    /*
+     * Auditoria da destinação da entrada
+     * ao projeto.
+     *
+     * Não significa baixa física.
+     */
+    if (
+      result.project &&
+      result.project
+        .allocationQuantity > 0
+    ) {
+      await logAudit({
+        action:
+          AuditAction.ALLOCATE,
+
+        entity:
+          AuditEntity.PROJECT,
+
+        entityId:
+          result.project.id,
+
+        userId:
+          sessionUser.id ??
+          null,
+
+        description:
+          `${result.project.allocationQuantity} unidade(s) do equipamento "${result.equipment.name}" foram destinadas ao projeto "${result.project.name}" por entrada de estoque.`,
+
+        newData: {
+          projectId:
+            result.project.id,
+
+          projectName:
+            result.project.name,
+
+          equipmentId:
+            result.equipment.id,
+
+          equipmentName:
+            result.equipment.name,
+
+          entryQuantityForProject:
+            result.project
+              .allocationQuantity,
+
+          freeStockQuantity:
+            result.project
+              .freeStockQuantity,
+
+          requiredQuantity:
+            result.project
+              .requiredQuantity,
+
+          previousAllocatedQuantity:
+            result.project
+              .previousAllocatedQuantity,
+
+          currentAllocatedQuantity:
+            result.project
+              .currentAllocatedQuantity,
+
+          pendingQuantity:
+            result.project
+              .pendingQuantity,
+
+          missingQuantity:
+            result.project
+              .missingQuantity,
+        },
+      });
+    }
+
     return Response.json({
       success: true,
 
-message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projectMessage}`,
+      message:
+        `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projectMessage}`,
+
       data: {
         ...result.equipment,
 
@@ -509,36 +686,39 @@ message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projec
           null,
 
         projectAllocation:
-  result.project
-    ? {
-        requiredQuantity:
           result.project
-            .requiredQuantity,
+            ? {
+                requiredQuantity:
+                  result.project
+                    .requiredQuantity,
 
-        previousAllocatedQuantity:
-          result.project
-            .previousAllocatedQuantity,
+                previousAllocatedQuantity:
+                  result.project
+                    .previousAllocatedQuantity,
 
-        currentAllocatedQuantity:
-          result.project
-            .currentAllocatedQuantity,
+                currentAllocatedQuantity:
+                  result.project
+                    .currentAllocatedQuantity,
 
-        missingQuantity:
-          result.project
-            .missingQuantity,
+                pendingQuantity:
+                  result.project
+                    .pendingQuantity,
 
-        allocationQuantity:
-          result.project
-            .allocationQuantity,
+                missingQuantity:
+                  result.project
+                    .missingQuantity,
 
-        freeStockQuantity:
-          result.project
-            .freeStockQuantity,
-      }
-    : null,
-          },
+                allocationQuantity:
+                  result.project
+                    .allocationQuantity,
+
+                freeStockQuantity:
+                  result.project
+                    .freeStockQuantity,
+              }
+            : null,
+      },
     });
-
   } catch (error) {
     console.error(
       "Erro ao registrar entrada de estoque:",
@@ -549,8 +729,7 @@ message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projec
       error instanceof Error &&
       error.message ===
         "EQUIPMENT_NOT_FOUND"
-    ) 
-    {
+    ) {
       return Response.json(
         {
           success: false,
@@ -606,14 +785,13 @@ message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projec
         {
           success: false,
           message:
-            "Este projeto já recebeu toda a quantidade necessária deste equipamento.",
+            "Este projeto já possui toda a quantidade necessária deste equipamento baixada.",
         },
         {
           status: 400,
         },
       );
     }
-
 
     if (
       error instanceof
@@ -647,17 +825,18 @@ message: `Entrada de ${entryQuantity} unidade(s) registrada com sucesso.${projec
       );
     }
 
-if (error instanceof Error) {
-  return Response.json(
-    {
-      success: false,
-      message: error.message,
-    },
-    {
-      status: 400,
-    },
-  );
-}
+    if (error instanceof Error) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            error.message,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
     return Response.json(
       {

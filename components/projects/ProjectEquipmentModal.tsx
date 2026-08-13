@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import {
-  ChangeEvent,
+  type ChangeEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -91,6 +91,8 @@ const conditionLabels: Record<
   DAMAGED: "Danificado",
 };
 
+const MAX_QUANTITY = 999999;
+
 export function ProjectEquipmentModal({
   open,
   projectId,
@@ -118,8 +120,10 @@ export function ProjectEquipmentModal({
   const [error, setError] =
     useState("");
 
-  const [successMessage, setSuccessMessage] =
-    useState("");
+  const [
+    successMessage,
+    setSuccessMessage,
+  ] = useState("");
 
   const isMutating =
     updatingId !== null ||
@@ -131,12 +135,13 @@ export function ProjectEquipmentModal({
         setLoading(true);
         setError("");
 
-        const response = await fetch(
-          `/api/projects/${projectId}/equipment`,
-          {
-            cache: "no-store",
-          },
-        );
+        const response =
+          await fetch(
+            `/api/projects/${projectId}/equipment`,
+            {
+              cache: "no-store",
+            },
+          );
 
         const data =
           (await response.json()) as EquipmentListResponse;
@@ -154,31 +159,57 @@ export function ProjectEquipmentModal({
 
         setEquipment(data.data);
 
-        setQuantities((current) => {
-          const next: Record<string, number> =
-            {};
+        setQuantities(
+          (current) => {
+            const next: Record<
+              string,
+              number
+            > = {};
 
-          for (const item of data.data ?? []) {
-            next[item.id] =
-              current[item.id] ??
-              item.currentProjectQuantity ??
-              1;
+            for (const item of data.data ?? []) {
+              const savedQuantity =
+                current[item.id];
 
-            if (next[item.id] < 1) {
-              next[item.id] = 1;
+              const projectQuantity =
+                item.currentProjectQuantity;
+
+              next[item.id] =
+                savedQuantity ??
+                (projectQuantity > 0
+                  ? projectQuantity
+                  : 1);
+
+              if (
+                next[item.id] < 1
+              ) {
+                next[item.id] =
+                  1;
+              }
+
+              if (
+                next[item.id] >
+                MAX_QUANTITY
+              ) {
+                next[item.id] =
+                  MAX_QUANTITY;
+              }
             }
-          }
 
-          return next;
-        });
-      } catch (loadError) {
+            return next;
+          },
+        );
+      } catch (
+        loadError
+      ) {
         setError(
           loadError instanceof Error
             ? loadError.message
             : "Não foi possível carregar os equipamentos.",
         );
       } finally {
-        setLoading(false);
+        setLoading(
+          false,
+        );
       }
     },
     [projectId],
@@ -194,7 +225,10 @@ export function ProjectEquipmentModal({
     setSuccessMessage("");
 
     void loadEquipment();
-  }, [open, loadEquipment]);
+  }, [
+    open,
+    loadEquipment,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -232,119 +266,185 @@ export function ProjectEquipmentModal({
       document.body.style.overflow =
         previousOverflow;
     };
-  }, [open, isMutating, onClose]);
+  }, [
+    open,
+    isMutating,
+    onClose,
+  ]);
 
-  const filteredEquipment = useMemo(() => {
-    const normalizedSearch = search
-      .trim()
-      .toLocaleLowerCase("pt-BR");
+  const filteredEquipment =
+    useMemo(() => {
+      const normalizedSearch =
+        search
+          .trim()
+          .toLocaleLowerCase(
+            "pt-BR",
+          );
 
-    if (!normalizedSearch) {
-      return equipment;
+      if (
+        !normalizedSearch
+      ) {
+        return equipment;
+      }
+
+      return equipment.filter(
+        (item) => {
+          const searchableText =
+            [
+              item.name,
+              item.category,
+              item.manufacturer,
+              item.model,
+              item.serialNumber,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLocaleLowerCase(
+                "pt-BR",
+              );
+
+          return searchableText.includes(
+            normalizedSearch,
+          );
+        },
+      );
+    }, [
+      equipment,
+      search,
+    ]);
+
+  function normalizeQuantity(
+    value: number,
+  ) {
+    if (
+      !Number.isFinite(
+        value,
+      )
+    ) {
+      return 1;
     }
 
-    return equipment.filter((item) => {
-      const searchableText = [
-        item.name,
-        item.category,
-        item.manufacturer,
-        item.model,
-        item.serialNumber,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLocaleLowerCase("pt-BR");
-
-      return searchableText.includes(
-        normalizedSearch,
-      );
-    });
-  }, [equipment, search]);
+    return Math.min(
+      Math.max(
+        Math.trunc(
+          value,
+        ),
+        1,
+      ),
+      MAX_QUANTITY,
+    );
+  }
 
   function handleQuantityChange(
     event: ChangeEvent<HTMLInputElement>,
     item: InventoryEquipment,
   ) {
-    const value = Number(event.target.value);
+    const value =
+      Number(
+        event.target.value,
+      );
 
-    if (!Number.isFinite(value)) {
-      return;
-    }
+    const normalizedValue =
+      normalizeQuantity(
+        value,
+      );
 
-    const normalizedValue = Math.max(
-  Math.trunc(value),
-  1,
-);
-
-    setQuantities((current) => ({
-      ...current,
-      [item.id]: normalizedValue,
-    }));
+    setQuantities(
+      (current) => ({
+        ...current,
+        [item.id]:
+          normalizedValue,
+      }),
+    );
   }
 
-function changeQuantity(
-  item: InventoryEquipment,
-  difference: number,
-) {
-  const currentQuantity =
-    quantities[item.id] ?? 1;
+  function changeQuantity(
+    item: InventoryEquipment,
+    difference: number,
+  ) {
+    const currentQuantity =
+      quantities[item.id] ??
+      1;
 
-  setQuantities((current) => ({
-    ...current,
-    [item.id]: Math.max(
-      currentQuantity + difference,
-      1,
-    ),
-  }));
-}
+    const nextQuantity =
+      normalizeQuantity(
+        currentQuantity +
+          difference,
+      );
+
+    setQuantities(
+      (current) => ({
+        ...current,
+        [item.id]:
+          nextQuantity,
+      }),
+    );
+  }
 
   async function handleSave(
     item: InventoryEquipment,
   ) {
     const quantity =
-      quantities[item.id] ?? 1;
+      quantities[item.id] ??
+      1;
 
     if (
-      !Number.isInteger(quantity) ||
-      quantity < 1
+      !Number.isInteger(
+        quantity,
+      ) ||
+      quantity < 1 ||
+      quantity >
+        MAX_QUANTITY
     ) {
       setError(
-        "Informe uma quantidade válida.",
+        `Informe uma quantidade inteira entre 1 e ${MAX_QUANTITY}.`,
       );
       return;
     }
 
     const alreadyReserved =
-      item.currentProjectQuantity > 0;
+      item.currentProjectQuantity >
+      0;
 
     try {
-      setUpdatingId(item.id);
+      setUpdatingId(
+        item.id,
+      );
+
       setError("");
       setSuccessMessage("");
 
-      const endpoint = alreadyReserved
-        ? `/api/projects/${projectId}/equipment/${item.id}`
-        : `/api/projects/${projectId}/equipment`;
+      const endpoint =
+        alreadyReserved
+          ? `/api/projects/${projectId}/equipment/${item.id}`
+          : `/api/projects/${projectId}/equipment`;
 
-      const response = await fetch(endpoint, {
-        method: alreadyReserved
-          ? "PUT"
-          : "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify(
-          alreadyReserved
-            ? {
-                quantity,
-              }
-            : {
-                equipmentId: item.id,
-                quantity,
-              },
-        ),
-      });
+      const response =
+        await fetch(
+          endpoint,
+          {
+            method:
+              alreadyReserved
+                ? "PUT"
+                : "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify(
+                alreadyReserved
+                  ? {
+                      quantity,
+                    }
+                  : {
+                      equipmentId:
+                        item.id,
+                      quantity,
+                    },
+              ),
+          },
+        );
 
       const data =
         (await response.json()) as MutationResponse;
@@ -361,21 +461,27 @@ function changeQuantity(
 
       setSuccessMessage(
         data.message ??
-          (alreadyReserved
-            ? "Quantidade atualizada com sucesso."
-            : "Equipamento adicionado com sucesso."),
+          (
+            alreadyReserved
+              ? "Quantidade atualizada com sucesso."
+              : "Equipamento adicionado com sucesso."
+          ),
       );
 
       await loadEquipment();
       await onUpdated();
-    } catch (saveError) {
+    } catch (
+      saveError
+    ) {
       setError(
         saveError instanceof Error
           ? saveError.message
           : "Não foi possível salvar o equipamento.",
       );
     } finally {
-      setUpdatingId(null);
+      setUpdatingId(
+        null,
+      );
     }
   }
 
@@ -383,22 +489,28 @@ function changeQuantity(
     item: InventoryEquipment,
   ) {
     if (
-      item.currentProjectQuantity < 1
+      item.currentProjectQuantity <
+      1
     ) {
       return;
     }
 
     try {
-      setRemovingId(item.id);
+      setRemovingId(
+        item.id,
+      );
+
       setError("");
       setSuccessMessage("");
 
-      const response = await fetch(
-        `/api/projects/${projectId}/equipment/${item.id}`,
-        {
-          method: "DELETE",
-        },
-      );
+      const response =
+        await fetch(
+          `/api/projects/${projectId}/equipment/${item.id}`,
+          {
+            method:
+              "DELETE",
+          },
+        );
 
       const data =
         (await response.json()) as MutationResponse;
@@ -418,26 +530,34 @@ function changeQuantity(
           "Equipamento removido do projeto.",
       );
 
-      setQuantities((current) => ({
-        ...current,
-        [item.id]: 1,
-      }));
+      setQuantities(
+        (current) => ({
+          ...current,
+          [item.id]: 1,
+        }),
+      );
 
       await loadEquipment();
       await onUpdated();
-    } catch (removeError) {
+    } catch (
+      removeError
+    ) {
       setError(
         removeError instanceof Error
           ? removeError.message
           : "Não foi possível remover o equipamento.",
       );
     } finally {
-      setRemovingId(null);
+      setRemovingId(
+        null,
+      );
     }
   }
 
   function closeModal() {
-    if (isMutating) {
+    if (
+      isMutating
+    ) {
       return;
     }
 
@@ -452,7 +572,9 @@ function changeQuantity(
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
       role="presentation"
-      onMouseDown={(event) => {
+      onMouseDown={(
+        event,
+      ) => {
         if (
           event.target ===
             event.currentTarget &&
@@ -474,19 +596,26 @@ function changeQuantity(
               id="equipment-modal-title"
               className="text-lg font-bold text-zinc-900"
             >
-              Equipamentos do projeto
+              Equipamentos do
+              projeto
             </h2>
 
             <p className="mt-1 text-sm text-zinc-500">
-              Adicione, altere ou remova
-              equipamentos reservados.
+              Adicione, altere ou
+              remova equipamentos
+              necessários ao
+              projeto.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={closeModal}
-            disabled={isMutating}
+            onClick={
+              closeModal
+            }
+            disabled={
+              isMutating
+            }
             aria-label="Fechar modal"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -504,9 +633,12 @@ function changeQuantity(
             <input
               type="search"
               value={search}
-              onChange={(event) => {
+              onChange={(
+                event,
+              ) => {
                 setSearch(
-                  event.target.value,
+                  event.target
+                    .value,
                 );
               }}
               placeholder="Buscar por nome, categoria, fabricante, modelo ou número de série"
@@ -524,7 +656,9 @@ function changeQuantity(
                 className="mt-0.5 shrink-0"
               />
 
-              <span>{error}</span>
+              <span>
+                {error}
+              </span>
             </div>
           ) : null}
 
@@ -533,7 +667,9 @@ function changeQuantity(
               role="status"
               className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
             >
-              {successMessage}
+              {
+                successMessage
+              }
             </div>
           ) : null}
         </div>
@@ -546,13 +682,16 @@ function changeQuantity(
                 className="mr-2 animate-spin"
               />
 
-              Carregando equipamentos...
+              Carregando
+              equipamentos...
             </div>
           ) : filteredEquipment.length ===
             0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-                <Package size={25} />
+                <Package
+                  size={25}
+                />
               </div>
 
               <h3 className="mt-4 font-bold text-zinc-900">
@@ -561,8 +700,10 @@ function changeQuantity(
               </h3>
 
               <p className="mt-1 max-w-md text-sm text-zinc-500">
-                Verifique a busca ou cadastre
-                equipamentos no inventário.
+                Verifique a busca
+                ou cadastre
+                equipamentos no
+                inventário.
               </p>
             </div>
           ) : (
@@ -570,59 +711,91 @@ function changeQuantity(
               {filteredEquipment.map(
                 (item) => {
                   const quantity =
-                    quantities[item.id] ??
-                    1;
+                    quantities[
+                      item.id
+                    ] ?? 1;
 
                   const alreadyReserved =
                     item.currentProjectQuantity >
                     0;
 
-                  const unavailable =
-                    item.status === "UNAVAILABLE";
-
                   const updating =
-                    updatingId === item.id;
+                    updatingId ===
+                    item.id;
 
                   const removing =
-                    removingId === item.id;
+                    removingId ===
+                    item.id;
 
                   const disabled =
-                    isMutating ||
-                    unavailable;
+                    isMutating;
+
+                  const availableNow =
+                    Math.max(
+                      item.availableNow,
+                      0,
+                    );
+
+                  const requestedShortage =
+                    Math.max(
+                      quantity -
+                        availableNow,
+                      0,
+                    );
+
+                  const hasNoStock =
+                    availableNow ===
+                    0;
 
                   return (
                     <article
-                      key={item.id}
+                      key={
+                        item.id
+                      }
                       className="px-5 py-5 sm:px-6"
                     >
                       <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
                         <div className="flex min-w-0 gap-4">
                           <EquipmentThumbnail
-                            item={item}
+                            item={
+                              item
+                            }
                           />
 
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <h3 className="font-bold text-zinc-900">
-                                {item.name}
+                                {
+                                  item.name
+                                }
                               </h3>
 
                               {alreadyReserved ? (
                                 <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
-                                  Reservado neste
+                                  Reservado
+                                  neste
                                   projeto
                                 </span>
                               ) : null}
 
-                              <EquipmentStatusBadge
-                                status={
-                                  item.status
-                                }
-                              />
+                              {hasNoStock ? (
+                                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                                  Sem
+                                  estoque
+                                </span>
+                              ) : (
+                                <EquipmentStatusBadge
+                                  status={
+                                    item.status
+                                  }
+                                />
+                              )}
                             </div>
 
                             <p className="mt-1 text-sm text-zinc-500">
-                              {item.category}
+                              {
+                                item.category
+                              }
 
                               {item.manufacturer
                                 ? ` · ${item.manufacturer}`
@@ -660,14 +833,20 @@ function changeQuantity(
                               <StockValue
                                 label="Disponível agora"
                                 value={
-                                  item.availableNow
+                                  availableNow
                                 }
                               />
 
                               <StockValue
-  label="Disponível sem compra"
-  value={item.availableNow}
-/>
+                                label="Déficit da solicitação"
+                                value={
+                                  requestedShortage
+                                }
+                                danger={
+                                  requestedShortage >
+                                  0
+                                }
+                              />
 
                               {alreadyReserved ? (
                                 <StockValue
@@ -713,7 +892,8 @@ function changeQuantity(
                                 }}
                                 disabled={
                                   disabled ||
-                                  quantity <= 1
+                                  quantity <=
+                                    1
                                 }
                                 aria-label="Diminuir quantidade"
                                 className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -725,8 +905,13 @@ function changeQuantity(
                                 id={`quantity-${item.id}`}
                                 type="number"
                                 min={1}
-                                
-                                value={quantity}
+                                max={
+                                  MAX_QUANTITY
+                                }
+                                step={1}
+                                value={
+                                  quantity
+                                }
                                 onChange={(
                                   event,
                                 ) => {
@@ -749,7 +934,11 @@ function changeQuantity(
                                     1,
                                   );
                                 }}
-                                disabled={disabled}
+                                disabled={
+                                  disabled ||
+                                  quantity >=
+                                    MAX_QUANTITY
+                                }
                                 aria-label="Aumentar quantidade"
                                 className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
                               >
@@ -766,10 +955,8 @@ function changeQuantity(
                               );
                             }}
                             disabled={
-  updating ||
-  removing ||
-  item.status === "UNAVAILABLE"
-}
+                              isMutating
+                            }
                             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {updating ? (
@@ -824,21 +1011,65 @@ function changeQuantity(
                         </div>
                       </div>
 
-                      {item.status ===
-                      "UNAVAILABLE" ? (
-                        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
-                          Este equipamento está
-                          marcado como
-                          indisponível.
-                        </p>
-                      ) : item.availableNow <= 0 ? (
-  <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
-    Não há estoque disponível no momento.
-    Você ainda pode reservar este equipamento.
-    O excedente aparecerá automaticamente na
-    lista de compras.
-  </p>
-) : null}
+                      {requestedShortage >
+                      0 ? (
+                        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+                          <AlertTriangle
+                            size={16}
+                            className="mt-0.5 shrink-0"
+                          />
+
+                          <span>
+                            A solicitação
+                            é de{" "}
+                            <strong>
+                              {
+                                quantity
+                              }
+                            </strong>{" "}
+                            unidade(s),
+                            mas há{" "}
+                            <strong>
+                              {
+                                availableNow
+                              }
+                            </strong>{" "}
+                            disponível(is).
+                            O déficit
+                            de{" "}
+                            <strong>
+                              {
+                                requestedShortage
+                              }
+                            </strong>{" "}
+                            unidade(s)
+                            será
+                            registrado
+                            para compra.
+                          </span>
+                        </div>
+                      ) : hasNoStock ? (
+                        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+                          <AlertTriangle
+                            size={16}
+                            className="mt-0.5 shrink-0"
+                          />
+
+                          <span>
+                            Não há
+                            estoque
+                            disponível no
+                            momento. O
+                            equipamento
+                            ainda pode ser
+                            adicionado ao
+                            projeto e a
+                            necessidade
+                            será enviada
+                            para compra.
+                          </span>
+                        </div>
+                      ) : null}
                     </article>
                   );
                 },
@@ -849,14 +1080,24 @@ function changeQuantity(
 
         <footer className="flex items-center justify-between gap-4 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:px-6">
           <p className="text-sm text-zinc-500">
-            {filteredEquipment.length} de{" "}
-            {equipment.length} equipamento(s)
+            {
+              filteredEquipment.length
+            }{" "}
+            de{" "}
+            {
+              equipment.length
+            }{" "}
+            equipamento(s)
           </p>
 
           <button
             type="button"
-            onClick={closeModal}
-            disabled={isMutating}
+            onClick={
+              closeModal
+            }
+            disabled={
+              isMutating
+            }
             className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Fechar
@@ -879,6 +1120,7 @@ function EquipmentThumbnail({
 
   if (imageUrl) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={imageUrl}
         alt=""
@@ -898,17 +1140,24 @@ function StockValue({
   label,
   value,
   highlighted = false,
+  danger = false,
 }: {
   label: string;
   value: number;
   highlighted?: boolean;
+  danger?: boolean;
 }) {
+  const className =
+    danger
+      ? "font-semibold text-red-600"
+      : highlighted
+        ? "font-semibold text-orange-700"
+        : "text-zinc-500";
+
   return (
     <span
       className={
-        highlighted
-          ? "font-semibold text-orange-700"
-          : "text-zinc-500"
+        className
       }
     >
       {label}:{" "}
@@ -930,17 +1179,23 @@ function EquipmentStatusBadge({
   > = {
     AVAILABLE:
       "bg-emerald-50 text-emerald-700",
+
     IN_USE:
       "bg-blue-50 text-blue-700",
+
     UNAVAILABLE:
-      "bg-red-50 text-red-700",
+      "bg-zinc-100 text-zinc-600",
   };
 
   return (
     <span
       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${colors[status]}`}
     >
-      {statusLabels[status]}
+      {
+        statusLabels[
+          status
+        ]
+      }
     </span>
   );
 }

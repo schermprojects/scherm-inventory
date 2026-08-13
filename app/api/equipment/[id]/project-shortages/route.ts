@@ -34,6 +34,80 @@ const priorityWeight: Record<
   LOW: 3,
 };
 
+type PendingProject = {
+  id: string;
+  name: string;
+
+  clientId: string | null;
+  clientName: string | null;
+
+  status: ProjectStatus;
+  priority: ProjectPriority;
+
+  dueDate: Date | null;
+  createdAt: Date;
+
+  requiredQuantity: number;
+  allocatedQuantity: number;
+
+  /**
+   * Quantidade do projeto que ainda
+   * não teve baixa física.
+   */
+  pendingQuantity: number;
+
+  /**
+   * Parte da necessidade pendente
+   * coberta pelo estoque operacional
+   * existente.
+   */
+  coveredByStock: number;
+
+  /**
+   * Quantidade que ainda precisa
+   * ser comprada.
+   */
+  missingQuantity: number;
+};
+
+function compareProjects(
+  left: PendingProject,
+  right: PendingProject,
+): number {
+  const statusDifference =
+    statusWeight[left.status] -
+    statusWeight[right.status];
+
+  if (statusDifference !== 0) {
+    return statusDifference;
+  }
+
+  const priorityDifference =
+    priorityWeight[left.priority] -
+    priorityWeight[right.priority];
+
+  if (priorityDifference !== 0) {
+    return priorityDifference;
+  }
+
+  const leftDueDate =
+    left.dueDate?.getTime() ??
+    Number.MAX_SAFE_INTEGER;
+
+  const rightDueDate =
+    right.dueDate?.getTime() ??
+    Number.MAX_SAFE_INTEGER;
+
+  if (leftDueDate !== rightDueDate) {
+    return leftDueDate - rightDueDate;
+  }
+
+  return (
+    left.createdAt.getTime() -
+    right.createdAt.getTime()
+  );
+}
+
 export async function GET(
   _request: Request,
   context: RouteContext,
@@ -53,7 +127,8 @@ export async function GET(
   }
 
   try {
-    const { id } = await context.params;
+    const { id } =
+      await context.params;
 
     const equipment =
       await prisma.equipment.findUnique({
@@ -64,6 +139,12 @@ export async function GET(
         select: {
           id: true,
           name: true,
+
+          /**
+           * quantity representa o
+           * estoque operacional atual.
+           */
+          quantity: true,
 
           projects: {
             where: {
@@ -118,110 +199,173 @@ export async function GET(
       );
     }
 
-    const projects = equipment.projects
-      .map((item) => {
-        const requiredQuantity = Math.max(
-          item.quantity,
-          0,
-        );
+    /**
+     * Primeiro calculamos apenas a
+     * necessidade ainda pendente de
+     * baixa para cada projeto.
+     *
+     * allocatedQuantity representa
+     * unidades que já saíram fisicamente
+     * do estoque.
+     */
+    const pendingProjects: PendingProject[] =
+      equipment.projects
+        .map((item) => {
+          const requiredQuantity =
+            Math.max(
+              item.quantity,
+              0,
+            );
 
-        const allocatedQuantity = Math.max(
-          item.allocatedQuantity,
-          0,
-        );
+          const allocatedQuantity =
+            Math.max(
+              item.allocatedQuantity,
+              0,
+            );
 
-        const missingQuantity = Math.max(
-          requiredQuantity -
+          const pendingQuantity =
+            Math.max(
+              requiredQuantity -
+                allocatedQuantity,
+              0,
+            );
+
+          return {
+            id: item.project.id,
+            name: item.project.name,
+
+            clientId:
+              item.project.client
+                ?.id ?? null,
+
+            clientName:
+              item.project.client
+                ?.shortName ??
+              item.project.client
+                ?.name ??
+              item.project.clientName ??
+              null,
+
+            status:
+              item.project.status,
+
+            priority:
+              item.project.priority,
+
+            dueDate:
+              item.project.dueDate,
+
+            createdAt:
+              item.project.createdAt,
+
+            requiredQuantity,
             allocatedQuantity,
-          0,
-        );
 
-        return {
-          id: item.project.id,
-          name: item.project.name,
+            pendingQuantity,
 
-          clientId:
-            item.project.client?.id ??
-            null,
+            coveredByStock: 0,
+            missingQuantity:
+              pendingQuantity,
+          };
+        })
+        .filter(
+          (project) =>
+            project.pendingQuantity >
+            0,
+        )
+        .sort(compareProjects);
 
-          clientName:
-            item.project.client
-              ?.shortName ??
-            item.project.client
-              ?.name ??
-            item.project.clientName ??
-            null,
+    /**
+     * O estoque operacional existente
+     * é utilizado para atender as
+     * necessidades dos projetos ativos.
+     *
+     * A distribuição segue a mesma
+     * prioridade utilizada na listagem:
+     *
+     * 1. Em andamento;
+     * 2. Planejamento;
+     * 3. Prioridade do projeto;
+     * 4. Prazo;
+     * 5. Data de criação.
+     */
+    let remainingOperationalStock =
+      Math.max(
+        equipment.quantity,
+        0,
+      );
 
-          status:
-            item.project.status,
+    const projects =
+      pendingProjects.map(
+        (project) => {
+          const coveredByStock =
+            Math.min(
+              project.pendingQuantity,
+              remainingOperationalStock,
+            );
 
-          priority:
-            item.project.priority,
+          remainingOperationalStock =
+            Math.max(
+              remainingOperationalStock -
+                coveredByStock,
+              0,
+            );
 
-          dueDate:
-            item.project.dueDate,
+          const missingQuantity =
+            Math.max(
+              project.pendingQuantity -
+                coveredByStock,
+              0,
+            );
 
-          createdAt:
-            item.project.createdAt,
+          return {
+            ...project,
 
-          requiredQuantity,
-          allocatedQuantity,
-          missingQuantity,
-        };
-      })
-      .filter(
+            coveredByStock,
+            missingQuantity,
+          };
+        },
+      );
+
+    /**
+     * O modal de entrada precisa mostrar
+     * somente projetos que ainda possuem
+     * déficit real.
+     *
+     * Se o estoque atual já cobre a
+     * necessidade, o projeto não precisa
+     * aparecer como pendente para compra.
+     */
+    const projectsWithShortage =
+      projects.filter(
         (project) =>
-          project.missingQuantity > 0,
-      )
-      .sort((left, right) => {
-        const statusDifference =
-          statusWeight[left.status] -
-          statusWeight[right.status];
+          project.missingQuantity >
+          0,
+      );
 
-        if (statusDifference !== 0) {
-          return statusDifference;
-        }
+    const totalPendingQuantity =
+      projects.reduce(
+        (total, project) =>
+          total +
+          project.pendingQuantity,
+        0,
+      );
 
-        const priorityDifference =
-          priorityWeight[left.priority] -
-          priorityWeight[right.priority];
+    const totalCoveredByStock =
+      projects.reduce(
+        (total, project) =>
+          total +
+          project.coveredByStock,
+        0,
+      );
 
-        if (priorityDifference !== 0) {
-          return priorityDifference;
-        }
-
-        const leftDueDate =
-          left.dueDate
-            ? new Date(
-                left.dueDate,
-              ).getTime()
-            : Number.MAX_SAFE_INTEGER;
-
-        const rightDueDate =
-          right.dueDate
-            ? new Date(
-                right.dueDate,
-              ).getTime()
-            : Number.MAX_SAFE_INTEGER;
-
-        if (
-          leftDueDate !== rightDueDate
-        ) {
-          return (
-            leftDueDate -
-            rightDueDate
-          );
-        }
-
-        return (
-          new Date(
-            left.createdAt,
-          ).getTime() -
-          new Date(
-            right.createdAt,
-          ).getTime()
-        );
-      });
+    const totalMissingQuantity =
+      projectsWithShortage.reduce(
+        (total, project) =>
+          total +
+          project.missingQuantity,
+        0,
+      );
 
     return Response.json({
       success: true,
@@ -230,17 +374,23 @@ export async function GET(
         equipment: {
           id: equipment.id,
           name: equipment.name,
+
+          operationalStock:
+            Math.max(
+              equipment.quantity,
+              0,
+            ),
+
+          availableAfterDemand:
+            remainingOperationalStock,
         },
 
-        projects,
+        projects:
+          projectsWithShortage,
 
-        totalMissingQuantity:
-          projects.reduce(
-            (total, project) =>
-              total +
-              project.missingQuantity,
-            0,
-          ),
+        totalPendingQuantity,
+        totalCoveredByStock,
+        totalMissingQuantity,
       },
     });
   } catch (error) {

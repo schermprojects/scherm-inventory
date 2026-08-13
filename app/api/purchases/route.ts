@@ -17,6 +17,27 @@ type PurchaseProject = {
   name: string;
   clientName: string | null;
   status: ProjectStatus;
+
+  /**
+   * Necessidade total registrada
+   * no projeto.
+   */
+  requiredQuantity: number;
+
+  /**
+   * Quantidade que já teve
+   * baixa física.
+   */
+  allocatedQuantity: number;
+
+  /**
+   * Quantidade que ainda precisa
+   * ser atendida.
+   *
+   * Mantemos também em "quantity"
+   * por compatibilidade com a tela
+   * atual de Compras.
+   */
   quantity: number;
 };
 
@@ -30,6 +51,7 @@ type PurchaseItem = {
 
   physicalStock: number;
   minimumStock: number;
+
   totalNeeded: number;
   inUse: number;
   availableStock: number;
@@ -74,6 +96,7 @@ export async function GET() {
 
             select: {
               quantity: true,
+              allocatedQuantity: true,
 
               project: {
                 select: {
@@ -93,89 +116,205 @@ export async function GET() {
       });
 
     const items: PurchaseItem[] =
-      equipmentRecords.map((equipment) => {
-        const projects: PurchaseProject[] =
-          equipment.projects
-            .map((projectEquipment) => ({
-              id: projectEquipment.project.id,
-              name: projectEquipment.project.name,
-              clientName:
-                projectEquipment.project.clientName,
-              status:
-                projectEquipment.project.status,
-              quantity: Math.max(
-                projectEquipment.quantity,
-                0,
-              ),
-            }))
-            .sort((first, second) =>
-              first.name.localeCompare(
-                second.name,
-                "pt-BR",
-                {
-                  sensitivity: "base",
+      equipmentRecords.map(
+        (equipment) => {
+          /*
+           * A necessidade ativa de um
+           * projeto é somente aquilo que
+           * ainda não teve baixa física.
+           *
+           * Exemplo:
+           *
+           * quantity = 10
+           * allocatedQuantity = 4
+           *
+           * necessidade pendente = 6
+           */
+          const projects: PurchaseProject[] =
+            equipment.projects
+              .map(
+                (projectEquipment) => {
+                  const requiredQuantity =
+                    Math.max(
+                      projectEquipment.quantity,
+                      0,
+                    );
+
+                  const allocatedQuantity =
+                    Math.max(
+                      projectEquipment.allocatedQuantity,
+                      0,
+                    );
+
+                  const pendingQuantity =
+                    Math.max(
+                      requiredQuantity -
+                        allocatedQuantity,
+                      0,
+                    );
+
+                  return {
+                    id:
+                      projectEquipment.project.id,
+
+                    name:
+                      projectEquipment.project.name,
+
+                    clientName:
+                      projectEquipment.project
+                        .clientName,
+
+                    status:
+                      projectEquipment.project
+                        .status,
+
+                    requiredQuantity,
+
+                    allocatedQuantity,
+
+                    /*
+                     * Compatibilidade com
+                     * PurchasesView.
+                     *
+                     * A tela atual usa
+                     * project.quantity para
+                     * mostrar "Necessário".
+                     *
+                     * Agora esse valor
+                     * representa necessidade
+                     * pendente.
+                     */
+                    quantity:
+                      pendingQuantity,
+                  };
                 },
-              ),
+              )
+              /*
+               * Projetos totalmente baixados
+               * não possuem necessidade de
+               * compra, mesmo que tenham sido
+               * reabertos posteriormente.
+               */
+              .filter(
+                (project) =>
+                  project.quantity > 0,
+              )
+              .sort(
+                (first, second) =>
+                  first.name.localeCompare(
+                    second.name,
+                    "pt-BR",
+                    {
+                      sensitivity:
+                        "base",
+                    },
+                  ),
+              );
+
+          /*
+           * Necessidade pendente total dos
+           * projetos ativos.
+           */
+          const totalNeeded =
+            projects.reduce(
+              (total, project) =>
+                total +
+                project.quantity,
+              0,
             );
 
-        const totalNeeded = projects.reduce(
-          (total, project) =>
-            total + project.quantity,
-          0,
-        );
+          /*
+           * O estoque operacional atual
+           * atende as necessidades ativas.
+           *
+           * calculateStock calcula:
+           *
+           * - Em uso;
+           * - Disponível;
+           * - Déficit.
+           */
+          const {
+            physicalStock,
+            inUse,
+            availableStock,
+            shortage,
+          } = calculateStock(
+            equipment.quantity,
+            totalNeeded,
+          );
 
-        const {
-          physicalStock,
-          inUse,
-          availableStock,
-          shortage,
-        } = calculateStock(
-          equipment.quantity,
-          totalNeeded,
-        );
+          return {
+            equipmentId:
+              equipment.id,
 
-        return {
-          equipmentId: equipment.id,
-          name: equipment.name,
-          category: equipment.category,
-          manufacturer:
-            equipment.manufacturer,
-          model: equipment.model,
-          serialNumber:
-            equipment.serialNumber,
+            name:
+              equipment.name,
 
-          physicalStock,
-          minimumStock: Math.max(
-            equipment.minimumStock,
-            0,
-          ),
+            category:
+              equipment.category,
 
-          totalNeeded,
-          inUse,
-          availableStock,
+            manufacturer:
+              equipment.manufacturer,
 
-          availableAfterDemand:
+            model:
+              equipment.model,
+
+            serialNumber:
+              equipment.serialNumber,
+
+            physicalStock,
+
+            minimumStock:
+              Math.max(
+                equipment.minimumStock,
+                0,
+              ),
+
+            totalNeeded,
+
+            inUse,
+
             availableStock,
 
-          purchaseQuantity: shortage,
+            availableAfterDemand:
+              availableStock,
 
-          projectCount: projects.length,
-          projects,
+            /*
+             * O déficit calculado é
+             * exatamente a quantidade
+             * ainda necessária para compra.
+             */
+            purchaseQuantity:
+              shortage,
 
-          isOutOfStock:
-            physicalStock === 0,
+            projectCount:
+              projects.length,
 
-          isBelowMinimum:
-            availableStock <=
-            Math.max(
-              equipment.minimumStock,
-              0,
-            ),
+            projects,
 
-          hasShortage: shortage > 0,
-        };
-      });
+            isOutOfStock:
+              physicalStock === 0,
 
+            isBelowMinimum:
+              availableStock <=
+              Math.max(
+                equipment.minimumStock,
+                0,
+              ),
+
+            hasShortage:
+              shortage > 0,
+          };
+        },
+      );
+
+    /*
+     * Categorias apresentadas na tela
+     * de Compras.
+     *
+     * Somente itens que realmente
+     * possuem déficit entram nesta lista.
+     */
     const purchaseCategories =
       Array.from(
         new Set(
@@ -184,72 +323,90 @@ export async function GET() {
               (item) =>
                 item.hasShortage,
             )
-            .map((item) =>
-              item.category.trim(),
+            .map(
+              (item) =>
+                item.category.trim(),
             )
             .filter(Boolean),
         ),
-      ).sort((first, second) =>
-        first.localeCompare(
-          second,
-          "pt-BR",
-          {
-            sensitivity: "base",
-          },
-        ),
+      ).sort(
+        (first, second) =>
+          first.localeCompare(
+            second,
+            "pt-BR",
+            {
+              sensitivity: "base",
+            },
+          ),
       );
 
     const affectedProjectIds =
       new Set<string>();
 
-    const summary = items.reduce(
-      (accumulator, item) => {
-        accumulator.totalEquipment +=
-          1;
-
-        accumulator.totalPhysicalStock +=
-          item.physicalStock;
-
-        accumulator.totalNeeded +=
-          item.totalNeeded;
-
-        accumulator.totalToPurchase +=
-          item.purchaseQuantity;
-
-        if (item.hasShortage) {
-          accumulator.equipmentWithShortage +=
+    const summary =
+      items.reduce(
+        (
+          accumulator,
+          item,
+        ) => {
+          accumulator.totalEquipment +=
             1;
 
-          for (const project of item.projects) {
-            affectedProjectIds.add(
-              project.id,
-            );
+          accumulator.totalPhysicalStock +=
+            item.physicalStock;
+
+          accumulator.totalNeeded +=
+            item.totalNeeded;
+
+          accumulator.totalToPurchase +=
+            item.purchaseQuantity;
+
+          if (item.hasShortage) {
+            accumulator.equipmentWithShortage +=
+              1;
+
+            /*
+             * Mantemos os projetos com
+             * necessidade pendente ligados
+             * a itens deficitários.
+             */
+            for (
+              const project of
+              item.projects
+            ) {
+              affectedProjectIds.add(
+                project.id,
+              );
+            }
           }
-        }
 
-        if (item.isOutOfStock) {
-          accumulator.outOfStock +=
-            1;
-        }
+          if (
+            item.isOutOfStock
+          ) {
+            accumulator.outOfStock +=
+              1;
+          }
 
-        if (item.isBelowMinimum) {
-          accumulator.belowMinimum +=
-            1;
-        }
+          if (
+            item.isBelowMinimum
+          ) {
+            accumulator.belowMinimum +=
+              1;
+          }
 
-        return accumulator;
-      },
-      {
-        totalEquipment: 0,
-        equipmentWithShortage: 0,
-        totalPhysicalStock: 0,
-        totalNeeded: 0,
-        totalToPurchase: 0,
-        outOfStock: 0,
-        belowMinimum: 0,
-        affectedProjects: 0,
-      },
-    );
+          return accumulator;
+        },
+        {
+          totalEquipment: 0,
+          equipmentWithShortage: 0,
+          totalPhysicalStock: 0,
+          totalNeeded: 0,
+          totalToPurchase: 0,
+          outOfStock: 0,
+          belowMinimum: 0,
+          affectedProjects: 0,
+        },
+      );
 
     summary.affectedProjects =
       affectedProjectIds.size;
@@ -257,7 +414,8 @@ export async function GET() {
     return Response.json({
       success: true,
       data: items,
-      categories: purchaseCategories,
+      categories:
+        purchaseCategories,
       summary,
     });
   } catch (error) {
