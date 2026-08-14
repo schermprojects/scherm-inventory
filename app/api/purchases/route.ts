@@ -1,7 +1,9 @@
-import { ProjectStatus } from "@/generated/prisma/client";
+import {
+  ProjectPriority,
+  ProjectStatus,
+} from "@/generated/prisma/client";
 
 import { auth } from "@/auth";
-import { calculateStock } from "@/lib/inventory/calculateStock";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -12,31 +14,83 @@ const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
   ProjectStatus.IN_PROGRESS,
 ];
 
+/*
+ * Mesma regra utilizada na listagem
+ * dos projetos.
+ *
+ * Quanto menor o peso, maior a
+ * prioridade na disputa do estoque.
+ */
+const PROJECT_STATUS_WEIGHT: Record<
+  ProjectStatus,
+  number
+> = {
+  [ProjectStatus.IN_PROGRESS]: 0,
+  [ProjectStatus.PLANNING]: 1,
+  [ProjectStatus.COMPLETED]: 2,
+  [ProjectStatus.CANCELLED]: 3,
+};
+
+const PROJECT_PRIORITY_WEIGHT: Record<
+  ProjectPriority,
+  number
+> = {
+  [ProjectPriority.URGENT]: 0,
+  [ProjectPriority.HIGH]: 1,
+  [ProjectPriority.NORMAL]: 2,
+  [ProjectPriority.LOW]: 3,
+};
+
 type PurchaseProject = {
   id: string;
   name: string;
   clientName: string | null;
   status: ProjectStatus;
 
-  /**
+  /*
    * Necessidade total registrada
    * no projeto.
    */
   requiredQuantity: number;
 
-  /**
+  /*
    * Quantidade que já teve
    * baixa física.
    */
   allocatedQuantity: number;
 
-  /**
-   * Quantidade que ainda precisa
-   * ser atendida.
+  /*
+   * Necessidade ainda pendente,
+   * antes de considerar o estoque
+   * operacional existente.
+   */
+  pendingQuantity: number;
+
+  /*
+   * Quantidade do estoque atual
+   * que consegue atender este projeto.
+   */
+  coveredByStock: number;
+
+  /*
+   * Quantidade que realmente
+   * precisa ser comprada para
+   * este projeto.
+   */
+  purchaseQuantity: number;
+
+  /*
+   * Mantido por compatibilidade
+   * com PurchasesView.
    *
-   * Mantemos também em "quantity"
-   * por compatibilidade com a tela
-   * atual de Compras.
+   * A tela atual utiliza
+   * project.quantity no campo
+   * "Necessário".
+   *
+   * Em Compras, esse valor passa
+   * a representar exatamente a
+   * necessidade DE COMPRA deste
+   * projeto.
    */
   quantity: number;
 };
@@ -52,13 +106,42 @@ type PurchaseItem = {
   physicalStock: number;
   minimumStock: number;
 
+  /*
+   * Necessidade pendente total
+   * dos projetos ativos.
+   */
   totalNeeded: number;
+
+  /*
+   * Quantidade do estoque atual
+   * comprometida com as demandas.
+   */
   inUse: number;
+
+  /*
+   * Estoque que sobra depois de
+   * atender as demandas ativas.
+   */
   availableStock: number;
+
   availableAfterDemand: number;
+
+  /*
+   * Déficit real a comprar.
+   */
   purchaseQuantity: number;
 
+  /*
+   * Aqui contamos somente projetos
+   * que possuem déficit de compra.
+   */
   projectCount: number;
+
+  /*
+   * Também retornamos somente os
+   * projetos que efetivamente têm
+   * algo a comprar.
+   */
   projects: PurchaseProject[];
 
   isOutOfStock: boolean;
@@ -67,13 +150,15 @@ type PurchaseItem = {
 };
 
 export async function GET() {
-  const session = await auth();
+  const session =
+    await auth();
 
   if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -89,14 +174,17 @@ export async function GET() {
             where: {
               project: {
                 status: {
-                  in: ACTIVE_PROJECT_STATUSES,
+                  in:
+                    ACTIVE_PROJECT_STATUSES,
                 },
               },
             },
 
             select: {
               quantity: true,
-              allocatedQuantity: true,
+
+              allocatedQuantity:
+                true,
 
               project: {
                 select: {
@@ -104,6 +192,9 @@ export async function GET() {
                   name: true,
                   clientName: true,
                   status: true,
+                  priority: true,
+                  dueDate: true,
+                  createdAt: true,
                 },
               },
             },
@@ -119,21 +210,33 @@ export async function GET() {
       equipmentRecords.map(
         (equipment) => {
           /*
-           * A necessidade ativa de um
-           * projeto é somente aquilo que
-           * ainda não teve baixa física.
+           * Estoque operacional atual.
            *
-           * Exemplo:
+           * Importante:
            *
-           * quantity = 10
-           * allocatedQuantity = 4
+           * allocatedQuantity NÃO deve
+           * ser subtraído novamente daqui.
            *
-           * necessidade pendente = 6
+           * Quando houve baixa física,
+           * equipment.quantity já foi
+           * reduzido naquela operação.
            */
-          const projects: PurchaseProject[] =
+          const physicalStock =
+            Math.max(
+              equipment.quantity,
+              0,
+            );
+
+          /*
+           * Primeiro normalizamos todas
+           * as demandas ainda pendentes.
+           */
+          const pendingProjects =
             equipment.projects
               .map(
-                (projectEquipment) => {
+                (
+                  projectEquipment,
+                ) => {
                   const requiredQuantity =
                     Math.max(
                       projectEquipment.quantity,
@@ -142,10 +245,17 @@ export async function GET() {
 
                   const allocatedQuantity =
                     Math.max(
-                      projectEquipment.allocatedQuantity,
+                      projectEquipment
+                        .allocatedQuantity,
                       0,
                     );
 
+                  /*
+                   * Somente aquilo que
+                   * ainda não teve baixa
+                   * física disputa o
+                   * estoque atual.
+                   */
                   const pendingQuantity =
                     Math.max(
                       requiredQuantity -
@@ -155,93 +265,264 @@ export async function GET() {
 
                   return {
                     id:
-                      projectEquipment.project.id,
+                      projectEquipment
+                        .project.id,
 
                     name:
-                      projectEquipment.project.name,
+                      projectEquipment
+                        .project.name,
 
                     clientName:
-                      projectEquipment.project
+                      projectEquipment
+                        .project
                         .clientName,
 
                     status:
-                      projectEquipment.project
-                        .status,
+                      projectEquipment
+                        .project.status,
+
+                    priority:
+                      projectEquipment
+                        .project.priority,
+
+                    dueDate:
+                      projectEquipment
+                        .project.dueDate,
+
+                    createdAt:
+                      projectEquipment
+                        .project.createdAt,
 
                     requiredQuantity,
 
                     allocatedQuantity,
 
-                    /*
-                     * Compatibilidade com
-                     * PurchasesView.
-                     *
-                     * A tela atual usa
-                     * project.quantity para
-                     * mostrar "Necessário".
-                     *
-                     * Agora esse valor
-                     * representa necessidade
-                     * pendente.
-                     */
-                    quantity:
-                      pendingQuantity,
+                    pendingQuantity,
                   };
                 },
               )
               /*
-               * Projetos totalmente baixados
-               * não possuem necessidade de
-               * compra, mesmo que tenham sido
-               * reabertos posteriormente.
+               * Se não existe mais nada
+               * pendente, o projeto não
+               * participa da disputa.
                */
               .filter(
                 (project) =>
-                  project.quantity > 0,
-              )
-              .sort(
-                (first, second) =>
-                  first.name.localeCompare(
-                    second.name,
-                    "pt-BR",
-                    {
-                      sensitivity:
-                        "base",
-                    },
-                  ),
+                  project.pendingQuantity >
+                  0,
               );
 
           /*
-           * Necessidade pendente total dos
-           * projetos ativos.
+           * Ordem determinística para
+           * distribuir o estoque.
+           *
+           * 1. Em andamento
+           * 2. Planejamento
+           * 3. Prioridade
+           * 4. Prazo mais próximo
+           * 5. Projeto mais antigo
+           * 6. ID
+           *
+           * É a mesma política utilizada
+           * na API de projetos.
            */
-          const totalNeeded =
-            projects.reduce(
-              (total, project) =>
-                total +
-                project.quantity,
-              0,
+          const orderedProjects =
+            [...pendingProjects].sort(
+              (
+                first,
+                second,
+              ) => {
+                const statusDifference =
+                  PROJECT_STATUS_WEIGHT[
+                    first.status
+                  ] -
+                  PROJECT_STATUS_WEIGHT[
+                    second.status
+                  ];
+
+                if (
+                  statusDifference !==
+                  0
+                ) {
+                  return statusDifference;
+                }
+
+                const priorityDifference =
+                  PROJECT_PRIORITY_WEIGHT[
+                    first.priority
+                  ] -
+                  PROJECT_PRIORITY_WEIGHT[
+                    second.priority
+                  ];
+
+                if (
+                  priorityDifference !==
+                  0
+                ) {
+                  return priorityDifference;
+                }
+
+                const firstDueDate =
+                  first.dueDate
+                    ?.getTime() ??
+                  Number.MAX_SAFE_INTEGER;
+
+                const secondDueDate =
+                  second.dueDate
+                    ?.getTime() ??
+                  Number.MAX_SAFE_INTEGER;
+
+                if (
+                  firstDueDate !==
+                  secondDueDate
+                ) {
+                  return (
+                    firstDueDate -
+                    secondDueDate
+                  );
+                }
+
+                const createdAtDifference =
+                  first.createdAt.getTime() -
+                  second.createdAt.getTime();
+
+                if (
+                  createdAtDifference !==
+                  0
+                ) {
+                  return createdAtDifference;
+                }
+
+                return first.id.localeCompare(
+                  second.id,
+                );
+              },
             );
 
           /*
-           * O estoque operacional atual
-           * atende as necessidades ativas.
+           * A partir daqui o estoque é
+           * consumido virtualmente UMA
+           * única vez.
            *
-           * calculateStock calcula:
+           * Isso NÃO altera banco.
            *
-           * - Em uso;
-           * - Disponível;
-           * - Déficit.
+           * É somente o cálculo de quem
+           * está coberto e quem gera compra.
            */
-          const {
-            physicalStock,
-            inUse,
-            availableStock,
-            shortage,
-          } = calculateStock(
-            equipment.quantity,
-            totalNeeded,
-          );
+          let remainingStock =
+            physicalStock;
+
+          let totalNeeded = 0;
+          let inUse = 0;
+
+          const projectsWithShortage:
+            PurchaseProject[] = [];
+
+          for (
+            const project of
+            orderedProjects
+          ) {
+            totalNeeded +=
+              project.pendingQuantity;
+
+            const availableBeforeProject =
+              Math.max(
+                remainingStock,
+                0,
+              );
+
+            const coveredByStock =
+              Math.min(
+                project.pendingQuantity,
+                availableBeforeProject,
+              );
+
+            const purchaseQuantity =
+              Math.max(
+                project.pendingQuantity -
+                  coveredByStock,
+                0,
+              );
+
+            remainingStock =
+              Math.max(
+                availableBeforeProject -
+                  coveredByStock,
+                0,
+              );
+
+            inUse +=
+              coveredByStock;
+
+            /*
+             * Compras só precisa exibir
+             * projetos que realmente
+             * possuem algo faltando.
+             */
+            if (
+              purchaseQuantity >
+              0
+            ) {
+              projectsWithShortage.push(
+                {
+                  id:
+                    project.id,
+
+                  name:
+                    project.name,
+
+                  clientName:
+                    project.clientName,
+
+                  status:
+                    project.status,
+
+                  requiredQuantity:
+                    project.requiredQuantity,
+
+                  allocatedQuantity:
+                    project.allocatedQuantity,
+
+                  pendingQuantity:
+                    project.pendingQuantity,
+
+                  coveredByStock,
+
+                  purchaseQuantity,
+
+                  /*
+                   * Compatibilidade com
+                   * a tela atual.
+                   */
+                  quantity:
+                    purchaseQuantity,
+                },
+              );
+            }
+          }
+
+          const availableStock =
+            Math.max(
+              remainingStock,
+              0,
+            );
+
+          const purchaseQuantity =
+            projectsWithShortage.reduce(
+              (
+                total,
+                project,
+              ) =>
+                total +
+                project.purchaseQuantity,
+              0,
+            );
+
+          const minimumStock =
+            Math.max(
+              equipment.minimumStock,
+              0,
+            );
 
           return {
             equipmentId:
@@ -264,14 +545,26 @@ export async function GET() {
 
             physicalStock,
 
-            minimumStock:
-              Math.max(
-                equipment.minimumStock,
-                0,
-              ),
+            minimumStock,
 
+            /*
+             * Continua mostrando a
+             * necessidade pendente total.
+             *
+             * Exemplo:
+             *
+             * Projeto A = 5
+             * Projeto B = 5
+             *
+             * totalNeeded = 10
+             */
             totalNeeded,
 
+            /*
+             * Quantidade do estoque
+             * utilizada virtualmente
+             * para cobrir os projetos.
+             */
             inUse,
 
             availableStock,
@@ -280,40 +573,41 @@ export async function GET() {
               availableStock,
 
             /*
-             * O déficit calculado é
-             * exatamente a quantidade
-             * ainda necessária para compra.
+             * Soma dos déficits
+             * individuais.
              */
-            purchaseQuantity:
-              shortage,
+            purchaseQuantity,
 
+            /*
+             * Agora representa quantos
+             * projetos realmente possuem
+             * necessidade de compra.
+             */
             projectCount:
-              projects.length,
+              projectsWithShortage.length,
 
-            projects,
+            projects:
+              projectsWithShortage,
 
             isOutOfStock:
               physicalStock === 0,
 
             isBelowMinimum:
               availableStock <=
-              Math.max(
-                equipment.minimumStock,
-                0,
-              ),
+              minimumStock,
 
             hasShortage:
-              shortage > 0,
+              purchaseQuantity > 0,
           };
         },
       );
 
     /*
-     * Categorias apresentadas na tela
-     * de Compras.
+     * Categorias apresentadas em
+     * Compras.
      *
-     * Somente itens que realmente
-     * possuem déficit entram nesta lista.
+     * Somente itens realmente
+     * deficitários entram aqui.
      */
     const purchaseCategories =
       Array.from(
@@ -330,16 +624,25 @@ export async function GET() {
             .filter(Boolean),
         ),
       ).sort(
-        (first, second) =>
+        (
+          first,
+          second,
+        ) =>
           first.localeCompare(
             second,
             "pt-BR",
             {
-              sensitivity: "base",
+              sensitivity:
+                "base",
             },
           ),
       );
 
+    /*
+     * Agora affectedProjects contém
+     * somente projetos que realmente
+     * possuem compra pendente.
+     */
     const affectedProjectIds =
       new Set<string>();
 
@@ -361,15 +664,12 @@ export async function GET() {
           accumulator.totalToPurchase +=
             item.purchaseQuantity;
 
-          if (item.hasShortage) {
+          if (
+            item.hasShortage
+          ) {
             accumulator.equipmentWithShortage +=
               1;
 
-            /*
-             * Mantemos os projetos com
-             * necessidade pendente ligados
-             * a itens deficitários.
-             */
             for (
               const project of
               item.projects
@@ -398,12 +698,20 @@ export async function GET() {
         },
         {
           totalEquipment: 0,
-          equipmentWithShortage: 0,
+
+          equipmentWithShortage:
+            0,
+
           totalPhysicalStock: 0,
+
           totalNeeded: 0,
+
           totalToPurchase: 0,
+
           outOfStock: 0,
+
           belowMinimum: 0,
+
           affectedProjects: 0,
         },
       );
@@ -413,9 +721,13 @@ export async function GET() {
 
     return Response.json({
       success: true,
-      data: items,
+
+      data:
+        items,
+
       categories:
         purchaseCategories,
+
       summary,
     });
   } catch (error) {
@@ -427,6 +739,7 @@ export async function GET() {
     return Response.json(
       {
         success: false,
+
         message:
           "Não foi possível carregar a lista de compras.",
       },

@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { LOW_STOCK_THRESHOLD } from "@/lib/inventory/stockAlert";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
@@ -193,6 +195,13 @@ type CreateProjectResponse = {
   error?: string;
 };
 
+type ManufacturersResponse = {
+  success: boolean;
+  data?: string[];
+  message?: string;
+  error?: string;
+};
+
 type ProjectFormState = {
   name: string;
   clientId: string;
@@ -213,7 +222,7 @@ type NewEquipmentFormState = {
   manufacturer: string;
   model: string;
   serialNumber: string;
-  minimumStock: string;
+  requestedQuantity: string;
   notes: string;
 };
 
@@ -223,7 +232,83 @@ type FeedbackState = {
 };
 
 const MAX_EQUIPMENT_QUANTITY = 999999;
-const DEFAULT_MINIMUM_STOCK = 3;
+
+const EQUIPMENT_CATEGORIES = [
+  "Processador",
+  "Placa-mãe",
+  "Memória RAM",
+  "Armazenamento (SSD/HD)",
+  "Placa de vídeo",
+  "Fonte",
+  "Gabinete",
+  "Cooler/Refrigeração",
+  "Monitor",
+  "Teclado",
+  "Mouse",
+  "Controladora RAID",
+  "Controladora SAS",
+  "Switch de rede",
+  "Cabo de energia",
+  "Cabo de rede Ethernet",
+  "Cabo de rede Infiniband",
+  "Periférico",
+  "Rede",
+  "Outro",
+];
+
+const DEFAULT_MANUFACTURERS = [
+  "AMD",
+  "AOC",
+  "APC",
+  "Arista",
+  "Aruba",
+  "ASRock Rack",
+  "ASUS",
+  "Belden",
+  "Broadcom",
+  "Cisco",
+  "Cooler Master",
+  "Corsair",
+  "Crucial",
+  "Dell",
+  "Dell EMC",
+  "Eaton",
+  "Fortinet",
+  "Furukawa",
+  "Gigabyte",
+  "HPE",
+  "Huawei",
+  "Intel",
+  "Intelbras",
+  "Juniper",
+  "Kingston",
+  "Legrand",
+  "Lenovo",
+  "LG",
+  "Logitech",
+  "Micron",
+  "Microsoft",
+  "MikroTik",
+  "NetApp",
+  "Nexans",
+  "NVIDIA",
+  "Noctua",
+  "Palo Alto Networks",
+  "Panduit",
+  "Pure Storage",
+  "QNAP",
+  "Samsung",
+  "Schneider Electric",
+  "Seagate",
+  "Seasonic",
+  "Sophos",
+  "Supermicro",
+  "Synology",
+  "Toshiba",
+  "Ubiquiti",
+  "Vertiv",
+  "Western Digital",
+];
 
 const initialSummary: ProjectSummary = {
   total: 0,
@@ -236,14 +321,20 @@ const initialSummary: ProjectSummary = {
   projectsWithShortage: 0,
 };
 
-const statusLabels: Record<ProjectStatus, string> = {
+const statusLabels: Record<
+  ProjectStatus,
+  string
+> = {
   PLANNING: "Planejamento",
   IN_PROGRESS: "Em andamento",
   COMPLETED: "Concluído",
   CANCELLED: "Cancelado",
 };
 
-const priorityLabels: Record<ProjectPriority, string> = {
+const priorityLabels: Record<
+  ProjectPriority,
+  string
+> = {
   LOW: "Baixa",
   NORMAL: "Normal",
   HIGH: "Alta",
@@ -301,7 +392,7 @@ function createInitialEquipmentFormState(): NewEquipmentFormState {
     manufacturer: "",
     model: "",
     serialNumber: "",
-    minimumStock: String(DEFAULT_MINIMUM_STOCK),
+    requestedQuantity: "1",
     notes: "",
   };
 }
@@ -319,12 +410,9 @@ function formatDate(
     return "Data inválida";
   }
 
-  return new Intl.DateTimeFormat(
-    "pt-BR",
-    {
-      dateStyle: "short",
-    },
-  ).format(date);
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+  }).format(date);
 }
 
 function getErrorMessage(
@@ -385,6 +473,49 @@ function sortEquipmentOptions(
   );
 }
 
+function mergeManufacturerOptions(
+  manufacturers: string[],
+): string[] {
+  const map = new Map<string, string>();
+
+  for (const manufacturer of [
+    ...DEFAULT_MANUFACTURERS,
+    ...manufacturers,
+  ]) {
+    const trimmed =
+      manufacturer.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    const key = trimmed
+      .normalize("NFD")
+      .replace(
+        /[\u0300-\u036f]/g,
+        "",
+      )
+      .toLocaleLowerCase("pt-BR");
+
+    if (!map.has(key)) {
+      map.set(key, trimmed);
+    }
+  }
+
+  return Array.from(
+    map.values(),
+  ).sort(
+    (first, second) =>
+      first.localeCompare(
+        second,
+        "pt-BR",
+        {
+          sensitivity: "base",
+        },
+      ),
+  );
+}
+
 export function ProjectsView() {
   const { data: session } =
     useSession();
@@ -425,10 +556,18 @@ export function ProjectsView() {
   const [
     equipmentOptions,
     setEquipmentOptions,
-  ] =
-    useState<EquipmentOption[]>(
-      [],
-    );
+  ] = useState<
+    EquipmentOption[]
+  >([]);
+
+  const [
+    manufacturerOptions,
+    setManufacturerOptions,
+  ] = useState<string[]>(
+    () => [
+      ...DEFAULT_MANUFACTURERS,
+    ],
+  );
 
   const [summary, setSummary] =
     useState(initialSummary);
@@ -518,10 +657,7 @@ export function ProjectsView() {
     null,
   );
 
-  const [
-    feedback,
-    setFeedback,
-  ] =
+  const [feedback, setFeedback] =
     useState<FeedbackState | null>(
       null,
     );
@@ -684,9 +820,8 @@ export function ProjectsView() {
           Number(item.quantity);
 
         const needed =
-          Number.isInteger(
-            quantity,
-          ) && quantity > 0
+          Number.isInteger(quantity) &&
+          quantity > 0
             ? quantity
             : 0;
 
@@ -696,8 +831,11 @@ export function ProjectsView() {
           );
 
         const availableStock =
-          equipment.availableStock ??
-          physicalStock;
+          Math.max(
+            equipment.availableStock ??
+              physicalStock,
+            0,
+          );
 
         const shortage =
           Math.max(
@@ -707,8 +845,10 @@ export function ProjectsView() {
           );
 
         totalNeeded += needed;
+
         totalAvailable +=
           availableStock;
+
         totalShortage +=
           shortage;
 
@@ -793,17 +933,13 @@ export function ProjectsView() {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(
-              data,
-            ) ??
+            getApiMessage(data) ??
               "Não foi possível carregar os projetos.",
           );
         }
 
         setProjects(
-          Array.isArray(
-            data.data,
-          )
+          Array.isArray(data.data)
             ? data.data
             : [],
         );
@@ -821,9 +957,7 @@ export function ProjectsView() {
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(
-              error,
-            ),
+            getErrorMessage(error),
         });
       } finally {
         setLoading(false);
@@ -856,26 +990,20 @@ export function ProjectsView() {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(
-              data,
-            ) ??
+            getApiMessage(data) ??
               "Não foi possível carregar os usuários.",
           );
         }
 
         const activeUsers =
-          Array.isArray(
-            data.users,
-          )
+          Array.isArray(data.users)
             ? data.users.filter(
                 (user) =>
                   user.active,
               )
             : [];
 
-        setUsers(
-          activeUsers,
-        );
+        setUsers(activeUsers);
       } catch (error) {
         console.error(
           "Erro ao carregar usuários do projeto:",
@@ -887,14 +1015,10 @@ export function ProjectsView() {
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(
-              error,
-            ),
+            getErrorMessage(error),
         });
       } finally {
-        setLoadingUsers(
-          false,
-        );
+        setLoadingUsers(false);
       }
     }, []);
 
@@ -907,8 +1031,7 @@ export function ProjectsView() {
           await fetch(
             "/api/clients",
             {
-              cache:
-                "no-store",
+              cache: "no-store",
             },
           );
 
@@ -923,13 +1046,10 @@ export function ProjectsView() {
         }
 
         setClients(
-          (
-            data.data ?? []
-          ).filter(
+          (data.data ?? []).filter(
             (
               client: ClientOption,
-            ) =>
-              client.active,
+            ) => client.active,
           ),
         );
       } catch (error) {
@@ -940,17 +1060,13 @@ export function ProjectsView() {
 
         setClients([]);
       } finally {
-        setLoadingClients(
-          false,
-        );
+        setLoadingClients(false);
       }
     }, []);
 
   const loadEquipment =
     useCallback(async () => {
-      setLoadingEquipment(
-        true,
-      );
+      setLoadingEquipment(true);
 
       try {
         const response =
@@ -974,17 +1090,13 @@ export function ProjectsView() {
           !data.success
         ) {
           throw new Error(
-            getApiMessage(
-              data,
-            ) ??
+            getApiMessage(data) ??
               "Não foi possível carregar os equipamentos.",
           );
         }
 
         const options =
-          Array.isArray(
-            data.data,
-          )
+          Array.isArray(data.data)
             ? data.data
             : Array.isArray(
                   data.equipment,
@@ -1003,28 +1115,93 @@ export function ProjectsView() {
           error,
         );
 
-        setEquipmentOptions(
-          [],
-        );
+        setEquipmentOptions([]);
 
         setFeedback({
           type: "error",
           message:
-            getErrorMessage(
-              error,
-            ),
+            getErrorMessage(error),
         });
       } finally {
-        setLoadingEquipment(
-          false,
-        );
+        setLoadingEquipment(false);
       }
     }, []);
 
   useEffect(() => {
-    if (
-      !canManageProjects
-    ) {
+    const controller =
+      new AbortController();
+
+    async function loadManufacturers() {
+      try {
+        const response =
+          await fetch(
+            "/api/manufacturers",
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+              signal:
+                controller.signal,
+            },
+          );
+
+        const data =
+          (await response.json()) as ManufacturersResponse;
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            getApiMessage(data) ??
+              "Não foi possível carregar os fabricantes.",
+          );
+        }
+
+        setManufacturerOptions(
+          mergeManufacturerOptions(
+            Array.isArray(
+              data.data,
+            )
+              ? data.data
+              : [],
+          ),
+        );
+      } catch (error) {
+        if (
+          error instanceof
+            DOMException &&
+          error.name ===
+            "AbortError"
+        ) {
+          return;
+        }
+
+        console.error(
+          "Erro ao carregar fabricantes:",
+          error,
+        );
+
+        setManufacturerOptions(
+          mergeManufacturerOptions(
+            [],
+          ),
+        );
+      }
+    }
+
+    void loadManufacturers();
+
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canManageProjects) {
       return;
     }
 
@@ -1057,9 +1234,7 @@ export function ProjectsView() {
   }, [loadProjects]);
 
   function openCreateModal() {
-    if (
-      !canManageProjects
-    ) {
+    if (!canManageProjects) {
       return;
     }
 
@@ -1071,9 +1246,7 @@ export function ProjectsView() {
       createInitialEquipmentFormState(),
     );
 
-    setNewEquipmentError(
-      null,
-    );
+    setNewEquipmentError(null);
 
     setEquipmentModalOpen(
       false,
@@ -1108,9 +1281,7 @@ export function ProjectsView() {
   }
 
   function closeCreateModal() {
-    if (
-      equipmentPickerOpen
-    ) {
+    if (equipmentPickerOpen) {
       setEquipmentPickerOpen(
         false,
       );
@@ -1122,12 +1293,8 @@ export function ProjectsView() {
       return;
     }
 
-    if (
-      equipmentModalOpen
-    ) {
-      if (
-        !savingEquipment
-      ) {
+    if (equipmentModalOpen) {
+      if (!savingEquipment) {
         setEquipmentModalOpen(
           false,
         );
@@ -1145,13 +1312,12 @@ export function ProjectsView() {
     }
 
     setModalOpen(false);
+
     setEquipmentModalOpen(
       false,
     );
 
-    setNewEquipmentError(
-      null,
-    );
+    setNewEquipmentError(null);
 
     setForm(
       createInitialFormState(),
@@ -1163,9 +1329,7 @@ export function ProjectsView() {
   }
 
   function openCreateEquipmentModal() {
-    if (
-      !canManageProjects
-    ) {
+    if (!canManageProjects) {
       return;
     }
 
@@ -1173,9 +1337,7 @@ export function ProjectsView() {
       createInitialEquipmentFormState(),
     );
 
-    setNewEquipmentError(
-      null,
-    );
+    setNewEquipmentError(null);
 
     setEquipmentModalOpen(
       true,
@@ -1183,9 +1345,7 @@ export function ProjectsView() {
   }
 
   function closeCreateEquipmentModal() {
-    if (
-      savingEquipment
-    ) {
+    if (savingEquipment) {
       return;
     }
 
@@ -1193,9 +1353,7 @@ export function ProjectsView() {
       false,
     );
 
-    setNewEquipmentError(
-      null,
-    );
+    setNewEquipmentError(null);
 
     setNewEquipmentForm(
       createInitialEquipmentFormState(),
@@ -1203,9 +1361,7 @@ export function ProjectsView() {
   }
 
   function openEquipmentPicker() {
-    if (
-      !canManageProjects
-    ) {
+    if (!canManageProjects) {
       return;
     }
 
@@ -1218,17 +1374,16 @@ export function ProjectsView() {
       number
     > = {};
 
-    for (const item of form.equipment) {
-      if (
-        !item.equipmentId
-      ) {
+    for (
+      const item of
+      form.equipment
+    ) {
+      if (!item.equipmentId) {
         continue;
       }
 
       const parsedQuantity =
-        Number(
-          item.quantity,
-        );
+        Number(item.quantity);
 
       quantities[
         item.equipmentId
@@ -1278,7 +1433,11 @@ export function ProjectsView() {
       Math.min(
         Math.max(
           Math.trunc(
-            quantity,
+            Number.isFinite(
+              quantity,
+            )
+              ? quantity
+              : 1,
           ),
           1,
         ),
@@ -1355,9 +1514,7 @@ export function ProjectsView() {
               equipment.id,
             ),
             quantity:
-              String(
-                quantity,
-              ),
+              String(quantity),
           },
         ],
       };
@@ -1383,9 +1540,7 @@ export function ProjectsView() {
           ...current,
         };
 
-        delete next[
-          equipmentId
-        ];
+        delete next[equipmentId];
 
         return next;
       },
@@ -1423,7 +1578,17 @@ export function ProjectsView() {
 
   function addOrSelectCreatedEquipment(
     equipmentId: string,
+    quantity = 1,
   ) {
+    const normalizedQuantity =
+      Math.min(
+        Math.max(
+          Math.trunc(quantity),
+          1,
+        ),
+        MAX_EQUIPMENT_QUANTITY,
+      );
+
     setForm((current) => {
       const existing =
         current.equipment.find(
@@ -1433,16 +1598,38 @@ export function ProjectsView() {
         );
 
       if (existing) {
-        return current;
+        return {
+          ...current,
+          equipment:
+            current.equipment.map(
+              (item) =>
+                item.rowId ===
+                existing.rowId
+                  ? {
+                      ...item,
+                      quantity:
+                        String(
+                          normalizedQuantity,
+                        ),
+                    }
+                  : item,
+            ),
+        };
       }
 
       return {
         ...current,
         equipment: [
           ...current.equipment,
-          createEquipmentRow(
-            equipmentId,
-          ),
+          {
+            ...createEquipmentRow(
+              equipmentId,
+            ),
+            quantity:
+              String(
+                normalizedQuantity,
+              ),
+          },
         ],
       };
     });
@@ -1456,8 +1643,7 @@ export function ProjectsView() {
       equipment:
         current.equipment.filter(
           (item) =>
-            item.rowId !==
-            rowId,
+            item.rowId !== rowId,
         ),
     }));
   }
@@ -1476,8 +1662,7 @@ export function ProjectsView() {
       equipment:
         current.equipment.map(
           (item) =>
-            item.rowId ===
-            rowId
+            item.rowId === rowId
               ? {
                   ...item,
                   ...patch,
@@ -1510,13 +1695,9 @@ export function ProjectsView() {
       index += 1
     ) {
       const item =
-        form.equipment[
-          index
-        ];
+        form.equipment[index];
 
-      if (
-        !item.equipmentId
-      ) {
+      if (!item.equipmentId) {
         setFeedback({
           type: "error",
           message: `Selecione o equipamento da linha ${
@@ -1542,9 +1723,7 @@ export function ProjectsView() {
       }
 
       const quantity =
-        Number(
-          item.quantity,
-        );
+        Number(item.quantity);
 
       if (
         !Number.isInteger(
@@ -1586,9 +1765,7 @@ export function ProjectsView() {
   ) {
     event.preventDefault();
 
-    if (
-      !canManageProjects
-    ) {
+    if (!canManageProjects) {
       setNewEquipmentError(
         "Você não possui permissão para cadastrar equipamentos.",
       );
@@ -1596,9 +1773,7 @@ export function ProjectsView() {
       return;
     }
 
-    setNewEquipmentError(
-      null,
-    );
+    setNewEquipmentError(null);
 
     const name =
       newEquipmentForm.name.trim();
@@ -1606,9 +1781,9 @@ export function ProjectsView() {
     const category =
       newEquipmentForm.category.trim();
 
-    const minimumStock =
+    const requestedQuantity =
       Number(
-        newEquipmentForm.minimumStock,
+        newEquipmentForm.requestedQuantity,
       );
 
     if (!name) {
@@ -1629,22 +1804,20 @@ export function ProjectsView() {
 
     if (
       !Number.isInteger(
-        minimumStock,
+        requestedQuantity,
       ) ||
-      minimumStock < 0 ||
-      minimumStock >
+      requestedQuantity < 1 ||
+      requestedQuantity >
         MAX_EQUIPMENT_QUANTITY
     ) {
       setNewEquipmentError(
-        `O estoque mínimo deve ser um número inteiro entre 0 e ${MAX_EQUIPMENT_QUANTITY}.`,
+        `A quantidade necessária deve ser um número inteiro entre 1 e ${MAX_EQUIPMENT_QUANTITY}.`,
       );
 
       return;
     }
 
-    setSavingEquipment(
-      true,
-    );
+    setSavingEquipment(true);
 
     try {
       const response =
@@ -1658,32 +1831,50 @@ export function ProjectsView() {
               Accept:
                 "application/json",
             },
-            body: JSON.stringify(
-              {
-                name,
-                category,
+            body: JSON.stringify({
+              name,
+              category,
 
-                manufacturer:
-                  newEquipmentForm.manufacturer.trim() ||
-                  null,
+              manufacturer:
+                newEquipmentForm.manufacturer.trim() ||
+                null,
 
-                model:
-                  newEquipmentForm.model.trim() ||
-                  null,
+              model:
+                newEquipmentForm.model.trim() ||
+                null,
 
-                serialNumber:
-                  newEquipmentForm.serialNumber.trim() ||
-                  null,
+              serialNumber:
+                newEquipmentForm.serialNumber.trim() ||
+                null,
 
-                minimumStock,
+              /*
+               * Cadastro rápido:
+               * equipamento ainda não entrou
+               * fisicamente no estoque.
+               */
+              quantity: 0,
 
-                notes:
-                  newEquipmentForm.notes.trim() ||
-                  null,
+              damagedQuantity: 0,
 
-                quantity: 0,
-              },
-            ),
+              minimumStock:
+                LOW_STOCK_THRESHOLD,
+
+              /*
+               * AVAILABLE aqui significa que
+               * o cadastro está ativo para uso
+               * no sistema.
+               *
+               * Estoque 0 não deve impedir
+               * a criação da demanda.
+               */
+              status: "AVAILABLE",
+
+              condition: "NEW",
+
+              notes:
+                newEquipmentForm.notes.trim() ||
+                null,
+            }),
           },
         );
 
@@ -1692,13 +1883,10 @@ export function ProjectsView() {
 
       if (
         !response.ok ||
-        data.success ===
-          false
+        data.success === false
       ) {
         throw new Error(
-          getApiMessage(
-            data,
-          ) ??
+          getApiMessage(data) ??
             "Não foi possível cadastrar o equipamento.",
         );
       }
@@ -1724,26 +1912,24 @@ export function ProjectsView() {
               : 0,
 
           physicalStock:
-            data.data
-              .physicalStock ??
-            data.data
-              .quantity ??
+            data.data.physicalStock ??
+            data.data.quantity ??
             0,
 
           inUse:
-            data.data
-              .inUse ?? 0,
+            data.data.inUse ?? 0,
 
           availableStock:
-            data.data
-              .availableStock ??
-            data.data
-              .quantity ??
+            data.data.availableStock ??
+            data.data.quantity ??
             0,
 
           shortage:
-            data.data
-              .shortage ?? 0,
+            data.data.shortage ?? 0,
+
+          minimumStock:
+            data.data.minimumStock ??
+            LOW_STOCK_THRESHOLD,
         };
 
       setEquipmentOptions(
@@ -1755,17 +1941,42 @@ export function ProjectsView() {
                 createdEquipment.id,
             );
 
-          return sortEquipmentOptions(
-            [
-              ...withoutDuplicate,
-              createdEquipment,
-            ],
-          );
+          return sortEquipmentOptions([
+            ...withoutDuplicate,
+            createdEquipment,
+          ]);
         },
       );
 
+      if (
+        createdEquipment.manufacturer
+      ) {
+        setManufacturerOptions(
+          (current) =>
+            mergeManufacturerOptions([
+              ...current,
+              createdEquipment.manufacturer ??
+                "",
+            ]),
+        );
+      }
+
+      /*
+       * O equipamento nasce com estoque 0,
+       * mas já entra no projeto com a
+       * quantidade solicitada pelo usuário.
+       */
       addOrSelectCreatedEquipment(
         createdEquipment.id,
+        requestedQuantity,
+      );
+
+      setEquipmentPickerQuantities(
+        (current) => ({
+          ...current,
+          [createdEquipment.id]:
+            requestedQuantity,
+        }),
       );
 
       setEquipmentModalOpen(
@@ -1776,26 +1987,22 @@ export function ProjectsView() {
         createInitialEquipmentFormState(),
       );
 
-      setNewEquipmentError(
-        null,
-      );
+      setNewEquipmentError(null);
 
       setFeedback({
         type: "success",
-        message:
-          data.message ??
-          `${createdEquipment.name} foi cadastrado com estoque inicial zerado e adicionado ao projeto.`,
+        message: `${createdEquipment.name} foi cadastrado com estoque inicial zerado e adicionado ao projeto com necessidade de ${requestedQuantity} ${
+          requestedQuantity === 1
+            ? "unidade"
+            : "unidades"
+        }.`,
       });
     } catch (error) {
       setNewEquipmentError(
-        getErrorMessage(
-          error,
-        ),
+        getErrorMessage(error),
       );
     } finally {
-      setSavingEquipment(
-        false,
-      );
+      setSavingEquipment(false);
     }
   }
 
@@ -1804,9 +2011,7 @@ export function ProjectsView() {
   ) {
     event.preventDefault();
 
-    if (
-      !canManageProjects
-    ) {
+    if (!canManageProjects) {
       setFeedback({
         type: "error",
         message:
@@ -1834,12 +2039,8 @@ export function ProjectsView() {
     if (
       form.startDate &&
       form.dueDate &&
-      new Date(
-        form.dueDate,
-      ) <
-        new Date(
-          form.startDate,
-        )
+      new Date(form.dueDate) <
+        new Date(form.startDate)
     ) {
       setFeedback({
         type: "error",
@@ -1874,44 +2075,41 @@ export function ProjectsView() {
               Accept:
                 "application/json",
             },
-            body: JSON.stringify(
-              {
-                name,
+            body: JSON.stringify({
+              name,
 
-                clientId:
-                  form.clientId ||
-                  null,
+              clientId:
+                form.clientId ||
+                null,
 
-                description:
-                  form.description.trim() ||
-                  null,
+              description:
+                form.description.trim() ||
+                null,
 
-                salespersonId:
-                  form.salespersonId ||
-                  null,
+              salespersonId:
+                form.salespersonId ||
+                null,
 
-                responsibleId:
-                  form.responsibleId ||
-                  null,
+              responsibleId:
+                form.responsibleId ||
+                null,
 
-                status:
-                  form.status,
+              status: form.status,
 
-                priority:
-                  form.priority,
+              priority:
+                form.priority,
 
-                startDate:
-                  form.startDate ||
-                  null,
+              startDate:
+                form.startDate ||
+                null,
 
-                dueDate:
-                  form.dueDate ||
-                  null,
+              dueDate:
+                form.dueDate ||
+                null,
 
-                equipment:
-                  normalizedEquipment,
-              },
-            ),
+              equipment:
+                normalizedEquipment,
+            }),
           },
         );
 
@@ -1920,13 +2118,10 @@ export function ProjectsView() {
 
       if (
         !response.ok ||
-        data.success ===
-          false
+        data.success === false
       ) {
         throw new Error(
-          getApiMessage(
-            data,
-          ) ??
+          getApiMessage(data) ??
             "Não foi possível criar o projeto.",
         );
       }
@@ -1964,9 +2159,7 @@ export function ProjectsView() {
       setFeedback({
         type: "error",
         message:
-          getErrorMessage(
-            error,
-          ),
+          getErrorMessage(error),
       });
     } finally {
       setSaving(false);
@@ -1992,9 +2185,7 @@ export function ProjectsView() {
           <button
             type="button"
             onClick={() =>
-              setFeedback(
-                null,
-              )
+              setFeedback(null)
             }
             aria-label="Fechar mensagem"
             className="shrink-0"
@@ -2007,9 +2198,7 @@ export function ProjectsView() {
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Projetos cadastrados"
-          value={
-            summary.total
-          }
+          value={summary.total}
           icon={
             <FolderKanban
               size={20}
@@ -2084,9 +2273,7 @@ export function ProjectsView() {
                   event,
                 ) =>
                   setSearch(
-                    event
-                      .target
-                      .value,
+                    event.target.value,
                   )
                 }
                 placeholder="Buscar por projeto, cliente, vendedor ou responsável..."
@@ -2097,9 +2284,7 @@ export function ProjectsView() {
             </label>
 
             <select
-              value={
-                statusFilter
-              }
+              value={statusFilter}
               onChange={(
                 event,
               ) =>
@@ -2114,8 +2299,7 @@ export function ProjectsView() {
               className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 xl:w-52"
             >
               <option value="">
-                Todos os
-                status
+                Todos os status
               </option>
 
               <option value="PLANNING">
@@ -2153,8 +2337,7 @@ export function ProjectsView() {
               className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 xl:w-44"
             >
               <option value="">
-                Todas as
-                prioridades
+                Todas as prioridades
               </option>
 
               <option value="LOW">
@@ -2182,9 +2365,7 @@ export function ProjectsView() {
                 }
                 className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
               >
-                <Plus
-                  size={17}
-                />
+                <Plus size={17} />
 
                 Novo projeto
               </button>
@@ -2194,8 +2375,7 @@ export function ProjectsView() {
 
         {loading ? (
           <div className="flex min-h-72 items-center justify-center text-sm text-zinc-500">
-            Carregando
-            projetos...
+            Carregando projetos...
           </div>
         ) : projects.length ===
           0 ? (
@@ -2207,8 +2387,7 @@ export function ProjectsView() {
             </div>
 
             <h2 className="mt-4 text-base font-bold text-zinc-900">
-              Nenhum projeto
-              encontrado
+              Nenhum projeto encontrado
             </h2>
 
             <p className="mt-1 max-w-md text-sm text-zinc-500">
@@ -2225,9 +2404,7 @@ export function ProjectsView() {
                 }
                 className="mt-4 inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
               >
-                <Plus
-                  size={17}
-                />
+                <Plus size={17} />
 
                 Criar projeto
               </button>
@@ -2241,14 +2418,11 @@ export function ProjectsView() {
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-bold text-zinc-900">
-                      Projetos
-                      ativos
+                      Projetos ativos
                     </h2>
 
                     <p className="mt-1 text-xs text-zinc-500">
-                      Projetos em
-                      planejamento ou
-                      em andamento.
+                      Projetos em planejamento ou em andamento.
                     </p>
                   </div>
 
@@ -2261,9 +2435,7 @@ export function ProjectsView() {
 
                 <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
                   {activeProjects.map(
-                    (
-                      project,
-                    ) => (
+                    (project) => (
                       <ProjectCard
                         key={
                           project.id
@@ -2292,14 +2464,11 @@ export function ProjectsView() {
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-bold text-zinc-900">
-                      Projetos
-                      cancelados
+                      Projetos cancelados
                     </h2>
 
                     <p className="mt-1 text-xs text-zinc-500">
-                      Projetos que
-                      não estão mais
-                      em execução.
+                      Projetos que não estão mais em execução.
                     </p>
                   </div>
 
@@ -2312,9 +2481,7 @@ export function ProjectsView() {
 
                 <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
                   {cancelledProjects.map(
-                    (
-                      project,
-                    ) => (
+                    (project) => (
                       <CompactProjectRow
                         key={
                           project.id
@@ -2336,22 +2503,17 @@ export function ProjectsView() {
                   <div>
                     <div className="flex items-center gap-2">
                       <CheckCircle2
-                        size={
-                          18
-                        }
+                        size={18}
                         className="text-emerald-600"
                       />
 
                       <h2 className="text-sm font-bold text-zinc-900">
-                        Projetos
-                        concluídos
+                        Projetos concluídos
                       </h2>
                     </div>
 
                     <p className="mt-1 text-xs text-zinc-500">
-                      Histórico dos
-                      projetos
-                      finalizados.
+                      Histórico dos projetos finalizados.
                     </p>
                   </div>
 
@@ -2364,9 +2526,7 @@ export function ProjectsView() {
 
                 <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
                   {completedProjects.map(
-                    (
-                      project,
-                    ) => (
+                    (project) => (
                       <CompactProjectRow
                         key={
                           project.id
@@ -2404,14 +2564,11 @@ export function ProjectsView() {
             <section className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-zinc-900">
-                  Dados do
-                  projeto
+                  Dados do projeto
                 </h3>
 
                 <p className="mt-1 text-xs text-zinc-500">
-                  Informe os dados
-                  comerciais e o
-                  planejamento.
+                  Informe os dados comerciais e o planejamento.
                 </p>
               </div>
 
@@ -2422,16 +2579,13 @@ export function ProjectsView() {
                 >
                   <input
                     type="text"
-                    value={
-                      form.name
-                    }
+                    value={form.name}
                     onChange={(
                       event,
                     ) =>
                       updateForm(
                         "name",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2439,9 +2593,7 @@ export function ProjectsView() {
                     className={
                       fieldClassName
                     }
-                    maxLength={
-                      150
-                    }
+                    maxLength={150}
                     autoFocus
                     required
                   />
@@ -2457,8 +2609,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "clientId",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2476,9 +2627,7 @@ export function ProjectsView() {
                     </option>
 
                     {clients.map(
-                      (
-                        client,
-                      ) => (
+                      (client) => (
                         <option
                           key={
                             client.id
@@ -2511,8 +2660,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "salespersonId",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2530,9 +2678,7 @@ export function ProjectsView() {
                     </option>
 
                     {salespersonOptions.map(
-                      (
-                        user,
-                      ) => (
+                      (user) => (
                         <option
                           key={
                             user.id
@@ -2541,9 +2687,7 @@ export function ProjectsView() {
                             user.id
                           }
                         >
-                          {
-                            user.name
-                          }
+                          {user.name}
                         </option>
                       ),
                     )}
@@ -2560,8 +2704,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "responsibleId",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2579,9 +2722,7 @@ export function ProjectsView() {
                     </option>
 
                     {responsibleOptions.map(
-                      (
-                        user,
-                      ) => (
+                      (user) => (
                         <option
                           key={
                             user.id
@@ -2590,9 +2731,7 @@ export function ProjectsView() {
                             user.id
                           }
                         >
-                          {
-                            user.name
-                          }
+                          {user.name}
                         </option>
                       ),
                     )}
@@ -2604,10 +2743,7 @@ export function ProjectsView() {
               users.length ===
                 0 ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                  Nenhum usuário
-                  ativo foi
-                  encontrado para
-                  seleção.
+                  Nenhum usuário ativo foi encontrado para seleção.
                 </div>
               ) : null}
 
@@ -2621,16 +2757,13 @@ export function ProjectsView() {
                   ) =>
                     updateForm(
                       "description",
-                      event
-                        .target
+                      event.target
                         .value,
                     )
                   }
                   placeholder="Descreva o objetivo do projeto"
                   rows={3}
-                  maxLength={
-                    1000
-                  }
+                  maxLength={1000}
                   className={`${fieldClassName} h-auto resize-y py-2.5`}
                 />
               </FormField>
@@ -2649,8 +2782,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "status",
-                        event
-                          .target
+                        event.target
                           .value as ProjectStatus,
                       )
                     }
@@ -2686,8 +2818,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "priority",
-                        event
-                          .target
+                        event.target
                           .value as ProjectPriority,
                       )
                     }
@@ -2727,8 +2858,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "startDate",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2753,8 +2883,7 @@ export function ProjectsView() {
                     ) =>
                       updateForm(
                         "dueDate",
-                        event
-                          .target
+                        event.target
                           .value,
                       )
                     }
@@ -2770,19 +2899,11 @@ export function ProjectsView() {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-900">
-                    Equipamentos
-                    necessários
+                    Equipamentos necessários
                   </h3>
 
                   <p className="mt-1 text-xs leading-5 text-zinc-500">
-                    A quantidade
-                    informa a
-                    necessidade do
-                    projeto. É
-                    permitido
-                    solicitar mais
-                    unidades do que
-                    há em estoque.
+                    A quantidade informa a necessidade do projeto. É permitido solicitar mais unidades do que há em estoque.
                   </p>
                 </div>
 
@@ -2797,14 +2918,9 @@ export function ProjectsView() {
                     }
                     className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <Plus
-                      size={
-                        16
-                      }
-                    />
+                    <Plus size={16} />
 
-                    Adicionar
-                    equipamento
+                    Adicionar equipamento
                   </button>
 
                   <button
@@ -2815,13 +2931,10 @@ export function ProjectsView() {
                     className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
                   >
                     <Wrench
-                      size={
-                        16
-                      }
+                      size={16}
                     />
 
-                    Novo
-                    equipamento
+                    Novo equipamento
                   </button>
                 </div>
               </div>
@@ -2833,54 +2946,32 @@ export function ProjectsView() {
                 />
 
                 <span>
-                  Quando um
-                  equipamento
-                  ainda não
-                  existir,
-                  cadastre-o pelo
-                  botão{" "}
+                  Quando um equipamento ainda não existir, cadastre-o pelo botão{" "}
                   <strong>
-                    Novo
-                    equipamento
+                    Novo equipamento
                   </strong>
-                  . Ele será
-                  criado com
-                  estoque físico
-                  zerado e
-                  selecionado
-                  automaticamente
-                  neste projeto.
+                  . Ele será criado com estoque físico zerado e selecionado automaticamente neste projeto. A necessidade ficará registrada como déficit para compra.
                 </span>
               </div>
 
               {loadingEquipment ? (
                 <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500">
-                  Carregando
-                  equipamentos...
+                  Carregando equipamentos...
                 </div>
-              ) : form
-                  .equipment
+              ) : form.equipment
                   .length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center">
                   <Package
-                    size={
-                      24
-                    }
+                    size={24}
                     className="mx-auto text-zinc-400"
                   />
 
                   <p className="mt-2 text-sm font-medium text-zinc-700">
-                    Nenhum
-                    equipamento
-                    adicionado
+                    Nenhum equipamento adicionado
                   </p>
 
                   <p className="mt-1 text-xs text-zinc-500">
-                    O projeto pode
-                    ser criado sem
-                    equipamentos e
-                    atualizado
-                    depois.
+                    O projeto pode ser criado sem equipamentos e atualizado depois.
                   </p>
                 </div>
               ) : (
@@ -2903,12 +2994,18 @@ export function ProjectsView() {
                           : 0;
 
                       const inUse =
-                        equipment?.inUse ??
-                        0;
+                        Math.max(
+                          equipment?.inUse ??
+                            0,
+                          0,
+                        );
 
                       const availableStock =
-                        equipment?.availableStock ??
-                        physicalStock;
+                        Math.max(
+                          equipment?.availableStock ??
+                            physicalStock,
+                          0,
+                        );
 
                       const needed =
                         Number(
@@ -2919,8 +3016,7 @@ export function ProjectsView() {
                         Number.isInteger(
                           needed,
                         ) &&
-                        needed >
-                          0
+                        needed > 0
                           ? needed
                           : 0;
 
@@ -2959,9 +3055,7 @@ export function ProjectsView() {
                               className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
                             >
                               <Trash2
-                                size={
-                                  16
-                                }
+                                size={16}
                               />
                             </button>
                           </div>
@@ -2982,8 +3076,7 @@ export function ProjectsView() {
                                     item.rowId,
                                     {
                                       equipmentId:
-                                        event
-                                          .target
+                                        event.target
                                           .value,
                                     },
                                   )
@@ -2994,9 +3087,7 @@ export function ProjectsView() {
                                 required
                               >
                                 <option value="">
-                                  Selecione
-                                  um
-                                  equipamento
+                                  Selecione um equipamento
                                 </option>
 
                                 {equipmentOptions.map(
@@ -3045,12 +3136,8 @@ export function ProjectsView() {
                                         {details
                                           ? ` — ${details}`
                                           : ""}
-                                        {
-                                          " — Estoque: "
-                                        }
-                                        {
-                                          stock
-                                        }
+                                        {" — Estoque: "}
+                                        {stock}
                                       </option>
                                     );
                                   },
@@ -3064,15 +3151,11 @@ export function ProjectsView() {
                             >
                               <input
                                 type="number"
-                                min={
-                                  1
-                                }
+                                min={1}
                                 max={
                                   MAX_EQUIPMENT_QUANTITY
                                 }
-                                step={
-                                  1
-                                }
+                                step={1}
                                 value={
                                   item.quantity
                                 }
@@ -3083,8 +3166,7 @@ export function ProjectsView() {
                                     item.rowId,
                                     {
                                       quantity:
-                                        event
-                                          .target
+                                        event.target
                                           .value,
                                     },
                                   )
@@ -3098,7 +3180,7 @@ export function ProjectsView() {
                           </div>
 
                           {equipment ? (
-                            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                            <div className="mt-3 grid gap-2 sm:grid-cols-4">
                               <EquipmentMetric
                                 label="Estoque físico"
                                 value={
@@ -3127,68 +3209,61 @@ export function ProjectsView() {
                                     : "green"
                                 }
                               />
+
+                              <EquipmentMetric
+                                label="Déficit"
+                                value={
+                                  shortage
+                                }
+                                tone={
+                                  shortage >
+                                  0
+                                    ? "red"
+                                    : "green"
+                                }
+                              />
                             </div>
                           ) : null}
 
                           {equipment &&
-                          shortage >
-                            0 ? (
+                          shortage > 0 ? (
                             <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                               <AlertTriangle
-                                size={
-                                  16
-                                }
+                                size={16}
                                 className="mt-0.5 shrink-0"
                               />
 
                               <span>
-                                O
-                                projeto
-                                precisa
-                                de{" "}
+                                O projeto precisa de{" "}
                                 <strong>
                                   {
                                     validNeeded
                                   }
                                 </strong>{" "}
-                                unidade(s),
-                                mas
-                                existem
-                                apenas{" "}
+                                unidade(s), mas existem apenas{" "}
                                 <strong>
                                   {
                                     availableStock
                                   }
                                 </strong>
-                                . Será
-                                registrado
-                                um
-                                déficit
-                                de{" "}
+                                . Será registrado um déficit de{" "}
                                 <strong>
                                   {
                                     shortage
                                   }
                                 </strong>{" "}
-                                unidade(s)
-                                para
-                                compra.
+                                unidade(s) para compra.
                               </span>
                             </div>
                           ) : equipment ? (
                             <div className="mt-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700">
                               <PackageCheck
-                                size={
-                                  16
-                                }
+                                size={16}
                                 className="mt-0.5 shrink-0"
                               />
 
                               <span>
-                                O estoque
-                                disponível
-                                cobre esta
-                                necessidade.
+                                O estoque disponível cobre esta necessidade.
                               </span>
                             </div>
                           ) : null}
@@ -3207,8 +3282,7 @@ export function ProjectsView() {
                                     item.rowId,
                                     {
                                       notes:
-                                        event
-                                          .target
+                                        event.target
                                           .value,
                                     },
                                   )
@@ -3230,8 +3304,7 @@ export function ProjectsView() {
                 </div>
               )}
 
-              {form.equipment
-                .length >
+              {form.equipment.length >
               0 ? (
                 <div className="grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 sm:grid-cols-3">
                   <EquipmentMetric
@@ -3272,9 +3345,7 @@ export function ProjectsView() {
                 onClick={
                   closeCreateModal
                 }
-                disabled={
-                  saving
-                }
+                disabled={saving}
                 className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancelar
@@ -3290,9 +3361,7 @@ export function ProjectsView() {
                 }
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Plus
-                  size={17}
-                />
+                <Plus size={17} />
 
                 {saving
                   ? "Salvando..."
@@ -3331,8 +3400,7 @@ export function ProjectsView() {
                   event,
                 ) =>
                   setEquipmentPickerSearch(
-                    event
-                      .target
+                    event.target
                       .value,
                   )
                 }
@@ -3352,11 +3420,7 @@ export function ProjectsView() {
                   aria-label="Limpar busca"
                   className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                 >
-                  <X
-                    size={
-                      15
-                    }
-                  />
+                  <X size={15} />
                 </button>
               ) : null}
             </div>
@@ -3370,9 +3434,7 @@ export function ProjectsView() {
                 />
 
                 <p className="mt-3 text-sm font-semibold text-zinc-800">
-                  Nenhum
-                  equipamento
-                  encontrado
+                  Nenhum equipamento encontrado
                 </p>
 
                 <button
@@ -3384,26 +3446,19 @@ export function ProjectsView() {
                   className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-[#F57B00] transition hover:bg-orange-100"
                 >
                   <Wrench
-                    size={
-                      15
-                    }
+                    size={15}
                   />
 
-                  Novo
-                  equipamento
+                  Novo equipamento
                 </button>
               </div>
             ) : (
               <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200">
                 {filteredEquipmentOptions.map(
-                  (
-                    equipment,
-                  ) => {
+                  (equipment) => {
                     const isSelected =
                       form.equipment.some(
-                        (
-                          item,
-                        ) =>
+                        (item) =>
                           item.equipmentId ===
                           equipment.id,
                       );
@@ -3419,12 +3474,18 @@ export function ProjectsView() {
                       );
 
                     const inUse =
-                      equipment.inUse ??
-                      0;
+                      Math.max(
+                        equipment.inUse ??
+                          0,
+                        0,
+                      );
 
                     const availableStock =
-                      equipment.availableStock ??
-                      physicalStock;
+                      Math.max(
+                        equipment.availableStock ??
+                          physicalStock,
+                        0,
+                      );
 
                     const requestedShortage =
                       Math.max(
@@ -3433,9 +3494,17 @@ export function ProjectsView() {
                         0,
                       );
 
-                    const unavailable =
-                      equipment.status ===
-                      "UNAVAILABLE";
+                    /*
+                     * Estoque zerado NÃO bloqueia
+                     * a inclusão no projeto.
+                     *
+                     * Toda quantidade não coberta
+                     * pelo estoque disponível vira
+                     * déficit para compra.
+                     */
+                    const hasNoStock =
+                      availableStock ===
+                      0;
 
                     return (
                       <article
@@ -3447,9 +3516,7 @@ export function ProjectsView() {
                           isSelected
                             ? "bg-orange-50/40"
                             : "bg-white",
-                        ].join(
-                          " ",
-                        )}
+                        ].join(" ")}
                       >
                         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                           <div className="min-w-0">
@@ -3462,15 +3529,13 @@ export function ProjectsView() {
 
                               {isSelected ? (
                                 <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-700">
-                                  Adicionado
-                                  ao
-                                  projeto
+                                  Adicionado ao projeto
                                 </span>
                               ) : null}
 
-                              {unavailable ? (
-                                <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
-                                  Indisponível
+                              {hasNoStock ? (
+                                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                                  Sem estoque
                                 </span>
                               ) : (
                                 <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
@@ -3504,16 +3569,20 @@ export function ProjectsView() {
                               </span>
 
                               <span className="text-blue-600">
-                                Em
-                                uso:{" "}
+                                Em uso:{" "}
                                 <strong>
-                                  {
-                                    inUse
-                                  }
+                                  {inUse}
                                 </strong>
                               </span>
 
-                              <span className="text-emerald-600">
+                              <span
+                                className={
+                                  availableStock ===
+                                  0
+                                    ? "text-red-600"
+                                    : "text-emerald-600"
+                                }
+                              >
                                 Disponível:{" "}
                                 <strong>
                                   {
@@ -3556,7 +3625,8 @@ export function ProjectsView() {
                                     quantity <=
                                     1
                                   }
-                                  className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
+                                  aria-label={`Diminuir quantidade de ${equipment.name}`}
+                                  className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   −
                                 </button>
@@ -3564,12 +3634,11 @@ export function ProjectsView() {
                                 <input
                                   id={`new-project-equipment-${equipment.id}`}
                                   type="number"
-                                  min={
-                                    1
-                                  }
+                                  min={1}
                                   max={
                                     MAX_EQUIPMENT_QUANTITY
                                   }
+                                  step={1}
                                   value={
                                     quantity
                                   }
@@ -3579,8 +3648,7 @@ export function ProjectsView() {
                                     setPickerQuantity(
                                       equipment.id,
                                       Number(
-                                        event
-                                          .target
+                                        event.target
                                           .value,
                                       ),
                                     )
@@ -3596,6 +3664,7 @@ export function ProjectsView() {
                                       1,
                                     )
                                   }
+                                  aria-label={`Aumentar quantidade de ${equipment.name}`}
                                   className="flex w-10 items-center justify-center text-zinc-600 transition hover:bg-zinc-100"
                                 >
                                   +
@@ -3603,6 +3672,14 @@ export function ProjectsView() {
                               </div>
                             </div>
 
+                            {/*
+                              Importante:
+                              NÃO existe disabled baseado
+                              em estoque ou status.
+
+                              Estoque zero também pode
+                              ser solicitado.
+                            */}
                             <button
                               type="button"
                               onClick={() =>
@@ -3610,15 +3687,10 @@ export function ProjectsView() {
                                   equipment,
                                 )
                               }
-                              disabled={
-                                unavailable
-                              }
-                              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:opacity-50"
+                              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
                             >
                               <Plus
-                                size={
-                                  16
-                                }
+                                size={16}
                               />
 
                               {isSelected
@@ -3637,9 +3709,7 @@ export function ProjectsView() {
                                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
                               >
                                 <Trash2
-                                  size={
-                                    15
-                                  }
+                                  size={15}
                                 />
 
                                 Remover
@@ -3648,42 +3718,49 @@ export function ProjectsView() {
                           </div>
                         </div>
 
-                        {!unavailable &&
-                        requestedShortage >
-                          0 ? (
+                        {requestedShortage >
+                        0 ? (
                           <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                             <AlertTriangle
-                              size={
-                                15
-                              }
+                              size={15}
                               className="mt-0.5 shrink-0"
                             />
 
                             <span>
-                              É
-                              permitido
-                              solicitar{" "}
+                              É permitido solicitar{" "}
                               <strong>
                                 {
                                   quantity
                                 }
                               </strong>{" "}
-                              unidade(s).
-                              O déficit
-                              de{" "}
+                              unidade(s). O estoque disponível cobre{" "}
+                              <strong>
+                                {Math.min(
+                                  quantity,
+                                  availableStock,
+                                )}
+                              </strong>{" "}
+                              e o déficit de{" "}
                               <strong>
                                 {
                                   requestedShortage
                                 }
                               </strong>{" "}
-                              unidade(s)
-                              será
-                              considerado
-                              para
-                              compra.
+                              unidade(s) será considerado para compra.
                             </span>
                           </div>
-                        ) : null}
+                        ) : (
+                          <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700">
+                            <PackageCheck
+                              size={15}
+                              className="mt-0.5 shrink-0"
+                            />
+
+                            <span>
+                              O estoque disponível cobre a quantidade solicitada.
+                            </span>
+                          </div>
+                        )}
                       </article>
                     );
                   },
@@ -3694,14 +3771,11 @@ export function ProjectsView() {
             <footer className="flex flex-col gap-3 border-t border-zinc-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-zinc-500">
                 {
-                  form
-                    .equipment
+                  form.equipment
                     .length
                 }{" "}
-                {form
-                  .equipment
-                  .length ===
-                1
+                {form.equipment
+                  .length === 1
                   ? "equipamento selecionado"
                   : "equipamentos selecionados"}
               </p>
@@ -3729,7 +3803,7 @@ export function ProjectsView() {
           onClose={
             closeCreateEquipmentModal
           }
-          maxWidthClass="max-w-2xl"
+          maxWidthClass="max-w-3xl"
           zIndexClass="z-[120]"
         >
           <form
@@ -3746,22 +3820,15 @@ export function ProjectsView() {
 
               <div>
                 <p className="text-sm font-semibold text-orange-900">
-                  Cadastro
-                  rápido para o
-                  projeto
+                  Cadastro para o projeto
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-orange-700">
-                  O equipamento
-                  será criado com
-                  estoque físico
-                  inicial igual a{" "}
+                  O equipamento será criado com estoque físico inicial igual a{" "}
                   <strong>
                     0
-                  </strong>{" "}
-                  e selecionado
-                  automaticamente
-                  no projeto.
+                  </strong>
+                  , poderá ser solicitado normalmente neste projeto e a quantidade necessária será considerada no déficit para compra.
                 </p>
               </div>
             </div>
@@ -3781,173 +3848,281 @@ export function ProjectsView() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField
-                label="Nome"
-                required
-              >
-                <input
-                  type="text"
-                  value={
-                    newEquipmentForm.name
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "name",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  maxLength={
-                    150
-                  }
-                  className={
-                    fieldClassName
-                  }
-                  autoFocus
+            <section className="rounded-xl border border-zinc-200 bg-white">
+              <div className="border-b border-zinc-200 px-4 py-3">
+                <h3 className="text-sm font-bold text-zinc-900">
+                  Informações do item
+                </h3>
+
+                <p className="mt-1 text-xs text-zinc-500">
+                  Informe os dados utilizados para identificar o equipamento e a quantidade necessária para este projeto.
+                </p>
+              </div>
+
+              <div className="grid gap-4 p-4 sm:grid-cols-2">
+                <FormField
+                  label="Nome"
                   required
-                />
-              </FormField>
+                >
+                  <input
+                    type="text"
+                    value={
+                      newEquipmentForm.name
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "name",
+                        event.target
+                          .value,
+                      )
+                    }
+                    placeholder="Ex.: Servidor Dell PowerEdge R760"
+                    maxLength={150}
+                    className={
+                      fieldClassName
+                    }
+                    autoFocus
+                    required
+                  />
+                </FormField>
 
-              <FormField
-                label="Categoria"
-                required
-              >
-                <input
-                  type="text"
-                  value={
-                    newEquipmentForm.category
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "category",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  maxLength={
-                    100
-                  }
-                  className={
-                    fieldClassName
-                  }
+                <FormField
+                  label="Categoria"
                   required
-                />
-              </FormField>
-            </div>
+                >
+                  <select
+                    value={
+                      newEquipmentForm.category
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "category",
+                        event.target
+                          .value,
+                      )
+                    }
+                    className={
+                      fieldClassName
+                    }
+                    required
+                  >
+                    <option value="">
+                      Selecione
+                    </option>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Fabricante">
-                <input
-                  type="text"
-                  value={
-                    newEquipmentForm.manufacturer
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "manufacturer",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  maxLength={
-                    120
-                  }
-                  className={
-                    fieldClassName
-                  }
-                />
-              </FormField>
+                    {EQUIPMENT_CATEGORIES.map(
+                      (category) => (
+                        <option
+                          key={
+                            category
+                          }
+                          value={
+                            category
+                          }
+                        >
+                          {category}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </FormField>
 
-              <FormField label="Modelo">
-                <input
-                  type="text"
-                  value={
-                    newEquipmentForm.model
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "model",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  maxLength={
-                    120
-                  }
-                  className={
-                    fieldClassName
-                  }
-                />
-              </FormField>
-            </div>
+                <FormField label="Fabricante">
+                  <SearchableSelect
+                    id="project-new-equipment-manufacturer"
+                    name="manufacturer"
+                    value={
+                      newEquipmentForm.manufacturer
+                    }
+                    options={
+                      manufacturerOptions
+                    }
+                    placeholder="Digite ou selecione um fabricante"
+                    emptyMessage="Nenhum fabricante encontrado."
+                    allowCustomValue
+                    onChange={(
+                      manufacturer,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "manufacturer",
+                        manufacturer,
+                      )
+                    }
+                  />
+                </FormField>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Número de série">
-                <input
-                  type="text"
-                  value={
-                    newEquipmentForm.serialNumber
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "serialNumber",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  maxLength={
-                    150
-                  }
-                  className={
-                    fieldClassName
-                  }
-                />
-              </FormField>
+                <FormField label="Modelo">
+                  <input
+                    type="text"
+                    value={
+                      newEquipmentForm.model
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "model",
+                        event.target
+                          .value,
+                      )
+                    }
+                    placeholder="Ex.: PowerEdge R760"
+                    maxLength={120}
+                    className={
+                      fieldClassName
+                    }
+                  />
+                </FormField>
 
-              <FormField label="Estoque mínimo">
-                <input
-                  type="number"
-                  min={0}
-                  max={
-                    MAX_EQUIPMENT_QUANTITY
-                  }
-                  step={1}
-                  value={
-                    newEquipmentForm.minimumStock
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateNewEquipmentForm(
-                      "minimumStock",
-                      event
-                        .target
-                        .value,
-                    )
-                  }
-                  className={
-                    fieldClassName
-                  }
+                <FormField label="Número de série">
+                  <input
+                    type="text"
+                    value={
+                      newEquipmentForm.serialNumber
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "serialNumber",
+                        event.target
+                          .value,
+                      )
+                    }
+                    placeholder="Opcional"
+                    maxLength={150}
+                    className={
+                      fieldClassName
+                    }
+                  />
+                </FormField>
+
+                <FormField
+                  label="Quantidade necessária"
                   required
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={
+                      MAX_EQUIPMENT_QUANTITY
+                    }
+                    step={1}
+                    value={
+                      newEquipmentForm.requestedQuantity
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateNewEquipmentForm(
+                        "requestedQuantity",
+                        event.target
+                          .value,
+                      )
+                    }
+                    className={
+                      fieldClassName
+                    }
+                    required
+                  />
+
+                  <p className="mt-1.5 text-xs leading-5 text-zinc-500">
+                    Quantidade que este projeto precisa. Como o estoque inicial será 0, essa quantidade ficará inicialmente como déficit para compra.
+                  </p>
+                </FormField>
+
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 sm:col-span-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-zinc-500">
+                        Estoque operacional inicial
+                      </p>
+
+                      <p className="mt-1 text-xl font-bold text-zinc-900">
+                        0
+                      </p>
+
+                      <p className="mt-1 text-xs leading-5 text-zinc-500">
+                        A entrada física será registrada posteriormente pela área de compras.
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                      <p className="text-xs font-medium text-red-600">
+                        Déficit inicial deste projeto
+                      </p>
+
+                      <p className="mt-1 text-xl font-bold text-red-700">
+                        {Number.isInteger(
+                          Number(
+                            newEquipmentForm.requestedQuantity,
+                          ),
+                        ) &&
+                        Number(
+                          newEquipmentForm.requestedQuantity,
+                        ) > 0
+                          ? Number(
+                              newEquipmentForm.requestedQuantity,
+                            )
+                          : 0}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-zinc-200 bg-white">
+              <div className="border-b border-zinc-200 px-4 py-3">
+                <h3 className="text-sm font-bold text-zinc-900">
+                  Controle automático de estoque
+                </h3>
+
+                <p className="mt-1 text-xs text-zinc-500">
+                  Regras aplicadas automaticamente pelo sistema.
+                </p>
+              </div>
+
+              <div className="grid gap-3 p-4 sm:grid-cols-3">
+                <EquipmentMetric
+                  label="Estoque inicial"
+                  value={0}
+                  tone="zinc"
                 />
-              </FormField>
-            </div>
+
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  <p className="text-[11px] font-medium opacity-75">
+                    Situação inicial
+                  </p>
+
+                  <p className="mt-0.5 text-sm font-bold">
+                    Sem estoque físico
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">
+                  <p className="text-[11px] font-medium opacity-75">
+                    Alerta automático
+                  </p>
+
+                  <p className="mt-0.5 text-sm font-bold">
+                    Até{" "}
+                    {
+                      LOW_STOCK_THRESHOLD
+                    }{" "}
+                    unidades
+                  </p>
+
+                  <p className="mt-1 text-[11px]">
+                    Regra fixa do sistema
+                  </p>
+                </div>
+              </div>
+            </section>
 
             <FormField label="Observações">
               <textarea
@@ -3959,38 +4134,16 @@ export function ProjectsView() {
                 ) =>
                   updateNewEquipmentForm(
                     "notes",
-                    event
-                      .target
+                    event.target
                       .value,
                   )
                 }
-                rows={3}
-                maxLength={
-                  1000
-                }
-                className={`${fieldClassName} h-auto resize-y py-2.5`}
+                placeholder="Descreva configurações, acessórios ou detalhes necessários para o projeto."
+                rows={4}
+                maxLength={1000}
+                className={`${fieldClassName} h-auto min-h-28 resize-y py-2.5`}
               />
             </FormField>
-
-            <div className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-2">
-              <EquipmentMetric
-                label="Estoque inicial"
-                value={0}
-                tone="zinc"
-              />
-
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
-                <p className="text-[11px] font-medium opacity-75">
-                  Situação
-                  inicial
-                </p>
-
-                <p className="mt-0.5 text-sm font-bold">
-                  Sem estoque
-                  físico
-                </p>
-              </div>
-            </div>
 
             <div className="flex justify-end gap-2 border-t border-zinc-100 pt-4">
               <button
@@ -4001,7 +4154,7 @@ export function ProjectsView() {
                 disabled={
                   savingEquipment
                 }
-                className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50"
+                className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -4011,11 +4164,9 @@ export function ProjectsView() {
                 disabled={
                   savingEquipment
                 }
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:opacity-60"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Plus
-                  size={17}
-                />
+                <Plus size={17} />
 
                 {savingEquipment
                   ? "Cadastrando..."
@@ -4053,8 +4204,7 @@ function ProjectCard({
     shortageUnits > 0;
 
   const clientName =
-    project.client
-      ?.shortName ??
+    project.client?.shortName ??
     project.client?.name ??
     project.clientName ??
     "Cliente não informado";
@@ -4096,9 +4246,7 @@ function ProjectCard({
                 />
 
                 Déficit:{" "}
-                {
-                  shortageUnits
-                }
+                {shortageUnits}
               </span>
             ) : null}
           </div>
@@ -4166,8 +4314,7 @@ function ProjectCard({
               </p>
             ) : (
               <p className="text-sm text-zinc-400">
-                Sem descrição
-                informada.
+                Sem descrição informada.
               </p>
             )}
 
@@ -4179,12 +4326,8 @@ function ProjectCard({
                 />
 
                 Faltam{" "}
-                {
-                  shortageUnits
-                }{" "}
-                unidade(s) para
-                atender este
-                projeto.
+                {shortageUnits}{" "}
+                unidade(s) para atender este projeto.
               </div>
             ) : null}
 
@@ -4197,8 +4340,7 @@ function ProjectCard({
 
                 <span className="truncate">
                   Vendedor:{" "}
-                  {project
-                    .salesperson
+                  {project.salesperson
                     ?.name ??
                     "Não informado"}
                 </span>
@@ -4212,8 +4354,7 @@ function ProjectCard({
 
                 <span className="truncate">
                   Responsável:{" "}
-                  {project
-                    .responsible
+                  {project.responsible
                     ?.name ??
                     "Não informado"}
                 </span>
@@ -4244,11 +4385,8 @@ function ProjectCard({
                     project.equipmentItems
                   }{" "}
                   item(ns) ·{" "}
-                  {
-                    neededUnits
-                  }{" "}
-                  unidade(s)
-                  necessária(s)
+                  {neededUnits}{" "}
+                  unidade(s) necessária(s)
                 </span>
               </div>
             </div>
@@ -4283,8 +4421,7 @@ function CompactProjectRow({
     );
 
   const clientName =
-    project.client
-      ?.shortName ??
+    project.client?.shortName ??
     project.client?.name ??
     project.clientName ??
     "Cliente não informado";
@@ -4322,8 +4459,7 @@ function CompactProjectRow({
 
             {clientName}
 
-            {project
-              .responsible
+            {project.responsible
               ?.name
               ? ` · Responsável: ${project.responsible.name}`
               : ""}
@@ -4388,11 +4524,14 @@ function EquipmentMetric({
     | "red";
 }) {
   const colors = {
-    zinc: "border-zinc-200 bg-zinc-50 text-zinc-800",
-    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    zinc:
+      "border-zinc-200 bg-zinc-50 text-zinc-800",
+    blue:
+      "border-blue-200 bg-blue-50 text-blue-700",
     green:
       "border-emerald-200 bg-emerald-50 text-emerald-700",
-    red: "border-red-200 bg-red-50 text-red-700",
+    red:
+      "border-red-200 bg-red-50 text-red-700",
   };
 
   return (
@@ -4433,7 +4572,11 @@ function StatusBadge({
     <span
       className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${colors[status]}`}
     >
-      {statusLabels[status]}
+      {
+        statusLabels[
+          status
+        ]
+      }
     </span>
   );
 }
@@ -4447,10 +4590,12 @@ function PriorityBadge({
     ProjectPriority,
     string
   > = {
-    LOW: "bg-zinc-100 text-zinc-600",
+    LOW:
+      "bg-zinc-100 text-zinc-600",
     NORMAL:
       "bg-blue-50 text-blue-600",
-    HIGH: "bg-amber-50 text-amber-700",
+    HIGH:
+      "bg-amber-50 text-amber-700",
     URGENT:
       "bg-red-50 text-red-700",
   };
@@ -4459,7 +4604,11 @@ function PriorityBadge({
     <span
       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${colors[priority]}`}
     >
-      {priorityLabels[priority]}
+      {
+        priorityLabels[
+          priority
+        ]
+      }
     </span>
   );
 }
@@ -4481,13 +4630,16 @@ function SummaryCard({
     | "red";
 }) {
   const colors = {
-    zinc: "bg-zinc-100 text-zinc-700",
+    zinc:
+      "bg-zinc-100 text-zinc-700",
     orange:
       "bg-orange-50 text-[#F57B00]",
-    blue: "bg-blue-50 text-blue-600",
+    blue:
+      "bg-blue-50 text-blue-600",
     green:
       "bg-emerald-50 text-emerald-600",
-    red: "bg-red-50 text-red-600",
+    red:
+      "bg-red-50 text-red-600",
   };
 
   return (

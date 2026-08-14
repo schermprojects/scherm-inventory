@@ -1,4 +1,3 @@
-import { auth } from "@/auth";
 import { requireAdmin } from "@/lib/require-admin";
 import { Prisma } from "@/generated/prisma/client";
 import {

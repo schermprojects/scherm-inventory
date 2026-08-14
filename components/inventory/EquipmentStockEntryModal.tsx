@@ -222,6 +222,7 @@ const freeStockQuantity =
 
 const canSubmit =
   validQuantity &&
+  Boolean(projectId) &&
   !saving &&
   !loadingProjects;
 
@@ -417,6 +418,14 @@ function handleProjectChange(
       return;
     }
 
+    if (!projectId) {
+  setError(
+    "Selecione o projeto de destino desta entrada.",
+  );
+
+  return;
+}
+
     setSaving(true);
 
     try {
@@ -436,8 +445,7 @@ function handleProjectChange(
             quantity:
               normalizedQuantity,
 
-            projectId:
-              projectId || null,
+            projectId,
 
             invoiceNumber:
               invoiceNumber.trim() ||
@@ -622,6 +630,9 @@ function handleProjectChange(
           <label className="block space-y-1.5">
             <span className="text-sm font-medium text-zinc-700">
               Projeto de destino
+              <span className="ml-1 text-red-500">
+    *
+  </span>
             </span>
 
             <select
@@ -637,11 +648,14 @@ function handleProjectChange(
               }
               className={fieldClassName}
             >
-              <option value="">
-                {loadingProjects
-                  ? "Carregando projetos..."
-                  : "Entrada livre no estoque"}
-              </option>
+              <option
+  value=""
+  disabled
+>
+  {loadingProjects
+    ? "Carregando projetos..."
+    : "Selecione o projeto de destino"}
+</option>
 
               {projects.map(
                 (project) => (
@@ -661,17 +675,17 @@ function handleProjectChange(
 
             {!loadingProjects &&
             projects.length === 0 ? (
-              <span className="block text-xs leading-5 text-emerald-700">
-                Nenhum projeto ativo
-                possui pendência deste
-                equipamento.
+              <span className="block text-xs leading-5 text-amber-700">
+                Nenhum projeto ativo possui
+                déficit deste equipamento.
+                Não há entrada de compra
+                disponível para registrar.
               </span>
             ) : (
               <span className="block text-xs leading-5 text-zinc-500">
-                São exibidos apenas
-                projetos que ainda
-                possuem pendência deste
-                equipamento.
+                A entrada deve estar vinculada
+                a um projeto que ainda possui
+                necessidade deste equipamento.
               </span>
             )}
           </label>
@@ -719,45 +733,51 @@ function handleProjectChange(
           </label>
 
           <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700">
-            <CheckCircle2
-              size={16}
-              className="mt-0.5 shrink-0"
-            />
+  <CheckCircle2
+    size={16}
+    className="mt-0.5 shrink-0"
+  />
 
-            <span>
-  {selectedProject ? (
-    freeStockQuantity > 0 ? (
-      <>
-        <strong>{allocationQuantity}</strong>{" "}
-        unidade(s) atenderão o projeto{" "}
-        <strong>
-  “{selectedProject.name}”
-</strong>.
-        e{" "}
-        <strong>{freeStockQuantity}</strong>{" "}
-        unidade(s) permanecerão como
-        estoque livre.
-      </>
+  <span>
+    {selectedProject ? (
+      freeStockQuantity > 0 ? (
+        <>
+          <strong>
+            {allocationQuantity}
+          </strong>{" "}
+          unidade(s) atenderão o projeto{" "}
+          <strong>
+            “{selectedProject.name}”
+          </strong>{" "}
+          e{" "}
+          <strong>
+            {freeStockQuantity}
+          </strong>{" "}
+          unidade(s) permanecerão como
+          estoque disponível.
+        </>
+      ) : (
+        <>
+          Todas as{" "}
+          <strong>
+            {allocationQuantity}
+          </strong>{" "}
+          unidade(s) atenderão o projeto{" "}
+          <strong>
+            “{selectedProject.name}”
+          </strong>
+          .
+        </>
+      )
     ) : (
       <>
-        Todas as{" "}
-        <strong>{allocationQuantity}</strong>{" "}
-        unidade(s) atenderão o projeto{" "}
-        <strong>
-          “{selectedProject.name}”
-        </strong>.
+        Selecione um projeto de destino
+        para calcular a distribuição da
+        entrada.
       </>
-    )
-  ) : (
-    <>
-      Todas as{" "}
-      <strong>{parsedQuantity || 0}</strong>{" "}
-      unidade(s) serão adicionadas ao
-      estoque livre.
-    </>
-  )}
-</span>
-          </div>
+    )}
+  </span>
+</div>
 
           <div className="flex flex-col-reverse gap-2 border-t border-zinc-100 pt-4 sm:flex-row sm:justify-end">
             <button

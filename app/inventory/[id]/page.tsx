@@ -1,3 +1,4 @@
+import { calculateStock } from "@/lib/inventory/calculateStock";
 import {
   EquipmentCondition,
   EquipmentStatus,
@@ -14,7 +15,6 @@ import {
   Images,
   PackageCheck,
   ReceiptText,
-  ShieldCheck,
   Tags,
 } from "lucide-react";
 import Link from "next/link";
@@ -30,7 +30,10 @@ type EquipmentDetailsPageProps = {
   }>;
 };
 
-const statusLabels: Record<EquipmentStatus, string> = {
+const statusLabels: Record<
+  EquipmentStatus,
+  string
+> = {
   AVAILABLE: "Disponível",
   IN_USE: "Em uso",
   UNAVAILABLE: "Indisponível",
@@ -50,9 +53,11 @@ const statusStyles: Record<
 > = {
   AVAILABLE:
     "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+
   IN_USE:
     "bg-blue-50 text-blue-700 ring-blue-600/20",
-    UNAVAILABLE:
+
+  UNAVAILABLE:
     "bg-red-50 text-red-700 ring-red-600/20",
 };
 
@@ -65,53 +70,60 @@ const statusDotStyles: Record<
   UNAVAILABLE: "bg-red-500",
 };
 
-const conditionStyles: Record<
-  EquipmentCondition,
-  string
-> = {
-  NEW:
-    "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-    DAMAGED:
-    "bg-red-50 text-red-700 ring-red-600/20",
-};
-
-const dateTimeFormatter = new Intl.DateTimeFormat(
-  "pt-BR",
-  {
+const dateTimeFormatter =
+  new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "America/Sao_Paulo",
-  },
-);
+  });
 
 export default async function EquipmentDetailsPage({
   params,
 }: EquipmentDetailsPageProps) {
   const { id } = await params;
 
- const equipment =
-  await prisma.equipment.findUnique({
-    where: { id },
-include: {
-  images: {
-    orderBy: {
-      position: "asc",
-    },
-  },
-  projects: {
-    where: {
-      project: {
-        status: {
-          in: ["PLANNING", "IN_PROGRESS"],
+  const equipment =
+    await prisma.equipment.findUnique({
+      where: {
+        id,
+      },
+
+      include: {
+        images: {
+          orderBy: {
+            position: "asc",
+          },
+        },
+
+        projects: {
+          where: {
+            project: {
+              status: {
+                in: [
+                  "PLANNING",
+                  "IN_PROGRESS",
+                ],
+              },
+            },
+          },
+
+          select: {
+            quantity: true,
+
+            project: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+              },
+            },
+          },
         },
       },
-    },
-  },
-},
-  });
+    });
 
   if (!equipment) {
     notFound();
@@ -124,30 +136,71 @@ include: {
     .filter(Boolean)
     .join(" · ");
 
-    
-const physicalStock =
-  equipment.quantity;
+  /*
+ * Necessidade total de todos os
+ * projetos ativos.
+ *
+ * ProjectEquipment.quantity representa
+ * quantas unidades o projeto necessita.
+ *
+ * Não descontamos allocatedQuantity aqui,
+ * porque queremos saber quanto do estoque
+ * operacional está comprometido pela
+ * demanda ativa como um todo.
+ */
+const requestedQuantity =
+  equipment.projects.reduce(
+    (total, item) =>
+      total +
+      Math.max(
+        item.quantity,
+        0,
+      ),
+    0,
+  );
 
-const inUse = equipment.projects.reduce(
-  (total, item) => total + item.quantity,
-  0,
+const {
+  physicalStock,
+  operationalStock,
+  inUse,
+  availableStock,
+  damagedQuantity,
+  shortage,
+} = calculateStock(
+  equipment.quantity,
+  requestedQuantity,
+  equipment.damagedQuantity,
 );
 
-const availableStock = Math.max(
-  physicalStock - inUse,
-  0,
-);
+/*
+ * Demanda total dos projetos ativos.
+ *
+ * Representa quantas unidades deste
+ * equipamento são necessárias somando
+ * todos os projetos em PLANNING e
+ * IN_PROGRESS.
+ */
+const activeDemand = requestedQuantity;
 
-const quantityLabel =
-  `${physicalStock} ${
-    physicalStock === 1
-      ? "unidade"
-      : "unidades"
-  }`;
-const isOutOfStock =
-  availableStock === 0;
+  const physicalStockLabel =
+    `${physicalStock} ${
+      physicalStock === 1
+        ? "unidade"
+        : "unidades"
+    }`;
+
+  const operationalStockLabel =
+    `${operationalStock} ${
+      operationalStock === 1
+        ? "unidade"
+        : "unidades"
+    }`;
+
+  const isOutOfStock =
+    operationalStock === 0;
 
   const isLowStock =
+    operationalStock > 0 &&
     availableStock > 0 &&
     equipment.minimumStock > 0 &&
     availableStock <=
@@ -163,7 +216,9 @@ const isOutOfStock =
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
               aria-label="Voltar ao inventário"
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft
+                size={18}
+              />
             </Link>
 
             <div className="flex min-w-0 items-start gap-3">
@@ -171,24 +226,37 @@ const isOutOfStock =
                 {equipment.images[0]?.url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={equipment.images[0].url}
+                    src={
+                      equipment
+                        .images[0]
+                        .url
+                    }
                     alt=""
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <Boxes size={23} />
+                  <Boxes
+                    size={23}
+                  />
                 )}
               </div>
 
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="break-words text-xl font-bold text-zinc-900 sm:text-2xl">
-                    {equipment.name}
+                    {
+                      equipment.name
+                    }
                   </h1>
 
-{equipment.status !== "AVAILABLE" && (
-  <StatusBadge status={equipment.status} />
-)}
+                  {equipment.status !==
+                  "AVAILABLE" ? (
+                    <StatusBadge
+                      status={
+                        equipment.status
+                      }
+                    />
+                  ) : null}
                 </div>
 
                 <p className="mt-1 text-sm text-zinc-500">
@@ -214,97 +282,174 @@ const isOutOfStock =
             </Link>
 
             <DeleteEquipmentButton
-              equipmentId={equipment.id}
-              equipmentName={equipment.name}
+              equipmentId={
+                equipment.id
+              }
+              equipmentName={
+                equipment.name
+              }
             />
           </div>
         </div>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-<SummaryCard
-  icon={Boxes}
-  label="Disponível"
-  value={`${availableStock} ${
-    availableStock === 1 ? "unidade" : "unidades"
-  }`}
-  iconClassName="bg-emerald-50 text-emerald-700"
-/>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard
+          icon={Boxes}
+          label="Estoque físico"
+          value={
+            physicalStockLabel
+          }
+          description="Operacionais + danificadas"
+          iconClassName="bg-orange-50 text-[#F57B00]"
+        />
 
-<SummaryCard
-  icon={PackageCheck}
-  label="Em uso"
-  value={`${inUse} ${
-    inUse === 1 ? "unidade" : "unidades"
-  }`}
-  iconClassName="bg-blue-50 text-blue-700"
-/>
+        <SummaryCard
+          icon={PackageCheck}
+          label="Operacional"
+          value={
+            operationalStockLabel
+          }
+          description="Unidades aptas para uso"
+          iconClassName="bg-violet-50 text-violet-700"
+        />
 
-<SummaryCard
-  icon={Boxes}
-  label="Estoque físico"
-  value={quantityLabel}
-  iconClassName="bg-orange-50 text-[#F57B00]"
-/>
+        <SummaryCard
+          icon={PackageCheck}
+          label="Em uso"
+          value={`${inUse} ${
+            inUse === 1
+              ? "unidade"
+              : "unidades"
+          }`}
+          description="Alocado em projetos ativos"
+          iconClassName="bg-blue-50 text-blue-700"
+        />
 
-<SummaryCard
-  icon={Tags}
-  label="Categoria"
-  value={equipment.category}
-  iconClassName="bg-violet-50 text-violet-700"
-/>
+        <SummaryCard
+          icon={Boxes}
+          label="Disponível"
+          value={`${availableStock} ${
+            availableStock === 1
+              ? "unidade"
+              : "unidades"
+          }`}
+          description="Livre para novas demandas"
+          iconClassName={
+            availableStock === 0
+              ? "bg-red-50 text-red-700"
+              : "bg-emerald-50 text-emerald-700"
+          }
+        />
+
+        <SummaryCard
+          icon={Tags}
+          label="Categoria"
+          value={
+            equipment.category
+          }
+          description="Classificação do item"
+          iconClassName="bg-zinc-100 text-zinc-700"
+        />
       </section>
 
-      {isOutOfStock ? (
-<StockAlert
-  type="danger"
-  message="Não existem unidades disponíveis para novos projetos."
-/>
+      {damagedQuantity > 0 ? (
+        <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          <Boxes size={18} />
+
+          {damagedQuantity}{" "}
+          {damagedQuantity === 1
+            ? "unidade danificada está"
+            : "unidades danificadas estão"}{" "}
+          fora do estoque
+          operacional.
+        </div>
+      ) : null}
+
+      {shortage > 0 ? (
+        <StockAlert
+          type="danger"
+          message={`Os projetos ativos possuem um déficit de ${shortage} ${
+            shortage === 1
+              ? "unidade"
+              : "unidades"
+          } deste equipamento.`}
+        />
+      ) : isOutOfStock ? (
+        <StockAlert
+          type="danger"
+          message="Não existem unidades operacionais disponíveis para novos projetos."
+        />
       ) : isLowStock ? (
-<StockAlert
-  type="warning"
-  message={`Existem apenas ${availableStock} ${
-    availableStock === 1 ? "unidade disponível" : "unidades disponíveis"
-  }. O estoque mínimo configurado é ${equipment.minimumStock}.`}
-/>
+        <StockAlert
+          type="warning"
+          message={`Existem apenas ${availableStock} ${
+            availableStock === 1
+              ? "unidade disponível"
+              : "unidades disponíveis"
+          }. O limite de alerta configurado é ${equipment.minimumStock}.`}
+        />
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
-          {equipment.images.length > 0 ? (
+          {equipment.images.length >
+          0 ? (
             <DetailsSection
               icon={Images}
               title="Imagens"
               description="Fotos cadastradas para este equipamento."
             >
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {equipment.images.map((image, index) => (
-  <article
-    key={image.id}
-    className="group relative aspect-square overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
-  >
-    {/* eslint-disable-next-line @next/next/no-img-element */}
-    <img
-      src={image.url}
-      alt={`Imagem ${index + 1} de ${equipment.name}`}
-      className="h-full w-full object-cover"
-    />
+                {equipment.images.map(
+                  (
+                    image,
+                    index,
+                  ) => (
+                    <article
+                      key={
+                        image.id
+                      }
+                      className="group relative aspect-square overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={
+                          image.url
+                        }
+                        alt={`Imagem ${
+                          index +
+                          1
+                        } de ${
+                          equipment.name
+                        }`}
+                        className="h-full w-full object-cover"
+                      />
 
-    <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/20" />
+                      <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/20" />
 
-    {index === 0 ? (
-      <span className="absolute left-2 top-2 z-10 rounded-full bg-[#F57B00] px-2 py-1 text-[10px] font-bold text-white shadow-sm">
-        Principal
-      </span>
-    ) : null}
+                      {index ===
+                      0 ? (
+                        <span className="absolute left-2 top-2 z-10 rounded-full bg-[#F57B00] px-2 py-1 text-[10px] font-bold text-white shadow-sm">
+                          Principal
+                        </span>
+                      ) : null}
 
-    <DeleteEquipmentImageButton
-      equipmentId={equipment.id}
-      imageId={image.id}
-      isPrimary={index === 0}
-    />
-  </article>
-))}
+                      <DeleteEquipmentImageButton
+                        equipmentId={
+                          equipment.id
+                        }
+                        imageId={
+                          image.id
+                        }
+                        isPrimary={
+                          index ===
+                          0
+                        }
+                      />
+                    </article>
+                  ),
+                )}
               </div>
             </DetailsSection>
           ) : null}
@@ -317,12 +462,16 @@ const isOutOfStock =
             <DetailsGrid>
               <DetailItem
                 label="Nome do equipamento"
-                value={equipment.name}
+                value={
+                  equipment.name
+                }
               />
 
               <DetailItem
                 label="Categoria"
-                value={equipment.category}
+                value={
+                  equipment.category
+                }
               />
 
               <DetailItem
@@ -349,31 +498,83 @@ const isOutOfStock =
                 }
               />
 
-<DetailItem
-  label="Estoque físico"
-  value={`${physicalStock} unidades`}
-/>
+              <DetailItem
+                label="Estoque físico"
+                value={
+                  physicalStockLabel
+                }
+              />
 
-<DetailItem
-  label="Em uso"
-  value={`${inUse} unidades`}
-/>
+              <DetailItem
+                label="Estoque operacional"
+                value={
+                  operationalStockLabel
+                }
+              />
 
-<DetailItem
-  label="Disponível"
-  value={`${availableStock} unidades`}
-/>
+              <DetailItem
+                label="Em uso"
+                value={`${inUse} ${
+                  inUse === 1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
 
-<DetailItem
-  label="Estoque mínimo"
-  value={`${equipment.minimumStock} unidades`}
-/>
+              <DetailItem
+                label="Disponível"
+                value={`${availableStock} ${
+                  availableStock ===
+                  1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
+
+              <DetailItem
+                label="Danificadas"
+                value={`${damagedQuantity} ${
+                  damagedQuantity ===
+                  1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
+
+              <DetailItem
+                label="Demanda dos projetos ativos"
+                value={`${activeDemand} ${
+                  activeDemand === 1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
+
+              <DetailItem
+                label="Déficit"
+                value={`${shortage} ${
+                  shortage === 1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
+
+              <DetailItem
+                label="Limite de alerta"
+                value={`${equipment.minimumStock} ${
+                  equipment.minimumStock ===
+                  1
+                    ? "unidade"
+                    : "unidades"
+                }`}
+              />
 
               <DetailItem
                 label="Condição"
                 value={
                   conditionLabels[
-                    equipment.condition
+                    equipment
+                      .condition
                   ]
                 }
               />
@@ -405,23 +606,26 @@ const isOutOfStock =
             <header className="border-b border-zinc-200 px-5 py-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-                  <ReceiptText size={19} />
+                  <ReceiptText
+                    size={19}
+                  />
                 </div>
 
                 <div>
                   <h2 className="text-base font-semibold text-zinc-900">
-                    Resumo do cadastro
+                    Resumo do
+                    cadastro
                   </h2>
 
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    Informações do registro
+                    Informações
+                    do registro
                   </p>
                 </div>
               </div>
             </header>
 
             <dl className="divide-y divide-zinc-100 px-5">
-
               <SidebarDetail
                 label="Criado em"
                 value={dateTimeFormatter.format(
@@ -441,12 +645,15 @@ const isOutOfStock =
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
-                <CalendarDays size={19} />
+                <CalendarDays
+                  size={19}
+                />
               </div>
 
               <div>
                 <p className="text-xs font-medium text-zinc-500">
-                  Última atualização
+                  Última
+                  atualização
                 </p>
 
                 <p className="mt-1 font-semibold text-zinc-900">
@@ -456,7 +663,9 @@ const isOutOfStock =
                 </p>
 
                 <p className="mt-1 text-sm text-zinc-500">
-                  Dados atualizados no sistema
+                  Dados
+                  atualizados no
+                  sistema
                 </p>
               </div>
             </div>
@@ -465,7 +674,9 @@ const isOutOfStock =
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#F57B00]">
-                <Hash size={19} />
+                <Hash
+                  size={19}
+                />
               </div>
 
               <div className="min-w-0">
@@ -508,11 +719,13 @@ function SummaryCard({
   icon: Icon,
   label,
   value,
+  description,
   iconClassName,
 }: {
   icon: typeof Boxes;
   label: string;
   value: string;
+  description?: string;
   iconClassName: string;
 }) {
   return (
@@ -532,6 +745,12 @@ function SummaryCard({
           <p className="mt-1 break-words text-sm font-semibold text-zinc-900">
             {value}
           </p>
+
+          {description ? (
+            <p className="mt-1 text-[11px] leading-4 text-zinc-400">
+              {description}
+            </p>
+          ) : null}
         </div>
       </div>
     </article>
@@ -555,6 +774,7 @@ function StockAlert({
       className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold ${styles}`}
     >
       <Boxes size={18} />
+
       {message}
     </div>
   );
@@ -589,7 +809,9 @@ function DetailsSection({
         </div>
       </header>
 
-      <div className="p-5">{children}</div>
+      <div className="p-5">
+        {children}
+      </div>
     </section>
   );
 }

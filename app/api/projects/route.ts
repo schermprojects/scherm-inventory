@@ -14,6 +14,38 @@ export const dynamic = "force-dynamic";
 
 const MAX_EQUIPMENT_QUANTITY = 999999;
 
+const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
+  ProjectStatus.PLANNING,
+  ProjectStatus.IN_PROGRESS,
+];
+
+/*
+ * Ordem utilizada para disputar
+ * estoque entre projetos ativos.
+ *
+ * Quanto menor o valor, maior
+ * a prioridade.
+ */
+const PROJECT_STATUS_WEIGHT: Record<
+  ProjectStatus,
+  number
+> = {
+  [ProjectStatus.IN_PROGRESS]: 0,
+  [ProjectStatus.PLANNING]: 1,
+  [ProjectStatus.COMPLETED]: 2,
+  [ProjectStatus.CANCELLED]: 3,
+};
+
+const PROJECT_PRIORITY_WEIGHT: Record<
+  ProjectPriority,
+  number
+> = {
+  [ProjectPriority.URGENT]: 0,
+  [ProjectPriority.HIGH]: 1,
+  [ProjectPriority.NORMAL]: 2,
+  [ProjectPriority.LOW]: 3,
+};
+
 type UserRole =
   | "ADMIN"
   | "COMMERCIAL"
@@ -56,6 +88,13 @@ type ProjectBody = {
   equipments?: unknown;
 };
 
+type ProjectStockAllocation = {
+  availableBeforeProject: number;
+  coveredByStock: number;
+  availableAfterProject: number;
+  shortage: number;
+};
+
 const projectPersonSelect = {
   id: true,
   name: true,
@@ -78,15 +117,15 @@ const projectInclude = {
   },
 
   client: {
-  select: {
-    id: true,
-    clientCode: true,
-    shortName: true,
-    name: true,
-    contactName: true,
-    active: true,
+    select: {
+      id: true,
+      clientCode: true,
+      shortName: true,
+      name: true,
+      contactName: true,
+      active: true,
+    },
   },
-},
 
   equipment: {
     include: {
@@ -107,6 +146,7 @@ const projectInclude = {
             orderBy: {
               position: "asc" as const,
             },
+
             take: 1,
           },
         },
@@ -124,6 +164,11 @@ const projectInclude = {
     },
   },
 } satisfies Prisma.ProjectInclude;
+
+type ProjectWithRelations =
+  Prisma.ProjectGetPayload<{
+    include: typeof projectInclude;
+  }>;
 
 function requiredText(
   value: unknown,
@@ -264,7 +309,8 @@ function parseEquipmentQuantity(
   if (
     !Number.isInteger(quantity) ||
     quantity <= 0 ||
-    quantity > MAX_EQUIPMENT_QUANTITY
+    quantity >
+      MAX_EQUIPMENT_QUANTITY
   ) {
     throw new Error(
       `A quantidade do equipamento ${
@@ -280,31 +326,40 @@ function parseProjectEquipment(
   body: ProjectBody,
 ): NormalizedProjectEquipment[] {
   const receivedEquipment =
-    body.equipment ?? body.equipments;
+    body.equipment ??
+    body.equipments;
 
   if (
-    receivedEquipment === undefined ||
+    receivedEquipment ===
+      undefined ||
     receivedEquipment === null
   ) {
     return [];
   }
 
-  if (!Array.isArray(receivedEquipment)) {
+  if (
+    !Array.isArray(
+      receivedEquipment,
+    )
+  ) {
     throw new Error(
       'O campo "equipment" deve ser uma lista de equipamentos.',
     );
   }
 
   /*
-   * Map é usado para impedir registros duplicados.
+   * Evita equipamentos duplicados
+   * no mesmo projeto.
    *
-   * Caso o mesmo equipmentId seja enviado mais de
-   * uma vez, as quantidades são somadas.
+   * Caso o mesmo equipmentId seja
+   * recebido mais de uma vez,
+   * somamos as quantidades.
    */
-  const equipmentMap = new Map<
-    string,
-    NormalizedProjectEquipment
-  >();
+  const equipmentMap =
+    new Map<
+      string,
+      NormalizedProjectEquipment
+    >();
 
   receivedEquipment.forEach(
     (
@@ -312,7 +367,8 @@ function parseProjectEquipment(
       index: number,
     ) => {
       if (
-        typeof rawItem !== "object" ||
+        typeof rawItem !==
+          "object" ||
         rawItem === null ||
         Array.isArray(rawItem)
       ) {
@@ -326,10 +382,13 @@ function parseProjectEquipment(
       const item =
         rawItem as ProjectEquipmentBody;
 
-      const equipmentId = requiredText(
-        item.equipmentId,
-        `Equipamento ${index + 1}`,
-      );
+      const equipmentId =
+        requiredText(
+          item.equipmentId,
+          `Equipamento ${
+            index + 1
+          }`,
+        );
 
       const quantity =
         parseEquipmentQuantity(
@@ -337,16 +396,20 @@ function parseProjectEquipment(
           index,
         );
 
-      const notes = optionalText(
-        item.notes,
-      );
+      const notes =
+        optionalText(
+          item.notes,
+        );
 
       const existingItem =
-        equipmentMap.get(equipmentId);
+        equipmentMap.get(
+          equipmentId,
+        );
 
       if (existingItem) {
         const mergedQuantity =
-          existingItem.quantity + quantity;
+          existingItem.quantity +
+          quantity;
 
         if (
           mergedQuantity >
@@ -357,21 +420,31 @@ function parseProjectEquipment(
           );
         }
 
-        equipmentMap.set(equipmentId, {
+        equipmentMap.set(
           equipmentId,
-          quantity: mergedQuantity,
-          notes:
-            existingItem.notes ?? notes,
-        });
+          {
+            equipmentId,
+
+            quantity:
+              mergedQuantity,
+
+            notes:
+              existingItem.notes ??
+              notes,
+          },
+        );
 
         return;
       }
 
-      equipmentMap.set(equipmentId, {
+      equipmentMap.set(
         equipmentId,
-        quantity,
-        notes,
-      });
+        {
+          equipmentId,
+          quantity,
+          notes,
+        },
+      );
     },
   );
 
@@ -413,137 +486,575 @@ async function validateActiveUser(
   }
 }
 
-function serializeProject<
-  T extends {
-    equipment: Array<{
-      quantity: number;
-      equipment: {
-        quantity: number;
-      };
-    }>;
-    _count: {
-      equipment: number;
-    };
-  },
->(project: T) {
-  const neededUnits =
-    project.equipment.reduce(
-      (total, item) =>
-        total + item.quantity,
-      0,
+function getProjectEquipmentKey(
+  projectId: string,
+  equipmentId: string,
+): string {
+  return `${projectId}:${equipmentId}`;
+}
+
+/*
+ * Monta a distribuição GLOBAL do
+ * estoque entre projetos ativos.
+ *
+ * Isso é importante porque o mesmo
+ * estoque não pode ser contado duas
+ * vezes.
+ *
+ * Exemplo:
+ *
+ * Estoque = 5
+ *
+ * Projeto A precisa 5
+ * Projeto B precisa 5
+ *
+ * Resultado:
+ *
+ * A -> coberto 5 / déficit 0
+ * B -> coberto 0 / déficit 5
+ *
+ * e nunca:
+ *
+ * A -> déficit 0
+ * B -> déficit 0
+ */
+async function buildStockAllocation(
+  projects: ProjectWithRelations[],
+): Promise<
+  Map<
+    string,
+    ProjectStockAllocation
+  >
+> {
+  const equipmentIds =
+    Array.from(
+      new Set(
+        projects.flatMap(
+          (project) =>
+            project.equipment.map(
+              (item) =>
+                item.equipmentId,
+            ),
+        ),
+      ),
     );
 
-  const physicalStockUnits =
-    project.equipment.reduce(
-      (total, item) =>
-        total + item.equipment.quantity,
-      0,
-    );
+  if (
+    equipmentIds.length === 0
+  ) {
+    return new Map();
+  }
 
-  const shortageUnits =
-    project.equipment.reduce(
-      (total, item) => {
-        const shortage = Math.max(
-          item.quantity -
-            item.equipment.quantity,
-          0,
-        );
-
-        return total + shortage;
+  /*
+   * Buscamos o estoque diretamente
+   * do cadastro do equipamento.
+   */
+  const [
+    equipmentRecords,
+    activeProjectEquipment,
+  ] = await Promise.all([
+    prisma.equipment.findMany({
+      where: {
+        id: {
+          in: equipmentIds,
+        },
       },
-      0,
+
+      select: {
+        id: true,
+        quantity: true,
+      },
+    }),
+
+    /*
+     * IMPORTANTE:
+     *
+     * Mesmo se a listagem atual estiver
+     * filtrada para somente um projeto,
+     * precisamos considerar TODOS os
+     * projetos ativos que disputam o
+     * mesmo equipamento.
+     */
+    prisma.projectEquipment.findMany({
+      where: {
+        equipmentId: {
+          in: equipmentIds,
+        },
+
+        project: {
+          status: {
+            in:
+              ACTIVE_PROJECT_STATUSES,
+          },
+        },
+      },
+
+      select: {
+        projectId: true,
+        equipmentId: true,
+        quantity: true,
+        allocatedQuantity:
+          true,
+
+        project: {
+          select: {
+            status: true,
+            priority: true,
+            dueDate: true,
+            createdAt: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const remainingStockByEquipment =
+    new Map<string, number>(
+      equipmentRecords.map(
+        (equipment) => [
+          equipment.id,
+
+          Math.max(
+            equipment.quantity,
+            0,
+          ),
+        ],
+      ),
     );
 
-  const equipmentWithShortage =
-    project.equipment.filter(
-      (item) =>
-        item.quantity >
-        item.equipment.quantity,
-    ).length;
+  /*
+   * Ordem determinística de
+   * atendimento:
+   *
+   * 1. Em andamento;
+   * 2. Planejamento;
+   * 3. Prioridade;
+   * 4. Prazo mais próximo;
+   * 5. Projeto mais antigo;
+   * 6. ID como desempate.
+   */
+  const orderedDemand =
+    [
+      ...activeProjectEquipment,
+    ].sort(
+      (left, right) => {
+        const statusDifference =
+          PROJECT_STATUS_WEIGHT[
+            left.project.status
+          ] -
+          PROJECT_STATUS_WEIGHT[
+            right.project.status
+          ];
+
+        if (
+          statusDifference !== 0
+        ) {
+          return statusDifference;
+        }
+
+        const priorityDifference =
+          PROJECT_PRIORITY_WEIGHT[
+            left.project.priority
+          ] -
+          PROJECT_PRIORITY_WEIGHT[
+            right.project.priority
+          ];
+
+        if (
+          priorityDifference !== 0
+        ) {
+          return priorityDifference;
+        }
+
+        const leftDueDate =
+          left.project.dueDate
+            ?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
+
+        const rightDueDate =
+          right.project.dueDate
+            ?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
+
+        if (
+          leftDueDate !==
+          rightDueDate
+        ) {
+          return (
+            leftDueDate -
+            rightDueDate
+          );
+        }
+
+        const createdDifference =
+          left.project.createdAt.getTime() -
+          right.project.createdAt.getTime();
+
+        if (
+          createdDifference !== 0
+        ) {
+          return createdDifference;
+        }
+
+        return left.projectId.localeCompare(
+          right.projectId,
+        );
+      },
+    );
+
+  const allocation =
+    new Map<
+      string,
+      ProjectStockAllocation
+    >();
+
+  for (
+    const item of
+    orderedDemand
+  ) {
+    /*
+     * quantity:
+     * necessidade total.
+     *
+     * allocatedQuantity:
+     * quantidade que já teve
+     * baixa física.
+     *
+     * Portanto, somente a diferença
+     * ainda disputa o estoque atual.
+     */
+    const pendingQuantity =
+      Math.max(
+        item.quantity -
+          item.allocatedQuantity,
+        0,
+      );
+
+    const availableBeforeProject =
+      Math.max(
+        remainingStockByEquipment.get(
+          item.equipmentId,
+        ) ?? 0,
+        0,
+      );
+
+    const coveredByStock =
+      Math.min(
+        pendingQuantity,
+        availableBeforeProject,
+      );
+
+    const availableAfterProject =
+      Math.max(
+        availableBeforeProject -
+          coveredByStock,
+        0,
+      );
+
+    const shortage =
+      Math.max(
+        pendingQuantity -
+          coveredByStock,
+        0,
+      );
+
+    remainingStockByEquipment.set(
+      item.equipmentId,
+      availableAfterProject,
+    );
+
+    allocation.set(
+      getProjectEquipmentKey(
+        item.projectId,
+        item.equipmentId,
+      ),
+      {
+        availableBeforeProject,
+        coveredByStock,
+        availableAfterProject,
+        shortage,
+      },
+    );
+  }
+
+  return allocation;
+}
+
+function serializeProject(
+  project: ProjectWithRelations,
+  stockAllocation:
+    Map<
+      string,
+      ProjectStockAllocation
+    >,
+) {
+  let neededUnits = 0;
+
+  let physicalStockUnits = 0;
+
+  let availableUnits = 0;
+
+  let shortageUnits = 0;
+
+  let equipmentWithShortage = 0;
+
+  let outOfStockItems = 0;
+
+  const projectIsActive =
+    ACTIVE_PROJECT_STATUSES.includes(
+      project.status,
+    );
+
+  const equipment =
+    project.equipment.map(
+      (item) => {
+        /*
+         * equipment.quantity é o
+         * estoque operacional atual.
+         */
+        const physicalStock =
+          Math.max(
+            item.equipment.quantity,
+            0,
+          );
+
+        /*
+         * Necessidade total registrada
+         * neste projeto.
+         */
+        const needed =
+          Math.max(
+            item.quantity,
+            0,
+          );
+
+        /*
+         * Quantidade que já teve
+         * baixa física real.
+         */
+        const allocatedQuantity =
+          Math.max(
+            item.allocatedQuantity,
+            0,
+          );
+
+        /*
+         * Necessidade que ainda precisa
+         * ser atendida.
+         */
+        const pendingAllocationQuantity =
+          Math.max(
+            needed -
+              allocatedQuantity,
+            0,
+          );
+
+        const allocation =
+          projectIsActive
+            ? stockAllocation.get(
+                getProjectEquipmentKey(
+                  project.id,
+                  item.equipmentId,
+                ),
+              )
+            : undefined;
+
+        /*
+         * Quantidade do estoque atual
+         * que consegue cobrir a parte
+         * ainda pendente deste projeto.
+         */
+        const coveredByStock =
+          projectIsActive
+            ? allocation
+                ?.coveredByStock ??
+              0
+            : 0;
+
+        /*
+         * Total considerado atendido:
+         *
+         * baixa física anterior
+         * +
+         * estoque atual reservado
+         * virtualmente pela distribuição.
+         */
+        const assignedFromStock =
+          Math.min(
+            needed,
+            allocatedQuantity +
+              coveredByStock,
+          );
+
+        /*
+         * Projetos não ativos não entram
+         * na disputa de estoque nem
+         * exibem déficit operacional.
+         */
+        const shortage =
+          projectIsActive
+            ? allocation
+                ?.shortage ??
+              pendingAllocationQuantity
+            : 0;
+
+        const availableForProject =
+          projectIsActive
+            ? allocation
+                ?.availableBeforeProject ??
+              0
+            : physicalStock;
+
+        const availableAfterProject =
+          projectIsActive
+            ? allocation
+                ?.availableAfterProject ??
+              0
+            : physicalStock;
+
+        const hasShortage =
+          shortage > 0;
+
+        const isOutOfStock =
+          physicalStock === 0;
+
+        neededUnits +=
+          needed;
+
+        physicalStockUnits +=
+          physicalStock;
+
+        availableUnits +=
+          assignedFromStock;
+
+        shortageUnits +=
+          shortage;
+
+        if (hasShortage) {
+          equipmentWithShortage +=
+            1;
+        }
+
+        if (isOutOfStock) {
+          outOfStockItems +=
+            1;
+        }
+
+        return {
+          ...item,
+
+          needed,
+
+          allocatedQuantity,
+
+          pendingAllocationQuantity,
+
+          hasAllocatedQuantity:
+            allocatedQuantity > 0,
+
+          physicalStock,
+
+          availableForProject,
+
+          assignedFromStock,
+
+          availableAfterProject,
+
+          shortage,
+
+          hasShortage,
+
+          isOutOfStock,
+
+          isBelowMinimum:
+            physicalStock <=
+            item.equipment.minimumStock,
+        };
+      },
+    );
 
   return {
     ...project,
+
+    equipment,
 
     equipmentItems:
       project._count.equipment,
 
     /*
-     * Novo nome correto.
-     * Representa necessidade, não reserva.
+     * Necessidade total do projeto.
      */
     neededUnits,
 
     /*
-     * Mantido temporariamente para não quebrar
-     * componentes antigos que ainda usam o nome.
+     * Mantido por compatibilidade
+     * com componentes antigos.
      */
-    reservedUnits: neededUnits,
+    reservedUnits:
+      neededUnits,
 
     physicalStockUnits,
+
+    /*
+     * Quantidade do projeto que está
+     * coberta por baixa anterior ou
+     * pelo estoque operacional atual.
+     */
+    availableUnits,
+
     shortageUnits,
+
     equipmentWithShortage,
-    hasShortage: shortageUnits > 0,
+
+    outOfStockItems,
+
+    hasShortage:
+      shortageUnits > 0,
   };
 }
 
 function serializeProjectForAudit(
-  project: {
-    id: string;
-    name: string;
-    clientId: string | null;
-    clientName: string | null;
-    description: string | null;
-    status: ProjectStatus;
-    priority: ProjectPriority;
-    startDate: Date | null;
-    dueDate: Date | null;
-    completedAt: Date | null;
-    notes: string | null;
-    createdById: string | null;
-    responsibleId: string | null;
-    salespersonId: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-
-    equipment: Array<{
-      quantity: number;
-      notes: string | null;
-
-      equipment: {
-        id: string;
-        name: string;
-        category: string;
-        manufacturer: string | null;
-        model: string | null;
-        serialNumber: string | null;
-      };
-    }>;
-  },
+  project: ProjectWithRelations,
 ): Prisma.InputJsonValue {
   return {
-    id: project.id,
-    name: project.name,
+    id:
+      project.id,
 
-    clientId: project.clientId,
-    clientName: project.clientName,
+    name:
+      project.name,
 
-    description: project.description,
-    status: project.status,
-    priority: project.priority,
+    clientId:
+      project.clientId,
+
+    clientName:
+      project.clientName,
+
+    description:
+      project.description,
+
+    status:
+      project.status,
+
+    priority:
+      project.priority,
 
     startDate:
-      project.startDate?.toISOString() ??
+      project.startDate
+        ?.toISOString() ??
       null,
 
     dueDate:
-      project.dueDate?.toISOString() ??
+      project.dueDate
+        ?.toISOString() ??
       null,
 
     completedAt:
-      project.completedAt?.toISOString() ??
+      project.completedAt
+        ?.toISOString() ??
       null,
 
-    notes: project.notes,
+    notes:
+      project.notes,
 
     createdById:
       project.createdById,
@@ -567,16 +1078,21 @@ function serializeProjectForAudit(
             item.equipment.category,
 
           manufacturer:
-            item.equipment.manufacturer,
+            item.equipment
+              .manufacturer,
 
           model:
             item.equipment.model,
 
           serialNumber:
-            item.equipment.serialNumber,
+            item.equipment
+              .serialNumber,
 
           quantity:
             item.quantity,
+
+          allocatedQuantity:
+            item.allocatedQuantity,
 
           notes:
             item.notes,
@@ -594,13 +1110,15 @@ function serializeProjectForAudit(
 export async function GET(
   request: Request,
 ) {
-  const session = await auth();
+  const session =
+    await auth();
 
   if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -609,197 +1127,293 @@ export async function GET(
   }
 
   try {
-    const { searchParams } = new URL(
+    const {
+      searchParams,
+    } = new URL(
       request.url,
     );
 
     const search =
-      searchParams.get("search")?.trim() ??
+      searchParams
+        .get("search")
+        ?.trim() ??
       "";
 
     const status =
-      searchParams.get("status");
+      searchParams.get(
+        "status",
+      );
 
     const priority =
-      searchParams.get("priority");
+      searchParams.get(
+        "priority",
+      );
 
     const responsibleId =
       searchParams
-        .get("responsibleId")
-        ?.trim() ?? "";
+        .get(
+          "responsibleId",
+        )
+        ?.trim() ??
+      "";
 
     const salespersonId =
       searchParams
-        .get("salespersonId")
-        ?.trim() ?? "";
+        .get(
+          "salespersonId",
+        )
+        ?.trim() ??
+      "";
 
-    const where: Prisma.ProjectWhereInput = {
-      ...(search
-        ? {
-            OR: [
-              {
-                name: {
-                  contains: search,
-                  mode: "insensitive",
-                },
-              },
-              {
-                clientName: {
-                  contains: search,
-                  mode: "insensitive",
-                },
-              },
-              {
-                description: {
-                  contains: search,
-                  mode: "insensitive",
-                },
-              },
-              {
-                responsible: {
+    const where:
+      Prisma.ProjectWhereInput =
+      {
+        ...(search
+          ? {
+              OR: [
+                {
                   name: {
-                    contains: search,
-                    mode: "insensitive",
+                    contains:
+                      search,
+
+                    mode:
+                      "insensitive",
                   },
                 },
-              },
-              {
-                salesperson: {
-                  name: {
-                    contains: search,
-                    mode: "insensitive",
+
+                {
+                  clientName: {
+                    contains:
+                      search,
+
+                    mode:
+                      "insensitive",
                   },
                 },
-              },
-              {
-                createdBy: {
-                  name: {
-                    contains: search,
-                    mode: "insensitive",
+
+                {
+                  description: {
+                    contains:
+                      search,
+
+                    mode:
+                      "insensitive",
                   },
                 },
-              },
-            ],
-          }
-        : {}),
 
-      ...(isProjectStatus(status)
-        ? {
-            status,
-          }
-        : {}),
+                {
+                  responsible: {
+                    name: {
+                      contains:
+                        search,
 
-      ...(isProjectPriority(priority)
-        ? {
-            priority,
-          }
-        : {}),
+                      mode:
+                        "insensitive",
+                    },
+                  },
+                },
 
-      ...(responsibleId
-        ? {
-            responsibleId,
-          }
-        : {}),
+                {
+                  salesperson: {
+                    name: {
+                      contains:
+                        search,
 
-      ...(salespersonId
-        ? {
-            salespersonId,
-          }
-        : {}),
-    };
+                      mode:
+                        "insensitive",
+                    },
+                  },
+                },
 
-    const [projects, groupedStatus] =
+                {
+                  createdBy: {
+                    name: {
+                      contains:
+                        search,
+
+                      mode:
+                        "insensitive",
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
+
+        ...(isProjectStatus(
+          status,
+        )
+          ? {
+              status,
+            }
+          : {}),
+
+        ...(isProjectPriority(
+          priority,
+        )
+          ? {
+              priority,
+            }
+          : {}),
+
+        ...(responsibleId
+          ? {
+              responsibleId,
+            }
+          : {}),
+
+        ...(salespersonId
+          ? {
+              salespersonId,
+            }
+          : {}),
+      };
+
+    const [
+      projects,
+      groupedStatus,
+    ] =
       await Promise.all([
         prisma.project.findMany({
           where,
-          include: projectInclude,
+
+          include:
+            projectInclude,
 
           orderBy: [
             {
-              createdAt: "desc",
+              createdAt:
+                "desc",
             },
+
             {
-              name: "asc",
+              name:
+                "asc",
             },
           ],
         }),
 
         prisma.project.groupBy({
-          by: ["status"],
+          by: [
+            "status",
+          ],
 
           _count: {
-            _all: true,
+            _all:
+              true,
           },
         }),
       ]);
 
+    /*
+     * Aqui está a correção principal:
+     *
+     * antes de serializar cada projeto
+     * isoladamente, distribuímos o
+     * estoque globalmente entre todos
+     * os projetos ativos.
+     */
+    const stockAllocation =
+      await buildStockAllocation(
+        projects,
+      );
+
+    const data =
+      projects.map(
+        (project) =>
+          serializeProject(
+            project,
+            stockAllocation,
+          ),
+      );
+
     const summary = {
       total: 0,
+
       planning: 0,
+
       inProgress: 0,
+
       completed: 0,
+
       cancelled: 0,
 
       totalNeededUnits: 0,
+
       totalShortageUnits: 0,
+
       projectsWithShortage: 0,
     };
 
-    for (const item of groupedStatus) {
+    for (
+      const item of
+      groupedStatus
+    ) {
       const quantity =
         item._count._all;
 
-      summary.total += quantity;
+      summary.total +=
+        quantity;
 
       if (
         item.status ===
         ProjectStatus.PLANNING
       ) {
-        summary.planning = quantity;
+        summary.planning =
+          quantity;
       }
 
       if (
         item.status ===
         ProjectStatus.IN_PROGRESS
       ) {
-        summary.inProgress = quantity;
+        summary.inProgress =
+          quantity;
       }
 
       if (
         item.status ===
         ProjectStatus.COMPLETED
       ) {
-        summary.completed = quantity;
+        summary.completed =
+          quantity;
       }
 
       if (
         item.status ===
         ProjectStatus.CANCELLED
       ) {
-        summary.cancelled = quantity;
+        summary.cancelled =
+          quantity;
       }
     }
 
-    const data = projects.map(
-      serializeProject,
-    );
-
-    for (const project of data) {
+    for (
+      const project of
+      data
+    ) {
       summary.totalNeededUnits +=
         project.neededUnits;
 
       summary.totalShortageUnits +=
         project.shortageUnits;
 
-      if (project.hasShortage) {
-        summary.projectsWithShortage += 1;
+      if (
+        project.hasShortage
+      ) {
+        summary.projectsWithShortage +=
+          1;
       }
     }
 
     return Response.json({
       success: true,
+
       data,
-      total: data.length,
+
+      total:
+        data.length,
+
       summary,
     });
   } catch (error) {
@@ -811,6 +1425,7 @@ export async function GET(
     return Response.json(
       {
         success: false,
+
         message:
           "Não foi possível carregar os projetos.",
       },
@@ -824,13 +1439,16 @@ export async function GET(
 export async function POST(
   request: Request,
 ) {
-  const session = await auth();
+  const session =
+    await auth();
 
   if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -842,11 +1460,14 @@ export async function POST(
     session.user as SessionUser;
 
   if (
-    !canManageProjects(sessionUser.role)
+    !canManageProjects(
+      sessionUser.role,
+    )
   ) {
     return Response.json(
       {
         success: false,
+
         message:
           "Você não possui permissão para criar projetos.",
       },
@@ -856,10 +1477,13 @@ export async function POST(
     );
   }
 
-  if (!sessionUser.id) {
+  if (
+    !sessionUser.id
+  ) {
     return Response.json(
       {
         success: false,
+
         message:
           "Não foi possível identificar o usuário autenticado.",
       },
@@ -873,44 +1497,52 @@ export async function POST(
     const body =
       (await request.json()) as ProjectBody;
 
-    const name = requiredText(
-      body.name,
-      "Nome do projeto",
-    );
+    const name =
+      requiredText(
+        body.name,
+        "Nome do projeto",
+      );
 
-    const clientId = optionalId(
-  body.clientId,
-);
+    const clientId =
+      optionalId(
+        body.clientId,
+      );
 
-let clientName = optionalText(
-  body.clientName,
-);
+    let clientName =
+      optionalText(
+        body.clientName,
+      );
 
     const createdById =
       sessionUser.id;
 
-    const responsibleId = optionalId(
-      body.responsibleId,
-    );
+    const responsibleId =
+      optionalId(
+        body.responsibleId,
+      );
 
-    const salespersonId = optionalId(
-      body.salespersonId,
-    );
+    const salespersonId =
+      optionalId(
+        body.salespersonId,
+      );
 
-    const startDate = optionalDate(
-      body.startDate,
-      "Data de início",
-    );
+    const startDate =
+      optionalDate(
+        body.startDate,
+        "Data de início",
+      );
 
-    const dueDate = optionalDate(
-      body.dueDate,
-      "Data prevista",
-    );
+    const dueDate =
+      optionalDate(
+        body.dueDate,
+        "Data prevista",
+      );
 
-    const completedAt = optionalDate(
-      body.completedAt,
-      "Data de conclusão",
-    );
+    const completedAt =
+      optionalDate(
+        body.completedAt,
+        "Data de conclusão",
+      );
 
     if (
       startDate &&
@@ -922,19 +1554,20 @@ let clientName = optionalText(
       );
     }
 
-    const status = parseStatus(
-      body.status,
-    );
+    const status =
+      parseStatus(
+        body.status,
+      );
 
-    
-
-
-    const priority = parsePriority(
-      body.priority,
-    );
+    const priority =
+      parsePriority(
+        body.priority,
+      );
 
     const selectedEquipment =
-      parseProjectEquipment(body);
+      parseProjectEquipment(
+        body,
+      );
 
     await Promise.all([
       validateActiveUser(
@@ -948,182 +1581,262 @@ let clientName = optionalText(
       ),
     ]);
 
-const project =
-  await prisma.$transaction(
-    async (transaction) => {
-      if (clientId) {
-        const selectedClient =
-          await transaction.client.findUnique({
-            where: {
-              id: clientId,
-            },
+    const project =
+      await prisma.$transaction(
+        async (
+          transaction,
+        ) => {
+          if (clientId) {
+            const selectedClient =
+              await transaction.client.findUnique(
+                {
+                  where: {
+                    id:
+                      clientId,
+                  },
 
-            select: {
-              id: true,
-              name: true,
-              active: true,
-            },
-          });
-
-        if (!selectedClient) {
-          throw new Error(
-            "CLIENT_NOT_FOUND",
-          );
-        }
-
-        if (!selectedClient.active) {
-          throw new Error(
-            "CLIENT_INACTIVE",
-          );
-        }
-
-        clientName =
-          selectedClient.name;
-      }
-
-      if (
-        selectedEquipment.length > 0
-      ) {
-        const equipmentIds =
-          selectedEquipment.map(
-            (item) =>
-              item.equipmentId,
-          );
-
-        const existingEquipment =
-          await transaction.equipment.findMany(
-            {
-              where: {
-                id: {
-                  in: equipmentIds,
+                  select: {
+                    id: true,
+                    name: true,
+                    active:
+                      true,
+                  },
                 },
-              },
+              );
 
-              select: {
-                id: true,
-              },
-            },
-          );
+            if (
+              !selectedClient
+            ) {
+              throw new Error(
+                "CLIENT_NOT_FOUND",
+              );
+            }
 
-        const existingEquipmentIds =
-          new Set(
-            existingEquipment.map(
-              (item) => item.id,
-            ),
-          );
+            if (
+              !selectedClient.active
+            ) {
+              throw new Error(
+                "CLIENT_INACTIVE",
+              );
+            }
 
-        const missingEquipmentIds =
-          equipmentIds.filter(
-            (equipmentId) =>
-              !existingEquipmentIds.has(
-                equipmentId,
-              ),
-          );
+            clientName =
+              selectedClient.name;
+          }
 
-        if (
-          missingEquipmentIds.length > 0
-        ) {
-          throw new Error(
-            missingEquipmentIds.length === 1
-              ? "Um dos equipamentos selecionados não foi encontrado."
-              : "Alguns equipamentos selecionados não foram encontrados.",
-          );
-        }
-      }
-
-      return transaction.project.create({
-        data: {
-          name,
-          clientId,
-          clientName,
-
-          description:
-            optionalText(
-              body.description,
-            ),
-
-          status,
-          priority,
-
-          startDate,
-          dueDate,
-
-          completedAt:
-            status ===
-            ProjectStatus.COMPLETED
-              ? completedAt ??
-                new Date()
-              : null,
-
-          notes:
-            optionalText(
-              body.notes,
-            ),
-
-          createdById,
-          responsibleId,
-          salespersonId,
-
-          equipment:
+          if (
             selectedEquipment.length >
             0
-              ? {
-                  create:
-                    selectedEquipment.map(
-                      (item) => ({
-                        quantity:
-                          item.quantity,
+          ) {
+            const equipmentIds =
+              selectedEquipment.map(
+                (item) =>
+                  item.equipmentId,
+              );
 
-                        notes:
-                          item.notes,
+            const existingEquipment =
+              await transaction.equipment.findMany(
+                {
+                  where: {
+                    id: {
+                      in:
+                        equipmentIds,
+                    },
+                  },
 
-                        equipment: {
-                          connect: {
-                            id:
-                              item.equipmentId,
-                          },
-                        },
-                      }),
-                    ),
-                }
-              : undefined,
+                  select: {
+                    id:
+                      true,
+                  },
+                },
+              );
+
+            const existingEquipmentIds =
+              new Set(
+                existingEquipment.map(
+                  (item) =>
+                    item.id,
+                ),
+              );
+
+            const missingEquipmentIds =
+              equipmentIds.filter(
+                (
+                  equipmentId,
+                ) =>
+                  !existingEquipmentIds.has(
+                    equipmentId,
+                  ),
+              );
+
+            if (
+              missingEquipmentIds.length >
+              0
+            ) {
+              throw new Error(
+                missingEquipmentIds.length ===
+                  1
+                  ? "Um dos equipamentos selecionados não foi encontrado."
+                  : "Alguns equipamentos selecionados não foram encontrados.",
+              );
+            }
+          }
+
+          return transaction.project.create(
+            {
+              data: {
+                name,
+
+                clientId,
+
+                clientName,
+
+                description:
+                  optionalText(
+                    body.description,
+                  ),
+
+                status,
+
+                priority,
+
+                startDate,
+
+                dueDate,
+
+                completedAt:
+                  status ===
+                  ProjectStatus.COMPLETED
+                    ? completedAt ??
+                      new Date()
+                    : null,
+
+                notes:
+                  optionalText(
+                    body.notes,
+                  ),
+
+                createdById,
+
+                responsibleId,
+
+                salespersonId,
+
+                equipment:
+                  selectedEquipment.length >
+                  0
+                    ? {
+                        create:
+                          selectedEquipment.map(
+                            (
+                              item,
+                            ) => ({
+                              /*
+                               * Necessidade
+                               * total do
+                               * projeto.
+                               */
+                              quantity:
+                                item.quantity,
+
+                              /*
+                               * CRÍTICO:
+                               *
+                               * Adicionar
+                               * equipamento
+                               * ao projeto
+                               * NÃO significa
+                               * baixa física.
+                               */
+                              allocatedQuantity:
+                                0,
+
+                              notes:
+                                item.notes,
+
+                              equipment:
+                                {
+                                  connect:
+                                    {
+                                      id:
+                                        item.equipmentId,
+                                    },
+                                },
+                            }),
+                          ),
+                      }
+                    : undefined,
+              },
+
+              include:
+                projectInclude,
+            },
+          );
         },
+        {
+          isolationLevel:
+            Prisma
+              .TransactionIsolationLevel
+              .Serializable,
+        },
+      );
 
-        include: projectInclude,
-      });
-    },
-    {
-      isolationLevel:
-        Prisma.TransactionIsolationLevel
-          .Serializable,
-    },
-  );
+    await logAudit({
+      action:
+        AuditAction.CREATE,
 
-await logAudit({
-  action: AuditAction.CREATE,
-  entity: AuditEntity.PROJECT,
-  entityId: project.id,
-  userId: sessionUser.id,
-  description:
-    `Projeto "${project.name}" cadastrado.`,
-  newData:
-    serializeProjectForAudit(
-      project,
-    ),
-});
+      entity:
+        AuditEntity.PROJECT,
 
-return Response.json(
-  {
-    success: true,
-    message:
-      "Projeto cadastrado com sucesso.",
-    data:
-      serializeProject(project),
-  },
-  {
-    status: 201,
-  },
-);
+      entityId:
+        project.id,
+
+      userId:
+        sessionUser.id,
+
+      description:
+        `Projeto "${project.name}" cadastrado.`,
+
+      newData:
+        serializeProjectForAudit(
+          project,
+        ),
+    });
+
+    /*
+     * Calculamos também o retorno do POST
+     * com a mesma regra global.
+     *
+     * Dessa forma criar o projeto não
+     * devolve um déficit diferente do GET.
+     */
+    const stockAllocation =
+      await buildStockAllocation(
+        [
+          project,
+        ],
+      );
+
+    const serializedProject =
+      serializeProject(
+        project,
+        stockAllocation,
+      );
+
+    return Response.json(
+      {
+        success: true,
+
+        message:
+          "Projeto cadastrado com sucesso.",
+
+        data:
+          serializedProject,
+      },
+      {
+        status: 201,
+      },
+    );
   } catch (error) {
     console.error(
       "Erro ao cadastrar projeto:",
@@ -1131,13 +1844,54 @@ return Response.json(
     );
 
     if (
+      error instanceof Error &&
+      error.message ===
+        "CLIENT_NOT_FOUND"
+    ) {
+      return Response.json(
+        {
+          success: false,
+
+          message:
+            "O cliente selecionado não foi encontrado.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "CLIENT_INACTIVE"
+    ) {
+      return Response.json(
+        {
+          success: false,
+
+          message:
+            "O cliente selecionado está inativo e não pode ser vinculado ao projeto.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (
       error instanceof
       Prisma.PrismaClientKnownRequestError
     ) {
-      if (error.code === "P2002") {
+      if (
+        error.code ===
+        "P2002"
+      ) {
         return Response.json(
           {
-            success: false,
+            success:
+              false,
+
             message:
               "Já existe um projeto utilizando um campo que deve ser exclusivo.",
           },
@@ -1147,10 +1901,15 @@ return Response.json(
         );
       }
 
-      if (error.code === "P2003") {
+      if (
+        error.code ===
+        "P2003"
+      ) {
         return Response.json(
           {
-            success: false,
+            success:
+              false,
+
             message:
               "Um dos usuários ou equipamentos selecionados não é válido.",
           },
@@ -1159,29 +1918,34 @@ return Response.json(
           },
         );
       }
+
+      if (
+        error.code ===
+        "P2034"
+      ) {
+        return Response.json(
+          {
+            success:
+              false,
+
+            message:
+              "O projeto não pôde ser salvo devido a uma atualização simultânea. Tente novamente.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
     }
 
     if (
       error instanceof
-      Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2034"
+      SyntaxError
     ) {
       return Response.json(
         {
           success: false,
-          message:
-            "O projeto não pôde ser salvo devido a uma atualização simultânea. Tente novamente.",
-        },
-        {
-          status: 409,
-        },
-      );
-    }
 
-    if (error instanceof SyntaxError) {
-      return Response.json(
-        {
-          success: false,
           message:
             "O conteúdo enviado não é um JSON válido.",
         },
@@ -1191,11 +1955,15 @@ return Response.json(
       );
     }
 
-    if (error instanceof Error) {
+    if (
+      error instanceof Error
+    ) {
       return Response.json(
         {
           success: false,
-          message: error.message,
+
+          message:
+            error.message,
         },
         {
           status: 400,
@@ -1206,6 +1974,7 @@ return Response.json(
     return Response.json(
       {
         success: false,
+
         message:
           "Não foi possível cadastrar o projeto.",
       },

@@ -450,31 +450,36 @@ export async function GET(
  * }
  *
  * A quantidade solicitada pode ser
- * MAIOR que o estoque disponível.
+ * maior que o estoque disponível.
+ *
+ * Adicionar o equipamento ao projeto
+ * NÃO realiza baixa física.
  *
  * Exemplo:
  *
  * estoque = 3
  * solicitado = 6
  *
- * allocatedQuantity = 3
- * déficit = 3
+ * quantity = 6
+ * allocatedQuantity = 0
+ *
+ * cobertura atual = 3
+ * déficit atual = 3
+ *
+ * allocatedQuantity somente muda
+ * quando ocorrer uma saída física real.
  */
 export async function POST(
   request: Request,
   context: RouteContext,
 ) {
-  const session =
-    await auth();
+  const session = await auth();
 
-  if (
-    !session?.user
-  ) {
+  if (!session?.user) {
     return Response.json(
       {
         success: false,
-        message:
-          "Não autenticado.",
+        message: "Não autenticado.",
       },
       {
         status: 401,
@@ -505,8 +510,7 @@ export async function POST(
   try {
     const {
       id: projectId,
-    } =
-      await context.params;
+    } = await context.params;
 
     const body =
       (await request.json()) as AddEquipmentBody;
@@ -536,15 +540,12 @@ export async function POST(
 
                 select: {
                   id: true,
-                  status:
-                    true,
+                  status: true,
                 },
               },
             );
 
-          if (
-            !project
-          ) {
+          if (!project) {
             throw new Error(
               "Projeto não encontrado.",
             );
@@ -561,36 +562,27 @@ export async function POST(
                 select: {
                   id: true,
                   name: true,
-                  quantity:
-                    true,
-                  status:
-                    true,
-                  condition:
-                    true,
+                  quantity: true,
+                  status: true,
+                  condition: true,
                 },
               },
             );
 
-          if (
-            !equipment
-          ) {
+          if (!equipment) {
             throw new Error(
               "Equipamento não encontrado.",
             );
           }
 
           /*
-           * IMPORTANTE:
+           * Estoque zerado ou status
+           * UNAVAILABLE não impedem a
+           * solicitação.
            *
-           * NÃO bloqueamos status UNAVAILABLE.
-           *
-           * No sistema atual, um equipamento
-           * com estoque operacional zerado pode
-           * aparecer como UNAVAILABLE.
-           *
-           * Mesmo assim, ele precisa poder ser
-           * solicitado no projeto para gerar
-           * déficit e futura compra.
+           * A necessidade pode ser maior
+           * que o estoque e o excedente
+           * será calculado como déficit.
            */
 
           const existing =
@@ -610,20 +602,41 @@ export async function POST(
               },
             );
 
-          if (
-            existing
-          ) {
+          if (existing) {
             throw new Error(
               "Este equipamento já está vinculado ao projeto. Edite a quantidade da reserva existente.",
             );
           }
 
           /*
-           * Verificamos quanto deste equipamento
-           * já está efetivamente alocado em
-           * OUTROS projetos ativos.
+           * Estoque operacional atual.
+           *
+           * IMPORTANTE:
+           * isso serve apenas para calcular
+           * cobertura/déficit informativo.
+           *
+           * Não realizamos baixa aqui.
            */
-          const allocations =
+          const operationalStock =
+            Math.max(
+              equipment.quantity,
+              0,
+            );
+
+          /*
+           * Necessidade dos outros
+           * projetos ativos.
+           *
+           * Como allocatedQuantity
+           * representa somente baixa física,
+           * não usamos esse campo para
+           * "reservar" estoque aqui.
+           *
+           * A distribuição real entre
+           * projetos será calculada pelos
+           * endpoints de leitura.
+           */
+          const activeProjectEquipment =
             await transaction.projectEquipment.findMany(
               {
                 where: {
@@ -643,53 +656,49 @@ export async function POST(
                 },
 
                 select: {
+                  quantity: true,
                   allocatedQuantity:
                     true,
                 },
               },
             );
 
-          const allocatedByOtherProjects =
-            allocations.reduce(
+          const pendingByOtherProjects =
+            activeProjectEquipment.reduce(
               (
                 total,
-                allocation,
-              ) =>
-                total +
-                Math.max(
-                  allocation
-                    .allocatedQuantity,
-                  0,
-                ),
-              0,
-            );
+                item,
+              ) => {
+                const pending =
+                  Math.max(
+                    item.quantity -
+                      item.allocatedQuantity,
+                    0,
+                  );
 
-          const operationalStock =
-            Math.max(
-              equipment.quantity,
+                return (
+                  total +
+                  pending
+                );
+              },
               0,
             );
 
           /*
-           * Estoque ainda disponível
-           * para este novo projeto.
+           * Estoque que ainda pode,
+           * teoricamente, cobrir a nova
+           * necessidade.
+           *
+           * Isso é somente informativo.
            */
           const availableStock =
             Math.max(
               operationalStock -
-                allocatedByOtherProjects,
+                pendingByOtherProjects,
               0,
             );
 
-          /*
-           * Atendemos somente aquilo que
-           * existe fisicamente.
-           *
-           * O restante continua registrado
-           * em quantity e será interpretado
-           * como déficit.
-           */
-          const allocatedQuantity =
+          const coveredByStock =
             Math.min(
               quantity,
               availableStock,
@@ -698,9 +707,22 @@ export async function POST(
           const shortage =
             Math.max(
               quantity -
-                allocatedQuantity,
+                coveredByStock,
               0,
             );
+
+          /*
+           * CRÍTICO:
+           *
+           * Ao adicionar o equipamento
+           * ao projeto, NÃO ocorre baixa.
+           *
+           * allocatedQuantity só deve ser
+           * alterado quando houver uma
+           * saída física real.
+           */
+          const allocatedQuantity =
+            0;
 
           const projectEquipment =
             await transaction.projectEquipment.create(
@@ -709,7 +731,8 @@ export async function POST(
                   projectId,
                   equipmentId,
                   quantity,
-                  allocatedQuantity,
+                  allocatedQuantity:
+                    0,
                 },
 
                 include: {
@@ -719,19 +742,14 @@ export async function POST(
                       name: true,
                       category:
                         true,
-
                       manufacturer:
                         true,
-
                       model:
                         true,
-
                       quantity:
                         true,
-
                       status:
                         true,
-
                       condition:
                         true,
                     },
@@ -743,6 +761,7 @@ export async function POST(
           return {
             projectEquipment,
             allocatedQuantity,
+            coveredByStock,
             shortage,
             availableStock,
           };
@@ -758,36 +777,37 @@ export async function POST(
     const {
       projectEquipment,
       allocatedQuantity,
+      coveredByStock,
       shortage,
+      availableStock,
     } = result;
 
     let message: string;
 
     if (
       shortage > 0 &&
-      allocatedQuantity >
-        0
+      coveredByStock > 0
     ) {
       message =
         `Equipamento adicionado ao projeto. ` +
-        `${allocatedQuantity} unidade(s) foram atendidas pelo estoque e ` +
+        `${coveredByStock} unidade(s) podem ser atendidas pelo estoque atual e ` +
         `${shortage} unidade(s) ficaram como déficit para compra.`;
     } else if (
-      shortage >
-      0
+      shortage > 0
     ) {
       message =
         `Equipamento adicionado ao projeto. ` +
         `As ${shortage} unidade(s) solicitadas ficaram como déficit para compra.`;
     } else {
       message =
-        "Equipamento adicionado ao projeto com sucesso. O estoque disponível cobre a necessidade.";
+        "Equipamento adicionado ao projeto com sucesso. O estoque atual cobre a necessidade.";
     }
 
     return Response.json(
       {
         success: true,
         message,
+
         data:
           projectEquipment,
 
@@ -797,6 +817,10 @@ export async function POST(
 
           allocatedQuantity,
 
+          coveredByStock,
+
+          availableStock,
+
           shortage,
         },
       },
@@ -804,9 +828,7 @@ export async function POST(
         status: 201,
       },
     );
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       "Erro ao adicionar equipamento ao projeto:",
       error,

@@ -9,7 +9,6 @@ import {
   EquipmentMovementType,
   ProjectStatus,
 } from "@/generated/prisma/enums";
-
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
@@ -55,6 +54,35 @@ function parsePositiveInteger(
   return parsedValue;
 }
 
+function requiredText(
+  value: unknown,
+  maxLength: number,
+  label: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
+    throw new Error(
+      `O campo "${label}" é obrigatório.`,
+    );
+  }
+
+  const normalizedValue =
+    value.trim();
+
+  if (
+    normalizedValue.length >
+    maxLength
+  ) {
+    throw new Error(
+      `O campo "${label}" deve possuir no máximo ${maxLength} caracteres.`,
+    );
+  }
+
+  return normalizedValue;
+}
+
 function optionalText(
   value: unknown,
   maxLength: number,
@@ -92,6 +120,27 @@ function optionalText(
   return normalizedValue;
 }
 
+/**
+ * PATCH /api/equipment/[id]/stock
+ *
+ * Registra uma entrada física de estoque
+ * vinculada obrigatoriamente a um projeto
+ * ativo que utiliza o equipamento.
+ *
+ * Regras importantes:
+ *
+ * - toda entrada de Compras exige projeto;
+ * - o equipamento precisa estar vinculado
+ *   ao projeto;
+ * - o projeto precisa estar ativo;
+ * - o projeto ainda precisa possuir
+ *   necessidade pendente;
+ * - a entrada aumenta o estoque físico/
+ *   operacional;
+ * - allocatedQuantity NÃO é alterado aqui;
+ * - eventual excedente da entrada permanece
+ *   como estoque disponível.
+ */
 export async function PATCH(
   request: Request,
   context: RouteContext,
@@ -102,7 +151,8 @@ export async function PATCH(
     return Response.json(
       {
         success: false,
-        message: "Não autenticado.",
+        message:
+          "Não autenticado.",
       },
       {
         status: 401,
@@ -130,8 +180,9 @@ export async function PATCH(
   }
 
   try {
-    const { id } =
-      await context.params;
+    const {
+      id,
+    } = await context.params;
 
     if (!id) {
       return Response.json(
@@ -155,8 +206,14 @@ export async function PATCH(
         "Quantidade recebida",
       );
 
+    /*
+     * Projeto agora é obrigatório.
+     *
+     * Não existe mais entrada livre
+     * através deste fluxo de Compras.
+     */
     const projectId =
-      optionalText(
+      requiredText(
         body.projectId,
         191,
         "Projeto",
@@ -179,6 +236,10 @@ export async function PATCH(
     const result =
       await prisma.$transaction(
         async (transaction) => {
+          /*
+           * Equipamento que receberá
+           * fisicamente a entrada.
+           */
           const existingEquipment =
             await transaction.equipment.findUnique(
               {
@@ -203,217 +264,206 @@ export async function PATCH(
             );
           }
 
-          let selectedProject:
-            | {
-                id: string;
-                name: string;
-                requiredQuantity: number;
-
-                previousAllocatedQuantity: number;
-                currentAllocatedQuantity: number;
-
-                pendingQuantity: number;
-
-                allocationQuantity: number;
-                freeStockQuantity: number;
-
-                missingQuantity: number;
-              }
-            | null = null;
-
           /*
-           * Quando a entrada estiver
-           * relacionada a um projeto,
-           * validamos o vínculo.
-           *
-           * IMPORTANTE:
-           *
-           * A entrada NÃO altera
-           * allocatedQuantity.
-           *
-           * allocatedQuantity continua
-           * representando somente unidades
-           * que já tiveram baixa física
-           * do estoque.
+           * Como o projeto é obrigatório,
+           * validamos diretamente o vínculo
+           * projeto/equipamento.
            */
-          if (projectId) {
-            const projectEquipment =
-              await transaction.projectEquipment.findUnique(
-                {
-                  where: {
-                    projectId_equipmentId:
-                      {
-                        projectId,
-                        equipmentId:
-                          id,
-                      },
+          const projectEquipment =
+            await transaction.projectEquipment.findUnique(
+              {
+                where: {
+                  projectId_equipmentId: {
+                    projectId,
+                    equipmentId: id,
                   },
+                },
 
-                  select: {
-                    id: true,
-                    quantity: true,
-                    allocatedQuantity:
-                      true,
+                select: {
+                  id: true,
+                  quantity: true,
+                  allocatedQuantity:
+                    true,
 
-                    project: {
-                      select: {
-                        id: true,
-                        name: true,
-                        status: true,
-                      },
+                  project: {
+                    select: {
+                      id: true,
+                      name: true,
+                      status: true,
                     },
                   },
                 },
-              );
+              },
+            );
 
-            if (!projectEquipment) {
-              throw new Error(
-                "PROJECT_EQUIPMENT_NOT_FOUND",
-              );
-            }
-
-            if (
-              projectEquipment.project
-                .status !==
-                ProjectStatus.PLANNING &&
-              projectEquipment.project
-                .status !==
-                ProjectStatus.IN_PROGRESS
-            ) {
-              throw new Error(
-                "PROJECT_NOT_ACTIVE",
-              );
-            }
-
-            const requiredQuantity =
-              Math.max(
-                projectEquipment.quantity,
-                0,
-              );
-
-            const currentAllocatedQuantity =
-              Math.max(
-                projectEquipment
-                  .allocatedQuantity,
-                0,
-              );
-
-            /*
-             * Necessidade que ainda não
-             * sofreu baixa física.
-             *
-             * Esta quantidade NÃO é
-             * incrementada durante a
-             * entrada de compra.
-             */
-            const pendingQuantity =
-              Math.max(
-                requiredQuantity -
-                  currentAllocatedQuantity,
-                0,
-              );
-
-            if (
-              pendingQuantity === 0
-            ) {
-              throw new Error(
-                "PROJECT_ALREADY_FULFILLED",
-              );
-            }
-
-            /*
-             * Quantidade desta entrada
-             * relacionada à necessidade
-             * do projeto.
-             *
-             * O excedente permanece
-             * como estoque livre.
-             */
-            const allocationQuantity =
-              Math.min(
-                entryQuantity,
-                pendingQuantity,
-              );
-
-            const freeStockQuantity =
-              entryQuantity -
-              allocationQuantity;
-
-            selectedProject = {
-              id:
-                projectEquipment
-                  .project.id,
-
-              name:
-                projectEquipment
-                  .project.name,
-
-              requiredQuantity,
-
-              previousAllocatedQuantity:
-                currentAllocatedQuantity,
-
-              currentAllocatedQuantity:
-                currentAllocatedQuantity,
-
-              pendingQuantity,
-
-              allocationQuantity,
-
-              freeStockQuantity,
-
-              /*
-               * Valor informativo da
-               * operação atual.
-               *
-               * A persistência definitiva
-               * da pendência será tratada
-               * pelo cálculo de estoque/
-               * compras no próximo ajuste.
-               */
-              missingQuantity:
-                Math.max(
-                  pendingQuantity -
-                    allocationQuantity,
-                  0,
-                ),
-            };
+          if (!projectEquipment) {
+            throw new Error(
+              "PROJECT_EQUIPMENT_NOT_FOUND",
+            );
           }
 
+          /*
+           * Somente projetos ativos podem
+           * ser destino de uma entrada de
+           * compra.
+           */
+          if (
+            projectEquipment.project
+              .status !==
+              ProjectStatus.PLANNING &&
+            projectEquipment.project
+              .status !==
+              ProjectStatus.IN_PROGRESS
+          ) {
+            throw new Error(
+              "PROJECT_NOT_ACTIVE",
+            );
+          }
+
+          /*
+           * Necessidade total registrada
+           * para este equipamento dentro
+           * do projeto.
+           */
+          const requiredQuantity =
+            Math.max(
+              projectEquipment.quantity,
+              0,
+            );
+
+          /*
+           * Quantidade que já teve baixa
+           * física anteriormente.
+           */
+          const currentAllocatedQuantity =
+            Math.max(
+              projectEquipment
+                .allocatedQuantity,
+              0,
+            );
+
+          /*
+           * Parte da necessidade que ainda
+           * não teve baixa física.
+           *
+           * IMPORTANTE:
+           *
+           * Esta entrada NÃO modifica
+           * allocatedQuantity.
+           */
+          const pendingQuantity =
+            Math.max(
+              requiredQuantity -
+                currentAllocatedQuantity,
+              0,
+            );
+
+          if (
+            pendingQuantity === 0
+          ) {
+            throw new Error(
+              "PROJECT_ALREADY_FULFILLED",
+            );
+          }
+
+          /*
+           * Parte da entrada que corresponde
+           * à necessidade ainda pendente do
+           * projeto.
+           *
+           * Isso é informativo para esta
+           * operação. Não representa baixa.
+           */
+          const allocationQuantity =
+            Math.min(
+              entryQuantity,
+              pendingQuantity,
+            );
+
+          /*
+           * Caso a nota/entrega tenha mais
+           * unidades do que o projeto ainda
+           * necessita, o excedente continua
+           * existindo no estoque operacional.
+           *
+           * Exemplo:
+           *
+           * projeto precisa 5
+           * entrada recebida 8
+           *
+           * 5 -> necessidade do projeto
+           * 3 -> estoque disponível
+           */
+          const freeStockQuantity =
+            Math.max(
+              entryQuantity -
+                allocationQuantity,
+              0,
+            );
+
+          const selectedProject = {
+            id:
+              projectEquipment
+                .project.id,
+
+            name:
+              projectEquipment
+                .project.name,
+
+            requiredQuantity,
+
+            previousAllocatedQuantity:
+              currentAllocatedQuantity,
+
+            currentAllocatedQuantity:
+              currentAllocatedQuantity,
+
+            pendingQuantity,
+
+            allocationQuantity,
+
+            freeStockQuantity,
+
+            missingQuantity:
+              Math.max(
+                pendingQuantity -
+                  allocationQuantity,
+                0,
+              ),
+          };
+
           const previousQuantity =
-            existingEquipment.quantity;
+            Math.max(
+              existingEquipment.quantity,
+              0,
+            );
 
           const currentQuantity =
             previousQuantity +
             entryQuantity;
 
           /*
- * Uma entrada física torna o equipamento
- * novamente operacional quando ele estava
- * indisponível por ausência de estoque.
- *
- * Não usamos IN_USE aqui, pois "em uso"
- * é calculado pelas alocações dos projetos,
- * e não deve substituir o status cadastral
- * do equipamento.
- */
-const nextStatus =
-  existingEquipment.status ===
-    EquipmentStatus.UNAVAILABLE &&
-  previousQuantity <= 0 &&
-  currentQuantity > 0
-    ? EquipmentStatus.AVAILABLE
-    : existingEquipment.status;
+           * Uma entrada física torna o
+           * equipamento disponível quando
+           * ele estava UNAVAILABLE apenas
+           * por estar sem estoque.
+           *
+           * IN_USE não deve ser definido
+           * aqui. O uso é derivado das
+           * necessidades/alocações dos
+           * projetos.
+           */
+          const nextStatus =
+            existingEquipment.status ===
+              EquipmentStatus.UNAVAILABLE &&
+            previousQuantity <= 0 &&
+            currentQuantity > 0
+              ? EquipmentStatus.AVAILABLE
+              : existingEquipment.status;
 
           /*
-           * Toda entrada aumenta o estoque
-           * operacional físico.
-           *
-           * Quando houver projeto de destino,
-           * a necessidade ativa fará essas
-           * unidades serem consideradas
-           * comprometidas / em uso pelos
-           * cálculos do sistema.
+           * A entrada física aumenta o
+           * estoque operacional.
            */
           const equipment =
             await transaction.equipment.update(
@@ -428,7 +478,8 @@ const nextStatus =
                       entryQuantity,
                   },
 
-                   status: nextStatus,
+                  status:
+                    nextStatus,
 
                   invoiceNumber:
                     invoiceNumber ??
@@ -458,12 +509,9 @@ const nextStatus =
             );
 
           /*
-           * A movimentação registra a
-           * origem da entrada.
-           *
-           * Se houver projeto selecionado,
-           * projectId preserva a
-           * rastreabilidade da compra.
+           * Toda movimentação deste fluxo
+           * fica obrigatoriamente vinculada
+           * ao projeto informado.
            */
           const movement =
             await transaction.equipmentMovement.create(
@@ -485,8 +533,7 @@ const nextStatus =
                     existingEquipment.id,
 
                   projectId:
-                    selectedProject?.id ??
-                    null,
+                    selectedProject.id,
 
                   createdById:
                     sessionUser.id ??
@@ -499,7 +546,8 @@ const nextStatus =
                   quantity: true,
                   previousQuantity:
                     true,
-                  currentQuantity: true,
+                  currentQuantity:
+                    true,
                   invoiceNumber: true,
                   notes: true,
                   equipmentId: true,
@@ -528,14 +576,18 @@ const nextStatus =
         },
       );
 
+    /*
+     * Não existe mais mensagem de
+     * "entrada em estoque livre sem
+     * projeto".
+     *
+     * O projeto sempre existe.
+     */
     const projectMessage =
       result.project
-        ? result.project
-            .freeStockQuantity >
-          0
-          ? ` ${result.project.allocationQuantity} unidade(s) foram destinadas ao projeto "${result.project.name}" e ${result.project.freeStockQuantity} unidade(s) ficaram no estoque livre.`
-          : ` ${result.project.allocationQuantity} unidade(s) foram destinadas ao projeto "${result.project.name}".`
-        : " As unidades foram adicionadas ao estoque livre.";
+        .freeStockQuantity > 0
+        ? ` ${result.project.allocationQuantity} unidade(s) correspondem à necessidade do projeto "${result.project.name}" e ${result.project.freeStockQuantity} unidade(s) ficaram disponíveis no estoque.`
+        : ` ${result.project.allocationQuantity} unidade(s) correspondem à necessidade do projeto "${result.project.name}".`;
 
     /*
      * Auditoria da entrada física.
@@ -555,7 +607,7 @@ const nextStatus =
         null,
 
       description:
-        `Entrada de ${entryQuantity} unidade(s) no equipamento "${result.equipment.name}".`,
+        `Entrada de ${entryQuantity} unidade(s) no equipamento "${result.equipment.name}" vinculada ao projeto "${result.project.name}".`,
 
       newData: {
         equipmentId:
@@ -579,23 +631,20 @@ const nextStatus =
           result.movement.id,
 
         projectId:
-          result.project?.id ??
-          null,
+          result.project.id,
 
         projectName:
-          result.project?.name ??
-          null,
+          result.project.name,
       },
     });
 
     /*
-     * Auditoria da destinação da entrada
-     * ao projeto.
+     * Auditoria da destinação da compra.
      *
-     * Não significa baixa física.
+     * Isto NÃO representa baixa física e
+     * NÃO altera allocatedQuantity.
      */
     if (
-      result.project &&
       result.project
         .allocationQuantity > 0
     ) {
@@ -614,7 +663,7 @@ const nextStatus =
           null,
 
         description:
-          `${result.project.allocationQuantity} unidade(s) do equipamento "${result.equipment.name}" foram destinadas ao projeto "${result.project.name}" por entrada de estoque.`,
+          `${result.project.allocationQuantity} unidade(s) do equipamento "${result.equipment.name}" foram vinculadas à necessidade do projeto "${result.project.name}" por entrada de estoque.`,
 
         newData: {
           projectId:
@@ -678,45 +727,40 @@ const nextStatus =
           result.currentQuantity,
 
         projectId:
-          result.project?.id ??
-          null,
+          result.project.id,
 
         projectName:
-          result.project?.name ??
-          null,
+          result.project.name,
 
-        projectAllocation:
-          result.project
-            ? {
-                requiredQuantity:
-                  result.project
-                    .requiredQuantity,
+        projectAllocation: {
+          requiredQuantity:
+            result.project
+              .requiredQuantity,
 
-                previousAllocatedQuantity:
-                  result.project
-                    .previousAllocatedQuantity,
+          previousAllocatedQuantity:
+            result.project
+              .previousAllocatedQuantity,
 
-                currentAllocatedQuantity:
-                  result.project
-                    .currentAllocatedQuantity,
+          currentAllocatedQuantity:
+            result.project
+              .currentAllocatedQuantity,
 
-                pendingQuantity:
-                  result.project
-                    .pendingQuantity,
+          pendingQuantity:
+            result.project
+              .pendingQuantity,
 
-                missingQuantity:
-                  result.project
-                    .missingQuantity,
+          missingQuantity:
+            result.project
+              .missingQuantity,
 
-                allocationQuantity:
-                  result.project
-                    .allocationQuantity,
+          allocationQuantity:
+            result.project
+              .allocationQuantity,
 
-                freeStockQuantity:
-                  result.project
-                    .freeStockQuantity,
-              }
-            : null,
+          freeStockQuantity:
+            result.project
+              .freeStockQuantity,
+        },
       },
     });
   } catch (error) {
@@ -768,7 +812,7 @@ const nextStatus =
         {
           success: false,
           message:
-            "Somente projetos em planejamento ou em andamento podem receber equipamentos.",
+            "Somente projetos em planejamento ou em andamento podem receber esta entrada.",
         },
         {
           status: 400,
@@ -785,7 +829,7 @@ const nextStatus =
         {
           success: false,
           message:
-            "Este projeto já possui toda a quantidade necessária deste equipamento baixada.",
+            "Este projeto já possui toda a quantidade necessária deste equipamento atendida. Selecione outro projeto com necessidade pendente.",
         },
         {
           status: 400,

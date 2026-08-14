@@ -33,6 +33,40 @@ const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
   ProjectStatus.IN_PROGRESS,
 ];
 
+const PROJECT_STATUS_WEIGHT: Record<
+  ProjectStatus,
+  number
+> = {
+  [ProjectStatus.IN_PROGRESS]: 0,
+  [ProjectStatus.PLANNING]: 1,
+  [ProjectStatus.COMPLETED]: 2,
+  [ProjectStatus.CANCELLED]: 3,
+};
+
+const PROJECT_PRIORITY_WEIGHT: Record<
+  ProjectPriority,
+  number
+> = {
+  [ProjectPriority.URGENT]: 0,
+  [ProjectPriority.HIGH]: 1,
+  [ProjectPriority.NORMAL]: 2,
+  [ProjectPriority.LOW]: 3,
+};
+
+type ProjectStockAllocation = {
+  availableBeforeProject: number;
+  coveredByStock: number;
+  availableAfterProject: number;
+  shortage: number;
+};
+
+function getProjectEquipmentKey(
+  projectId: string,
+  equipmentId: string,
+): string {
+  return `${projectId}:${equipmentId}`;
+}
+
 type SessionUser = {
   id?: string;
   role?: UserRole;
@@ -501,12 +535,14 @@ async function serializeProject(
     );
 
   /*
-   * Aqui não podemos mais somar apenas
-   * "quantity", porque uma parte da
-   * necessidade pode já ter sido baixada.
+   * Carregamos todas as necessidades
+   * pendentes dos projetos ativos que
+   * utilizam algum dos equipamentos
+   * deste projeto.
    *
-   * Somamos somente o que ainda está
-   * pendente de baixa nos projetos ativos.
+   * quantity = necessidade total
+   * allocatedQuantity = quantidade que
+   * já teve baixa física
    */
   const activeProjectEquipment =
     equipmentIds.length > 0
@@ -519,25 +555,172 @@ async function serializeProject(
 
               project: {
                 status: {
-                  in: ACTIVE_PROJECT_STATUSES,
+                  in:
+                    ACTIVE_PROJECT_STATUSES,
                 },
               },
             },
 
             select: {
+              projectId: true,
               equipmentId: true,
               quantity: true,
               allocatedQuantity: true,
+
+              project: {
+                select: {
+                  status: true,
+                  priority: true,
+                  dueDate: true,
+                  createdAt: true,
+                },
+              },
             },
           },
         )
       : [];
 
-  const totalActivePendingByEquipment =
-    new Map<string, number>();
+  /*
+   * Estoque operacional atual de cada
+   * equipamento envolvido.
+   *
+   * equipment.quantity continua sendo
+   * utilizado como estoque operacional
+   * atual.
+   */
+  const operationalStockByEquipment =
+    new Map<string, number>(
+      project.equipment.map(
+        (item) => [
+          item.equipmentId,
+          Math.max(
+            item.equipment.quantity,
+            0,
+          ),
+        ],
+      ),
+    );
 
+  /*
+   * Ordem única para disputa de estoque:
+   *
+   * 1. Em andamento
+   * 2. Planejamento
+   * 3. Prioridade
+   * 4. Prazo mais próximo
+   * 5. Projeto mais antigo
+   * 6. ID como desempate final
+   *
+   * Isso garante que a mesma unidade
+   * nunca seja contada em dois projetos.
+   */
+  const sortedActiveProjectEquipment =
+    [...activeProjectEquipment].sort(
+      (left, right) => {
+        const statusDifference =
+          PROJECT_STATUS_WEIGHT[
+            left.project.status
+          ] -
+          PROJECT_STATUS_WEIGHT[
+            right.project.status
+          ];
+
+        if (statusDifference !== 0) {
+          return statusDifference;
+        }
+
+        const priorityDifference =
+          PROJECT_PRIORITY_WEIGHT[
+            left.project.priority
+          ] -
+          PROJECT_PRIORITY_WEIGHT[
+            right.project.priority
+          ];
+
+        if (
+          priorityDifference !==
+          0
+        ) {
+          return priorityDifference;
+        }
+
+        const leftDueDate =
+          left.project.dueDate
+            ?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
+
+        const rightDueDate =
+          right.project.dueDate
+            ?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
+
+        if (
+          leftDueDate !==
+          rightDueDate
+        ) {
+          return (
+            leftDueDate -
+            rightDueDate
+          );
+        }
+
+        const createdAtDifference =
+          left.project.createdAt.getTime() -
+          right.project.createdAt.getTime();
+
+        if (
+          createdAtDifference !==
+          0
+        ) {
+          return createdAtDifference;
+        }
+
+        return left.projectId.localeCompare(
+          right.projectId,
+        );
+      },
+    );
+
+  /*
+   * Controlamos quanto ainda resta
+   * disponível de cada equipamento
+   * durante a distribuição.
+   */
+  const remainingStockByEquipment =
+    new Map(
+      operationalStockByEquipment,
+    );
+
+  const stockAllocationByProject =
+    new Map<
+      string,
+      ProjectStockAllocation
+    >();
+
+  /*
+   * Distribui o estoque uma única vez.
+   *
+   * Exemplo:
+   *
+   * estoque = 5
+   * projeto A = 5
+   * projeto B = 5
+   *
+   * Resultado:
+   *
+   * A recebe 5
+   * B recebe 0
+   *
+   * déficit total = 5
+   *
+   * Nunca:
+   *
+   * A déficit 5
+   * B déficit 5
+   */
   for (
-    const item of activeProjectEquipment
+    const item of
+    sortedActiveProjectEquipment
   ) {
     const pendingQuantity =
       Math.max(
@@ -546,13 +729,50 @@ async function serializeProject(
         0,
       );
 
-    totalActivePendingByEquipment.set(
-      item.equipmentId,
-      (
-        totalActivePendingByEquipment.get(
+    const availableBeforeProject =
+      Math.max(
+        remainingStockByEquipment.get(
           item.equipmentId,
-        ) ?? 0
-      ) + pendingQuantity,
+        ) ?? 0,
+        0,
+      );
+
+    const coveredByStock =
+      Math.min(
+        pendingQuantity,
+        availableBeforeProject,
+      );
+
+    const availableAfterProject =
+      Math.max(
+        availableBeforeProject -
+          coveredByStock,
+        0,
+      );
+
+    const shortage =
+      Math.max(
+        pendingQuantity -
+          coveredByStock,
+        0,
+      );
+
+    remainingStockByEquipment.set(
+      item.equipmentId,
+      availableAfterProject,
+    );
+
+    stockAllocationByProject.set(
+      getProjectEquipmentKey(
+        item.projectId,
+        item.equipmentId,
+      ),
+      {
+        availableBeforeProject,
+        coveredByStock,
+        availableAfterProject,
+        shortage,
+      },
     );
   }
 
@@ -563,193 +783,184 @@ async function serializeProject(
   let outOfStockItems = 0;
 
   const equipment =
-    project.equipment.map((item) => {
-      const physicalStock =
-        item.equipment.quantity;
+    project.equipment.map(
+      (item) => {
+        /*
+         * Mantemos o nome physicalStock
+         * no retorno por compatibilidade
+         * com as telas existentes.
+         *
+         * Neste endpoint este valor vem
+         * de equipment.quantity, que é o
+         * estoque operacional atual.
+         */
+        const physicalStock =
+          Math.max(
+            item.equipment.quantity,
+            0,
+          );
 
-      /*
-       * Necessidade atual registrada
-       * no projeto.
-       */
-      const neededForProject =
-        item.quantity;
+        const neededForProject =
+          Math.max(
+            item.quantity,
+            0,
+          );
 
-      /*
-       * Quantidade que já saiu
-       * fisicamente do estoque.
-       */
-      const allocatedQuantity =
-        Math.max(
-          item.allocatedQuantity,
-          0,
-        );
-
-      /*
-       * Quantidade que ainda precisa
-       * ser efetivamente entregue.
-       */
-      const pendingAllocationQuantity =
-        Math.max(
-          neededForProject -
-            allocatedQuantity,
-          0,
-        );
-
-      const projectCountsAsActive =
-        ACTIVE_PROJECT_STATUSES.includes(
-          project.status,
-        );
-
-      /*
-       * Necessidade pendente total
-       * dos projetos ativos.
-       */
-      const totalActiveNeeded =
-        totalActivePendingByEquipment.get(
-          item.equipmentId,
-        ) ?? 0;
-
-      /*
-       * Retira deste cálculo a própria
-       * necessidade pendente do projeto
-       * que estamos serializando.
-       */
-      const neededByOtherProjects =
-        Math.max(
-          totalActiveNeeded -
-            (projectCountsAsActive
-              ? pendingAllocationQuantity
-              : 0),
-          0,
-        );
-
-      /*
-       * Estoque ainda disponível para
-       * atender o que FALTA neste projeto.
-       *
-       * As unidades já baixadas não entram
-       * novamente neste cálculo.
-       */
-      const availableForProject =
-        Math.max(
-          physicalStock -
-            neededByOtherProjects,
-          0,
-        );
-
-      const pendingAssignedFromStock =
-        Math.min(
-          pendingAllocationQuantity,
-          availableForProject,
-        );
-
-      /*
-       * Total já atendido do projeto:
-       *
-       * baixado anteriormente
-       * +
-       * estoque capaz de atender
-       * a parte ainda pendente.
-       */
-      const assignedFromStock =
-        Math.min(
-          neededForProject,
-          allocatedQuantity +
-            pendingAssignedFromStock,
-        );
-
-      /*
-       * Projeto concluído representa
-       * entrega realizada.
-       *
-       * Não exibimos déficit nele,
-       * porque a baixa física já ocorreu.
-       *
-       * Para projetos ativos, déficit
-       * considera SOMENTE a quantidade
-       * ainda pendente.
-       */
-      const shortage =
-        project.status ===
-        ProjectStatus.COMPLETED
-          ? 0
-          : Math.max(
-              pendingAllocationQuantity -
-                availableForProject,
-              0,
-            );
-
-      const availableAfterProject =
-        Math.max(
-          availableForProject -
-            pendingAllocationQuantity,
-          0,
-        );
-
-      const isOutOfStock =
-        physicalStock === 0;
-
-      const hasShortage =
-        shortage > 0;
-
-      neededUnits +=
-        neededForProject;
-
-      availableUnits +=
-        assignedFromStock;
-
-      shortageUnits +=
-        shortage;
-
-      if (hasShortage) {
-        equipmentWithShortage += 1;
-      }
-
-      if (isOutOfStock) {
-        outOfStockItems += 1;
-      }
-
-      return {
-        ...item,
-
-        needed:
-          neededForProject,
-
-        allocatedQuantity,
-
-        pendingAllocationQuantity,
-
-        hasAllocatedQuantity:
-          allocatedQuantity > 0,
-
-        physicalStock,
+        const allocatedQuantity =
+          Math.max(
+            item.allocatedQuantity,
+            0,
+          );
 
         /*
-         * Agora representa necessidade
-         * ATIVA PENDENTE e não unidades
-         * já entregues.
+         * Parte da necessidade que ainda
+         * não teve baixa física.
          */
-        totalActiveNeeded,
+        const pendingAllocationQuantity =
+          Math.max(
+            neededForProject -
+              allocatedQuantity,
+            0,
+          );
 
-        neededByOtherProjects,
+        const projectCountsAsActive =
+          ACTIVE_PROJECT_STATUSES.includes(
+            project.status,
+          );
 
-        availableForProject,
+        /*
+         * Recupera exatamente a parcela
+         * de estoque atribuída a este
+         * projeto pela distribuição global.
+         */
+        const allocation =
+          projectCountsAsActive
+            ? stockAllocationByProject.get(
+                getProjectEquipmentKey(
+                  project.id,
+                  item.equipmentId,
+                ),
+              )
+            : undefined;
 
-        assignedFromStock,
+        /*
+         * Quanto havia disponível quando
+         * chegou a vez deste projeto.
+         */
+        const availableForProject =
+          projectCountsAsActive
+            ? allocation
+                ?.availableBeforeProject ??
+              0
+            : physicalStock;
 
-        availableAfterProject,
+        /*
+         * Parte da pendência que o estoque
+         * atual consegue cobrir.
+         */
+        const pendingAssignedFromStock =
+          projectCountsAsActive
+            ? allocation
+                ?.coveredByStock ??
+              0
+            : 0;
 
-        shortage,
+        /*
+         * Total atendido:
+         *
+         * já baixado
+         * +
+         * coberto pelo estoque atual
+         */
+        const assignedFromStock =
+          Math.min(
+            neededForProject,
+            allocatedQuantity +
+              pendingAssignedFromStock,
+          );
 
-        hasShortage,
+        /*
+         * Projetos concluídos não exibem
+         * déficit.
+         *
+         * Projetos ativos usam o resultado
+         * da distribuição.
+         */
+        const shortage =
+          project.status ===
+          ProjectStatus.COMPLETED
+            ? 0
+            : projectCountsAsActive
+              ? allocation
+                  ?.shortage ??
+                pendingAllocationQuantity
+              : 0;
 
-        isOutOfStock,
+        const availableAfterProject =
+          projectCountsAsActive
+            ? allocation
+                ?.availableAfterProject ??
+              0
+            : physicalStock;
 
-        isBelowMinimum:
-          physicalStock <=
-          item.equipment.minimumStock,
-      };
-    });
+        const isOutOfStock =
+          physicalStock === 0;
+
+        const hasShortage =
+          shortage > 0;
+
+        neededUnits +=
+          neededForProject;
+
+        availableUnits +=
+          assignedFromStock;
+
+        shortageUnits +=
+          shortage;
+
+        if (hasShortage) {
+          equipmentWithShortage +=
+            1;
+        }
+
+        if (isOutOfStock) {
+          outOfStockItems +=
+            1;
+        }
+
+        return {
+          ...item,
+
+          needed:
+            neededForProject,
+
+          allocatedQuantity,
+
+          pendingAllocationQuantity,
+
+          hasAllocatedQuantity:
+            allocatedQuantity > 0,
+
+          physicalStock,
+
+          availableForProject,
+
+          assignedFromStock,
+
+          availableAfterProject,
+
+          shortage,
+
+          hasShortage,
+
+          isOutOfStock,
+
+          isBelowMinimum:
+            physicalStock <=
+            item.equipment.minimumStock,
+        };
+      },
+    );
 
   return {
     ...project,
@@ -1489,8 +1700,6 @@ if (isCompletingProject) {
               );
             }
           }
-
-          let deductedAnyStock = false;
 
           /*
            * Depois da validação completa,
