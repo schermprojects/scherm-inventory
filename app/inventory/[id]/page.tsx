@@ -5,6 +5,7 @@ import {
 } from "@/generated/prisma/client";
 import { DeleteEquipmentButton } from "@/components/inventory/DeleteEquipmentButton";
 import { DeleteEquipmentImageButton } from "@/components/inventory/DeleteEquipmentImageButton";
+import { EquipmentStockManager } from "@/components/inventory/EquipmentStockManager";
 import { prisma } from "@/lib/prisma";
 import {
   ArrowLeft,
@@ -294,15 +295,13 @@ const activeDemand = requestedQuantity;
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard
-          icon={Boxes}
-          label="Estoque físico"
-          value={
-            physicalStockLabel
-          }
-          description="Operacionais + danificadas"
-          iconClassName="bg-orange-50 text-[#F57B00]"
-        />
+  <EquipmentStockManager
+  equipmentId={equipment.id}
+  equipmentName={equipment.name}
+  operationalStock={operationalStock}
+  damagedQuantity={damagedQuantity}
+  activeDemand={activeDemand}
+/>
 
         <SummaryCard
           icon={PackageCheck}
