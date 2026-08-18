@@ -64,8 +64,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   const initials = getInitials(userName);
 
 const canCreateEquipment =
-  userRole === "ADMIN" ||
-  userRole === "COMMERCIAL";
+  userRole === "ADMIN" ;
 
 const showNewEquipmentButton =
   canCreateEquipment &&

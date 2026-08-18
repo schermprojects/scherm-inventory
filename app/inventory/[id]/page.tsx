@@ -1,3 +1,4 @@
+import { auth } from "@/auth";
 import { calculateStock } from "@/lib/inventory/calculateStock";
 import {
   EquipmentCondition,
@@ -84,6 +85,11 @@ const dateTimeFormatter =
 export default async function EquipmentDetailsPage({
   params,
 }: EquipmentDetailsPageProps) {
+  const session = await auth();
+
+  const canManageInventory =
+    session?.user?.role === "ADMIN";
+
   const { id } = await params;
 
   const equipment =
@@ -274,23 +280,25 @@ const activeDemand = requestedQuantity;
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href={`/inventory/${equipment.id}/edit`}
-              className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-            >
-              Editar equipamento
-            </Link>
+          {canManageInventory ? (
+  <div className="flex flex-wrap gap-2">
+    <Link
+      href={`/inventory/${equipment.id}/edit`}
+      className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+    >
+      Editar equipamento
+    </Link>
 
-            <DeleteEquipmentButton
-              equipmentId={
-                equipment.id
-              }
-              equipmentName={
-                equipment.name
-              }
-            />
-          </div>
+    <DeleteEquipmentButton
+      equipmentId={
+        equipment.id
+      }
+      equipmentName={
+        equipment.name
+      }
+    />
+  </div>
+) : null}
         </div>
       </header>
 
@@ -434,18 +442,20 @@ const activeDemand = requestedQuantity;
                         </span>
                       ) : null}
 
-                      <DeleteEquipmentImageButton
-                        equipmentId={
-                          equipment.id
-                        }
-                        imageId={
-                          image.id
-                        }
-                        isPrimary={
-                          index ===
-                          0
-                        }
-                      />
+                      {canManageInventory ? (
+  <DeleteEquipmentImageButton
+    equipmentId={
+      equipment.id
+    }
+    imageId={
+      image.id
+    }
+    isPrimary={
+      index ===
+      0
+    }
+  />
+) : null}
                     </article>
                   ),
                 )}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { ProjectEquipmentModal } from "@/components/projects/ProjectEquipmentModal";
 import { ProjectPrintView } from "@/components/projects/ProjectPrintView";
+import { ProjectQuickEquipmentModal } from "@/components/projects/ProjectQuickEquipmentModal";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -361,6 +362,11 @@ const [
   const [
   showEquipmentModal,
   setShowEquipmentModal,
+] = useState(false);
+
+const [
+  showQuickEquipmentModal,
+  setShowQuickEquipmentModal,
 ] = useState(false);
 
   const [
@@ -1228,6 +1234,23 @@ function closeEquipmentModal() {
   setShowEquipmentModal(false);
 }
 
+function openQuickEquipmentModal() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
+    return;
+  }
+
+  setSuccessMessage("");
+  setShowQuickEquipmentModal(true);
+}
+
+function closeQuickEquipmentModal() {
+  setShowQuickEquipmentModal(false);
+}
+
 function openAllocatedEquipmentModal() {
   if (
     !project ||
@@ -1948,13 +1971,14 @@ return (
       Adicionar
     </button>
 
-    <Link
-      href="/inventory/new"
-      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
-    >
-      <Wrench size={16} />
-      Novo equipamento
-    </Link>
+<button
+  type="button"
+  onClick={openQuickEquipmentModal}
+  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
+>
+  <Wrench size={16} />
+  Novo equipamento
+</button>
 
     <button
   type="button"
@@ -3535,6 +3559,32 @@ return (
     </div>
   </div>
 ) : null}
+
+<ProjectQuickEquipmentModal
+  open={
+    canEdit &&
+    showQuickEquipmentModal
+  }
+  projectId={project.id}
+  onClose={
+    closeQuickEquipmentModal
+  }
+  onCreated={async () => {
+    setShowQuickEquipmentModal(
+      false,
+    );
+
+    await loadProject();
+
+    setSuccessMessage(
+      "Equipamento cadastrado e adicionado ao projeto com sucesso.",
+    );
+
+    window.setTimeout(() => {
+      setSuccessMessage("");
+    }, 4000);
+  }}
+/>
 
            <ProjectEquipmentModal
   open={canEdit && showEquipmentModal}

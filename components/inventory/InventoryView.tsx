@@ -293,11 +293,9 @@ export function InventoryView() {
   const searchParams =
     useSearchParams();
 
-  const canEdit =
-    session?.user?.role ===
-      "ADMIN" ||
-    session?.user?.role ===
-      "COMMERCIAL";
+  const canManageInventory =
+  session?.user?.role ===
+  "ADMIN";
 
   const [
     equipmentList,
@@ -1026,21 +1024,16 @@ export function InventoryView() {
                 </span>
               </button>
 
-              {canEdit ? (
-                <Link
-                  href="/inventory/new"
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-                >
-                  <Plus
-                    size={
-                      18
-                    }
-                  />
+              {canManageInventory ? (
+  <Link
+    href="/inventory/new"
+    className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+  >
+    <Plus size={18} />
 
-                  Novo
-                  equipamento
-                </Link>
-              ) : null}
+    Novo equipamento
+  </Link>
+) : null}
             </div>
           </div>
 
@@ -1209,17 +1202,17 @@ export function InventoryView() {
         {paginatedEquipment.length ===
         0 ? (
           <EmptyInventory
-            hasEquipment={
-              equipmentList.length >
-              0
-            }
-            onClear={
-              clearFilters
-            }
-            canEdit={
-              canEdit
-            }
-          />
+  hasEquipment={
+    equipmentList.length >
+    0
+  }
+  onClear={
+    clearFilters
+  }
+  canEdit={
+    canManageInventory
+  }
+/>
         ) : viewMode ===
           "table" ? (
           <EquipmentTable

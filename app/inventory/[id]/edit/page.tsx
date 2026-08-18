@@ -1,3 +1,4 @@
+import { auth } from "@/auth";
 import {
   EquipmentForm,
   type EquipmentFormData,
@@ -8,7 +9,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import { ArrowLeft, Pencil } from "lucide-react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import {
+  notFound,
+  redirect,
+} from "next/navigation";
 
 type EditEquipmentPageProps = {
   params: Promise<{
@@ -28,6 +32,19 @@ const statusFromDatabase: Record<
 export default async function EditEquipmentPage({
   params,
 }: EditEquipmentPageProps) {
+  const session = await auth();
+
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const canManageInventory =
+    session.user.role === "ADMIN";
+
+  if (!canManageInventory) {
+    redirect("/inventory");
+  }
+
   const { id } = await params;
 
   const equipment =
