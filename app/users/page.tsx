@@ -7,7 +7,11 @@ import { redirect } from "next/navigation";
 
 type SessionUser = {
   id?: string;
-  role?: "ADMIN" | "COMMERCIAL" | "VIEWER";
+  role?:
+    | "ADMIN"
+    | "BACKOFFICE"
+    | "COMMERCIAL"
+    | "VIEWER";
 };
 
 export default async function UsersPage() {

@@ -168,6 +168,7 @@ function canManageClients(
 ): boolean {
   return (
     role === UserRole.ADMIN ||
+    role === UserRole.BACKOFFICE ||
     role === UserRole.COMMERCIAL
   );
 }

@@ -34,10 +34,11 @@ const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
 
 function canManageEquipment(
   role: UserRole | undefined,
-) {
+): boolean {
   return (
-    role === UserRole.ADMIN ||
-    role === UserRole.COMMERCIAL
+    role === "ADMIN" ||
+    role === "BACKOFFICE" ||
+    role === "COMMERCIAL"
   );
 }
 

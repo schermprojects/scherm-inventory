@@ -49,17 +49,9 @@ export function EquipmentStockManager({
   const role =
     session?.user?.role;
 
-  /*
-   * Por enquanto somente ADMIN.
-   *
-   * Quando o perfil BACKOFFICE
-   * for implementado, adicionamos:
-   *
-   * role === "ADMIN" ||
-   * role === "BACKOFFICE"
-   */
   const canManageStock =
-    role === "ADMIN";
+  role === "ADMIN" ||
+  role === "BACKOFFICE";
   const [
     currentQuantity,
     setCurrentQuantity,

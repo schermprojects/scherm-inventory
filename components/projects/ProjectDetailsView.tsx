@@ -34,6 +34,7 @@ import {
 
 type UserRole =
   | "ADMIN"
+  | "BACKOFFICE"
   | "COMMERCIAL"
   | "VIEWER";
 
@@ -319,12 +320,14 @@ export function ProjectDetailsView({
   const sessionUser =
     session?.user as SessionUser | undefined;
 
-  const canEdit =
-    sessionUser?.role === "ADMIN" ||
-    sessionUser?.role === "COMMERCIAL";
+const canEdit =
+  sessionUser?.role === "ADMIN" ||
+  sessionUser?.role === "BACKOFFICE" ||
+  sessionUser?.role === "COMMERCIAL";
 
-  const canDelete =
-    sessionUser?.role === "ADMIN";
+const canDelete =
+  sessionUser?.role === "ADMIN" ||
+  sessionUser?.role === "BACKOFFICE";
 
   const [project, setProject] =
     useState<Project | null>(null);
@@ -1628,9 +1631,11 @@ clientName:
       0,
     );
 
-  const salespeople = users.filter(
+const salespeople =
+  users.filter(
     (user) =>
       user.role === "ADMIN" ||
+      user.role === "BACKOFFICE" ||
       user.role === "COMMERCIAL",
   );
 

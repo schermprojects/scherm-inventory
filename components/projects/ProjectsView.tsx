@@ -45,6 +45,7 @@ type ProjectPriority =
 
 type UserRole =
   | "ADMIN"
+  | "BACKOFFICE"
   | "COMMERCIAL"
   | "VIEWER";
 
@@ -527,10 +528,10 @@ export function ProjectsView() {
         }
       | undefined;
 
-  const canManageProjects =
-    sessionUser?.role === "ADMIN" ||
-    sessionUser?.role ===
-      "COMMERCIAL";
+const canManageProjects =
+  sessionUser?.role === "ADMIN" ||
+  sessionUser?.role === "BACKOFFICE" ||
+  sessionUser?.role === "COMMERCIAL";
 
   const [projects, setProjects] =
     useState<ProjectItem[]>([]);
@@ -714,16 +715,18 @@ export function ProjectsView() {
       statusFilter,
     ]);
 
-  const salespersonOptions =
-    useMemo(() => {
-      return users.filter(
-        (user) =>
-          user.active &&
-          (user.role ===
-            "COMMERCIAL" ||
-            user.role === "ADMIN"),
-      );
-    }, [users]);
+const salespersonOptions =
+  useMemo(() => {
+    return users.filter(
+      (user) =>
+        user.active &&
+        (
+          user.role === "ADMIN" ||
+          user.role === "BACKOFFICE" ||
+          user.role === "COMMERCIAL"
+        ),
+    );
+  }, [users]);
 
   const responsibleOptions =
     useMemo(() => {

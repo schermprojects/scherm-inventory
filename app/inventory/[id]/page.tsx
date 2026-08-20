@@ -87,8 +87,15 @@ export default async function EquipmentDetailsPage({
 }: EquipmentDetailsPageProps) {
   const session = await auth();
 
-  const canManageInventory =
-    session?.user?.role === "ADMIN";
+const role =
+  session?.user?.role;
+
+const canManageInventory =
+  role === "ADMIN" ||
+  role === "BACKOFFICE";
+
+const canDeleteEquipment =
+  role === "ADMIN";
 
   const { id } = await params;
 
@@ -280,7 +287,7 @@ const activeDemand = requestedQuantity;
             </div>
           </div>
 
-          {canManageInventory ? (
+{canManageInventory ? (
   <div className="flex flex-wrap gap-2">
     <Link
       href={`/inventory/${equipment.id}/edit`}
@@ -289,27 +296,39 @@ const activeDemand = requestedQuantity;
       Editar equipamento
     </Link>
 
-    <DeleteEquipmentButton
-      equipmentId={
-        equipment.id
-      }
-      equipmentName={
-        equipment.name
-      }
-    />
+    {canDeleteEquipment ? (
+      <DeleteEquipmentButton
+        equipmentId={
+          equipment.id
+        }
+        equipmentName={
+          equipment.name
+        }
+      />
+    ) : null}
   </div>
 ) : null}
         </div>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+  {canManageInventory ? (
   <EquipmentStockManager
-  equipmentId={equipment.id}
-  equipmentName={equipment.name}
-  operationalStock={operationalStock}
-  damagedQuantity={damagedQuantity}
-  activeDemand={activeDemand}
-/>
+    equipmentId={equipment.id}
+    equipmentName={equipment.name}
+    operationalStock={operationalStock}
+    damagedQuantity={damagedQuantity}
+    activeDemand={activeDemand}
+  />
+) : (
+  <SummaryCard
+    icon={Boxes}
+    label="Estoque físico"
+    value={physicalStockLabel}
+    description="Operacionais + danificadas"
+    iconClassName="bg-orange-50 text-[#F57B00]"
+  />
+)}
 
         <SummaryCard
           icon={PackageCheck}

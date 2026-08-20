@@ -1,6 +1,10 @@
 import type { DefaultSession } from "next-auth";
 
-type UserRole = "ADMIN" | "COMMERCIAL" | "VIEWER";
+type UserRole =
+  | "ADMIN"
+  | "BACKOFFICE"
+  | "COMMERCIAL"
+  | "VIEWER";
 
 declare module "next-auth" {
   interface User {

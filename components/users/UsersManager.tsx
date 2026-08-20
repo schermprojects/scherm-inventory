@@ -21,7 +21,11 @@ import {
   useState,
 } from "react";
 
-type UserRole = "ADMIN" | "COMMERCIAL" | "VIEWER";
+type UserRole =
+  | "ADMIN"
+  | "BACKOFFICE"
+  | "COMMERCIAL"
+  | "VIEWER";
 
 type UserItem = {
   id: string;
@@ -63,30 +67,45 @@ const initialFormState: UserFormState = {
   active: true,
 };
 
-const roleLabels: Record<UserRole, string> = {
+const roleLabels: Record<
+  UserRole,
+  string
+> = {
   ADMIN: "Administrador",
+  BACKOFFICE: "Backoffice",
   COMMERCIAL: "Comercial",
   VIEWER: "Consulta",
 };
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
+function formatDate(
+  value: string,
+) {
+  return new Intl.DateTimeFormat(
+    "pt-BR",
+    {
+      dateStyle: "short",
+      timeStyle: "short",
+    },
+  ).format(new Date(value));
 }
 
-function getInitials(name: string) {
+function getInitials(
+  name: string,
+) {
   return name
     .trim()
     .split(/\s+/)
     .slice(0, 2)
-    .map((part) => part.charAt(0))
+    .map((part) =>
+      part.charAt(0),
+    )
     .join("")
     .toUpperCase();
 }
 
-function getErrorMessage(error: unknown) {
+function getErrorMessage(
+  error: unknown,
+) {
   return error instanceof Error
     ? error.message
     : "Ocorreu um erro inesperado.";
@@ -97,122 +116,209 @@ export function UsersManager({
 }: {
   currentUserId: string;
 }) {
-  const [users, setUsers] = useState<UserItem[]>([]);
-  const [summary, setSummary] = useState<Summary>({
-    total: 0,
-    active: 0,
-    inactive: 0,
-    administrators: 0,
-  });
+  const [users, setUsers] =
+    useState<UserItem[]>([]);
 
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] =
-    useState<"" | UserRole>("");
-  const [activeFilter, setActiveFilter] =
+  const [summary, setSummary] =
+    useState<Summary>({
+      total: 0,
+      active: 0,
+      inactive: 0,
+      administrators: 0,
+    });
+
+  const [search, setSearch] =
     useState("");
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{
-    type: "success" | "error";
+  const [
+    roleFilter,
+    setRoleFilter,
+  ] = useState<"" | UserRole>(
+    "",
+  );
+
+  const [
+    activeFilter,
+    setActiveFilter,
+  ] = useState("");
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [
+    feedback,
+    setFeedback,
+  ] = useState<{
+    type:
+      | "success"
+      | "error";
     message: string;
   } | null>(null);
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingUser, setEditingUser] =
-    useState<UserItem | null>(null);
+  const [
+    formOpen,
+    setFormOpen,
+  ] = useState(false);
+
+  const [
+    editingUser,
+    setEditingUser,
+  ] = useState<UserItem | null>(
+    null,
+  );
+
   const [form, setForm] =
-    useState<UserFormState>(initialFormState);
+    useState<UserFormState>(
+      initialFormState,
+    );
 
-  const [passwordUser, setPasswordUser] =
-    useState<UserItem | null>(null);
-  const [newPassword, setNewPassword] =
-    useState("");
-  const [confirmNewPassword, setConfirmNewPassword] =
-    useState("");
+  const [
+    passwordUser,
+    setPasswordUser,
+  ] = useState<UserItem | null>(
+    null,
+  );
 
-  const queryString = useMemo(() => {
-    const params = new URLSearchParams();
+  const [
+    newPassword,
+    setNewPassword,
+  ] = useState("");
 
-    if (search.trim()) {
-      params.set("search", search.trim());
-    }
+  const [
+    confirmNewPassword,
+    setConfirmNewPassword,
+  ] = useState("");
 
-    if (roleFilter) {
-      params.set("role", roleFilter);
-    }
+  const queryString =
+    useMemo(() => {
+      const params =
+        new URLSearchParams();
 
-    if (activeFilter) {
-      params.set("active", activeFilter);
-    }
-
-    return params.toString();
-  }, [activeFilter, roleFilter, search]);
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-
-    try {
-      const response = await fetch(
-        `/api/users${queryString ? `?${queryString}` : ""}`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      const data = (await response.json()) as
-        | UsersResponse
-        | { error?: string };
-
-      if (!response.ok) {
-        throw new Error(
-          "error" in data && data.error
-            ? data.error
-            : "Não foi possível carregar os usuários.",
+      if (search.trim()) {
+        params.set(
+          "search",
+          search.trim(),
         );
       }
 
-      const result = data as UsersResponse;
+      if (roleFilter) {
+        params.set(
+          "role",
+          roleFilter,
+        );
+      }
 
-      setUsers(result.users);
-      setSummary(result.summary);
-    } catch (error) {
-      setFeedback({
-        type: "error",
-        message: getErrorMessage(error),
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [queryString]);
+      if (activeFilter) {
+        params.set(
+          "active",
+          activeFilter,
+        );
+      }
+
+      return params.toString();
+    }, [
+      activeFilter,
+      roleFilter,
+      search,
+    ]);
+
+  const loadUsers =
+    useCallback(async () => {
+      setLoading(true);
+
+      try {
+        const response =
+          await fetch(
+            `/api/users${
+              queryString
+                ? `?${queryString}`
+                : ""
+            }`,
+            {
+              cache:
+                "no-store",
+            },
+          );
+
+        const data =
+          (await response.json()) as
+            | UsersResponse
+            | {
+                error?: string;
+              };
+
+        if (!response.ok) {
+          throw new Error(
+            "error" in data &&
+            data.error
+              ? data.error
+              : "Não foi possível carregar os usuários.",
+          );
+        }
+
+        const result =
+          data as UsersResponse;
+
+        setUsers(
+          result.users,
+        );
+
+        setSummary(
+          result.summary,
+        );
+      } catch (error) {
+        setFeedback({
+          type: "error",
+          message:
+            getErrorMessage(
+              error,
+            ),
+        });
+      } finally {
+        setLoading(false);
+      }
+    }, [queryString]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      void loadUsers();
-    }, 250);
+    const timeout =
+      window.setTimeout(() => {
+        void loadUsers();
+      }, 250);
 
     return () => {
-      window.clearTimeout(timeout);
+      window.clearTimeout(
+        timeout,
+      );
     };
   }, [loadUsers]);
 
   function openCreateForm() {
     setEditingUser(null);
-    setForm(initialFormState);
+    setForm(
+      initialFormState,
+    );
     setFeedback(null);
     setFormOpen(true);
   }
 
-  function openEditForm(user: UserItem) {
+  function openEditForm(
+    user: UserItem,
+  ) {
     setEditingUser(user);
+
     setForm({
       name: user.name,
-      username: user.username,
+      username:
+        user.username,
       password: "",
       confirmPassword: "",
       role: user.role,
       active: user.active,
     });
+
     setFeedback(null);
     setFormOpen(true);
   }
@@ -224,46 +330,65 @@ export function UsersManager({
 
     setFormOpen(false);
     setEditingUser(null);
-    setForm(initialFormState);
+
+    setForm(
+      initialFormState,
+    );
   }
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
+
     setFeedback(null);
 
     if (!form.name.trim()) {
       setFeedback({
         type: "error",
-        message: "Informe o nome do usuário.",
+        message:
+          "Informe o nome do usuário.",
       });
+
       return;
     }
 
-    if (!form.username.trim()) {
+    if (
+      !form.username.trim()
+    ) {
       setFeedback({
         type: "error",
-        message: "Informe o usuário de acesso.",
+        message:
+          "Informe o usuário de acesso.",
       });
+
       return;
     }
 
     if (!editingUser) {
-      if (form.password.length < 8) {
+      if (
+        form.password.length <
+        8
+      ) {
         setFeedback({
           type: "error",
           message:
             "A senha deve possuir pelo menos 8 caracteres.",
         });
+
         return;
       }
 
-      if (form.password !== form.confirmPassword) {
+      if (
+        form.password !==
+        form.confirmPassword
+      ) {
         setFeedback({
           type: "error",
-          message: "As senhas não coincidem.",
+          message:
+            "As senhas não coincidem.",
         });
+
         return;
       }
     }
@@ -271,38 +396,63 @@ export function UsersManager({
     setSaving(true);
 
     try {
-      const response = await fetch(
-        editingUser
-          ? `/api/users/${editingUser.id}`
-          : "/api/users",
-        {
-          method: editingUser ? "PATCH" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(
-            editingUser
-              ? {
-                  name: form.name,
-                  username: form.username,
-                  role: form.role,
-                  active: form.active,
-                }
-              : {
-                  name: form.name,
-                  username: form.username,
-                  password: form.password,
-                  role: form.role,
-                  active: form.active,
-                },
-          ),
-        },
-      );
+      const response =
+        await fetch(
+          editingUser
+            ? `/api/users/${editingUser.id}`
+            : "/api/users",
+          {
+            method:
+              editingUser
+                ? "PATCH"
+                : "POST",
 
-      const data = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify(
+                editingUser
+                  ? {
+                      name:
+                        form.name,
+
+                      username:
+                        form.username,
+
+                      role:
+                        form.role,
+
+                      active:
+                        form.active,
+                    }
+                  : {
+                      name:
+                        form.name,
+
+                      username:
+                        form.username,
+
+                      password:
+                        form.password,
+
+                      role:
+                        form.role,
+
+                      active:
+                        form.active,
+                    },
+              ),
+          },
+        );
+
+      const data =
+        (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
 
       if (!response.ok) {
         throw new Error(
@@ -315,6 +465,7 @@ export function UsersManager({
 
       setFeedback({
         type: "success",
+
         message:
           data.message ??
           "Usuário salvo com sucesso.",
@@ -324,15 +475,24 @@ export function UsersManager({
     } catch (error) {
       setFeedback({
         type: "error",
-        message: getErrorMessage(error),
+
+        message:
+          getErrorMessage(
+            error,
+          ),
       });
     } finally {
       setSaving(false);
     }
   }
 
-  async function toggleUser(user: UserItem) {
-    const action = user.active ? "desativar" : "ativar";
+  async function toggleUser(
+    user: UserItem,
+  ) {
+    const action =
+      user.active
+        ? "desativar"
+        : "ativar";
 
     if (
       !window.confirm(
@@ -345,23 +505,31 @@ export function UsersManager({
     setFeedback(null);
 
     try {
-      const response = await fetch(
-        `/api/users/${user.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            active: !user.active,
-          }),
-        },
-      );
+      const response =
+        await fetch(
+          `/api/users/${user.id}`,
+          {
+            method:
+              "PATCH",
 
-      const data = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                active:
+                  !user.active,
+              }),
+          },
+        );
+
+      const data =
+        (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
 
       if (!response.ok) {
         throw new Error(
@@ -372,6 +540,7 @@ export function UsersManager({
 
       setFeedback({
         type: "success",
+
         message:
           data.message ??
           "Usuário atualizado com sucesso.",
@@ -381,12 +550,18 @@ export function UsersManager({
     } catch (error) {
       setFeedback({
         type: "error",
-        message: getErrorMessage(error),
+
+        message:
+          getErrorMessage(
+            error,
+          ),
       });
     }
   }
 
-  function openPasswordModal(user: UserItem) {
+  function openPasswordModal(
+    user: UserItem,
+  ) {
     setPasswordUser(user);
     setNewPassword("");
     setConfirmNewPassword("");
@@ -402,20 +577,31 @@ export function UsersManager({
       return;
     }
 
-    if (newPassword.length < 8) {
+    if (
+      newPassword.length <
+      8
+    ) {
       setFeedback({
         type: "error",
+
         message:
           "A nova senha deve possuir pelo menos 8 caracteres.",
       });
+
       return;
     }
 
-    if (newPassword !== confirmNewPassword) {
+    if (
+      newPassword !==
+      confirmNewPassword
+    ) {
       setFeedback({
         type: "error",
-        message: "As senhas não coincidem.",
+
+        message:
+          "As senhas não coincidem.",
       });
+
       return;
     }
 
@@ -423,23 +609,31 @@ export function UsersManager({
     setFeedback(null);
 
     try {
-      const response = await fetch(
-        `/api/users/${passwordUser.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            password: newPassword,
-          }),
-        },
-      );
+      const response =
+        await fetch(
+          `/api/users/${passwordUser.id}`,
+          {
+            method:
+              "PATCH",
 
-      const data = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                password:
+                  newPassword,
+              }),
+          },
+        );
+
+      const data =
+        (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
 
       if (!response.ok) {
         throw new Error(
@@ -454,6 +648,7 @@ export function UsersManager({
 
       setFeedback({
         type: "success",
+
         message:
           data.message ??
           "Senha redefinida com sucesso.",
@@ -461,7 +656,11 @@ export function UsersManager({
     } catch (error) {
       setFeedback({
         type: "error",
-        message: getErrorMessage(error),
+
+        message:
+          getErrorMessage(
+            error,
+          ),
       });
     } finally {
       setSaving(false);
@@ -471,13 +670,15 @@ export function UsersManager({
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
         <button
           type="button"
-          onClick={openCreateForm}
+          onClick={
+            openCreateForm
+          }
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DE7000]"
         >
           <Plus size={17} />
+
           Novo usuário
         </button>
       </header>
@@ -486,16 +687,26 @@ export function UsersManager({
         <div
           className={[
             "flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-sm",
-            feedback.type === "success"
+
+            feedback.type ===
+            "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-700",
           ].join(" ")}
         >
-          <span>{feedback.message}</span>
+          <span>
+            {
+              feedback.message
+            }
+          </span>
 
           <button
             type="button"
-            onClick={() => setFeedback(null)}
+            onClick={() =>
+              setFeedback(
+                null,
+              )
+            }
             aria-label="Fechar mensagem"
           >
             <X size={16} />
@@ -506,29 +717,53 @@ export function UsersManager({
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Usuários cadastrados"
-          value={summary.total}
-          icon={<Users size={20} />}
+          value={
+            summary.total
+          }
+          icon={
+            <Users
+              size={20}
+            />
+          }
           color="zinc"
         />
 
         <SummaryCard
           title="Usuários ativos"
-          value={summary.active}
-          icon={<UserCheck size={20} />}
+          value={
+            summary.active
+          }
+          icon={
+            <UserCheck
+              size={20}
+            />
+          }
           color="green"
         />
 
         <SummaryCard
           title="Usuários inativos"
-          value={summary.inactive}
-          icon={<UserX size={20} />}
+          value={
+            summary.inactive
+          }
+          icon={
+            <UserX
+              size={20}
+            />
+          }
           color="red"
         />
 
         <SummaryCard
           title="Administradores"
-          value={summary.administrators}
-          icon={<ShieldCheck size={20} />}
+          value={
+            summary.administrators
+          }
+          icon={
+            <ShieldCheck
+              size={20}
+            />
+          }
           color="orange"
         />
       </section>
@@ -544,8 +779,13 @@ export function UsersManager({
             <input
               type="search"
               value={search}
-              onChange={(event) =>
-                setSearch(event.target.value)
+              onChange={(
+                event,
+              ) =>
+                setSearch(
+                  event.target
+                    .value,
+                )
               }
               placeholder="Buscar por nome ou usuário..."
               className="h-10 w-full rounded-lg border border-zinc-200 pl-10 pr-3 text-sm outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
@@ -553,38 +793,77 @@ export function UsersManager({
           </label>
 
           <select
-            value={roleFilter}
-            onChange={(event) =>
+            value={
+              roleFilter
+            }
+            onChange={(
+              event,
+            ) =>
               setRoleFilter(
-                event.target.value as "" | UserRole,
+                event.target
+                  .value as
+                  | ""
+                  | UserRole,
               )
             }
             className="h-10 rounded-lg border border-zinc-200 px-3 text-sm outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
           >
-            <option value="">Todos os perfis</option>
-            <option value="ADMIN">Administrador</option>
-            <option value="COMMERCIAL">Comercial</option>
-            <option value="VIEWER">Consulta</option>
+            <option value="">
+              Todos os perfis
+            </option>
+
+            <option value="ADMIN">
+              Administrador
+            </option>
+
+            <option value="BACKOFFICE">
+              Backoffice
+            </option>
+
+            <option value="COMMERCIAL">
+              Comercial
+            </option>
+
+            <option value="VIEWER">
+              Consulta
+            </option>
           </select>
 
           <select
-            value={activeFilter}
-            onChange={(event) =>
-              setActiveFilter(event.target.value)
+            value={
+              activeFilter
+            }
+            onChange={(
+              event,
+            ) =>
+              setActiveFilter(
+                event.target
+                  .value,
+              )
             }
             className="h-10 rounded-lg border border-zinc-200 px-3 text-sm outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
           >
-            <option value="">Todos os status</option>
-            <option value="true">Ativos</option>
-            <option value="false">Inativos</option>
+            <option value="">
+              Todos os status
+            </option>
+
+            <option value="true">
+              Ativos
+            </option>
+
+            <option value="false">
+              Inativos
+            </option>
           </select>
         </div>
 
         {loading ? (
           <div className="flex min-h-64 items-center justify-center text-sm text-zinc-500">
-            Carregando usuários...
+            Carregando
+            usuários...
           </div>
-        ) : users.length === 0 ? (
+        ) : users.length ===
+          0 ? (
           <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
             <UserRound
               size={34}
@@ -592,11 +871,13 @@ export function UsersManager({
             />
 
             <p className="font-medium text-zinc-700">
-              Nenhum usuário encontrado
+              Nenhum usuário
+              encontrado
             </p>
 
             <p className="text-sm text-zinc-500">
-              Ajuste os filtros ou crie um usuário.
+              Ajuste os filtros
+              ou crie um usuário.
             </p>
           </div>
         ) : (
@@ -604,12 +885,22 @@ export function UsersManager({
             <table className="w-full min-w-[850px]">
               <thead className="bg-zinc-50">
                 <tr className="border-b border-zinc-200 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  <th className="px-5 py-3">Usuário</th>
-                  <th className="px-5 py-3">Perfil</th>
-                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">
+                    Usuário
+                  </th>
+
+                  <th className="px-5 py-3">
+                    Perfil
+                  </th>
+
+                  <th className="px-5 py-3">
+                    Status
+                  </th>
+
                   <th className="px-5 py-3">
                     Criado em
                   </th>
+
                   <th className="px-5 py-3 text-right">
                     Ações
                   </th>
@@ -617,116 +908,166 @@ export function UsersManager({
               </thead>
 
               <tbody>
-                {users.map((user) => (
-                  <tr
-                    key={user.id}
-                    className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50/70"
-                  >
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-sm font-bold text-[#D96D00]">
-                          {getInitials(user.name)}
-                        </div>
-
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-semibold text-zinc-900">
-                              {user.name}
-                            </p>
-
-                            {user.id === currentUserId ? (
-                              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-blue-600">
-                                Você
-                              </span>
-                            ) : null}
+                {users.map(
+                  (user) => (
+                    <tr
+                      key={
+                        user.id
+                      }
+                      className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50/70"
+                    >
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-sm font-bold text-[#D96D00]">
+                            {getInitials(
+                              user.name,
+                            )}
                           </div>
 
-                          <p className="text-sm text-zinc-500">
-                            @{user.username}
-                          </p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-zinc-900">
+                                {
+                                  user.name
+                                }
+                              </p>
+
+                              {user.id ===
+                              currentUserId ? (
+                                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-blue-600">
+                                  Você
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <p className="text-sm text-zinc-500">
+                              @
+                              {
+                                user.username
+                              }
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="px-5 py-4">
-                      <span className="inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
-                        {roleLabels[user.role]}
-                      </span>
-                    </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
+                          {
+                            roleLabels[
+                              user
+                                .role
+                            ]
+                          }
+                        </span>
+                      </td>
 
-                    <td className="px-5 py-4">
-                      <span
-                        className={[
-                          "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium",
-                          user.active
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-zinc-100 text-zinc-500",
-                        ].join(" ")}
-                      >
+                      <td className="px-5 py-4">
                         <span
                           className={[
-                            "h-1.5 w-1.5 rounded-full",
+                            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium",
+
                             user.active
-                              ? "bg-emerald-500"
-                              : "bg-zinc-400",
-                          ].join(" ")}
-                        />
-
-                        {user.active
-                          ? "Ativo"
-                          : "Inativo"}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4 text-sm text-zinc-500">
-                      {formatDate(user.createdAt)}
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <div className="flex justify-end gap-1">
-                        <ActionButton
-                          title="Editar usuário"
-                          onClick={() =>
-                            openEditForm(user)
-                          }
-                        >
-                          <Pencil size={16} />
-                        </ActionButton>
-
-                        <ActionButton
-                          title="Redefinir senha"
-                          onClick={() =>
-                            openPasswordModal(user)
-                          }
-                        >
-                          <KeyRound size={16} />
-                        </ActionButton>
-
-                        <ActionButton
-                          title={
-                            user.active
-                              ? "Desativar usuário"
-                              : "Ativar usuário"
-                          }
-                          disabled={
-                            user.id === currentUserId &&
-                            user.active
-                          }
-                          danger={user.active}
-                          onClick={() =>
-                            void toggleUser(user)
-                          }
-                        >
-                          {user.active ? (
-                            <UserX size={16} />
-                          ) : (
-                            <UserCheck size={16} />
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-zinc-100 text-zinc-500",
+                          ].join(
+                            " ",
                           )}
-                        </ActionButton>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        >
+                          <span
+                            className={[
+                              "h-1.5 w-1.5 rounded-full",
+
+                              user.active
+                                ? "bg-emerald-500"
+                                : "bg-zinc-400",
+                            ].join(
+                              " ",
+                            )}
+                          />
+
+                          {user.active
+                            ? "Ativo"
+                            : "Inativo"}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4 text-sm text-zinc-500">
+                        {formatDate(
+                          user.createdAt,
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-1">
+                          <ActionButton
+                            title="Editar usuário"
+                            onClick={() =>
+                              openEditForm(
+                                user,
+                              )
+                            }
+                          >
+                            <Pencil
+                              size={
+                                16
+                              }
+                            />
+                          </ActionButton>
+
+                          <ActionButton
+                            title="Redefinir senha"
+                            onClick={() =>
+                              openPasswordModal(
+                                user,
+                              )
+                            }
+                          >
+                            <KeyRound
+                              size={
+                                16
+                              }
+                            />
+                          </ActionButton>
+
+                          <ActionButton
+                            title={
+                              user.active
+                                ? "Desativar usuário"
+                                : "Ativar usuário"
+                            }
+                            disabled={
+                              user.id ===
+                                currentUserId &&
+                              user.active
+                            }
+                            danger={
+                              user.active
+                            }
+                            onClick={() =>
+                              void toggleUser(
+                                user,
+                              )
+                            }
+                          >
+                            {user.active ? (
+                              <UserX
+                                size={
+                                  16
+                                }
+                              />
+                            ) : (
+                              <UserCheck
+                                size={
+                                  16
+                                }
+                              />
+                            )}
+                          </ActionButton>
+                        </div>
+                      </td>
+                    </tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>
@@ -740,41 +1081,80 @@ export function UsersManager({
               ? "Editar usuário"
               : "Novo usuário"
           }
-          onClose={closeForm}
+          onClose={
+            closeForm
+          }
         >
           <form
-            onSubmit={handleSubmit}
+            onSubmit={
+              handleSubmit
+            }
             className="space-y-4"
           >
-            <FormField label="Nome" required>
+            <FormField
+              label="Nome"
+              required
+            >
               <input
                 type="text"
-                value={form.name}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
+                value={
+                  form.name
                 }
-                className={inputClass}
+                onChange={(
+                  event,
+                ) =>
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      name:
+                        event
+                          .target
+                          .value,
+                    }),
+                  )
+                }
+                className={
+                  inputClass
+                }
                 placeholder="Nome completo"
                 autoFocus
               />
             </FormField>
 
-            <FormField label="Usuário" required>
+            <FormField
+              label="Usuário"
+              required
+            >
               <input
                 type="text"
-                value={form.username}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    username: event.target.value
-                      .toLowerCase()
-                      .replace(/\s+/g, ""),
-                  }))
+                value={
+                  form.username
                 }
-                className={inputClass}
+                onChange={(
+                  event,
+                ) =>
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      username:
+                        event.target.value
+                          .toLowerCase()
+                          .replace(
+                            /\s+/g,
+                            "",
+                          ),
+                    }),
+                  )
+                }
+                className={
+                  inputClass
+                }
                 placeholder="nome.usuario"
                 autoComplete="off"
               />
@@ -782,17 +1162,34 @@ export function UsersManager({
 
             {!editingUser ? (
               <div className="grid gap-4 sm:grid-cols-2">
-                <FormField label="Senha" required>
+                <FormField
+                  label="Senha"
+                  required
+                >
                   <input
                     type="password"
-                    value={form.password}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        password: event.target.value,
-                      }))
+                    value={
+                      form.password
                     }
-                    className={inputClass}
+                    onChange={(
+                      event,
+                    ) =>
+                      setForm(
+                        (
+                          current,
+                        ) => ({
+                          ...current,
+
+                          password:
+                            event
+                              .target
+                              .value,
+                        }),
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
                     placeholder="Mínimo de 8 caracteres"
                     autoComplete="new-password"
                   />
@@ -804,15 +1201,28 @@ export function UsersManager({
                 >
                   <input
                     type="password"
-                    value={form.confirmPassword}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        confirmPassword:
-                          event.target.value,
-                      }))
+                    value={
+                      form.confirmPassword
                     }
-                    className={inputClass}
+                    onChange={(
+                      event,
+                    ) =>
+                      setForm(
+                        (
+                          current,
+                        ) => ({
+                          ...current,
+
+                          confirmPassword:
+                            event
+                              .target
+                              .value,
+                        }),
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
                     placeholder="Digite novamente"
                     autoComplete="new-password"
                   />
@@ -820,24 +1230,46 @@ export function UsersManager({
               </div>
             ) : null}
 
-            <FormField label="Perfil" required>
+            <FormField
+              label="Perfil"
+              required
+            >
               <select
-                value={form.role}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    role: event.target
-                      .value as UserRole,
-                  }))
+                value={
+                  form.role
                 }
-                className={inputClass}
+                onChange={(
+                  event,
+                ) =>
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      role:
+                        event
+                          .target
+                          .value as UserRole,
+                    }),
+                  )
+                }
+                className={
+                  inputClass
+                }
               >
                 <option value="ADMIN">
                   Administrador
                 </option>
+
+                <option value="BACKOFFICE">
+                  Backoffice
+                </option>
+
                 <option value="COMMERCIAL">
                   Comercial
                 </option>
+
                 <option value="VIEWER">
                   Consulta
                 </option>
@@ -851,34 +1283,52 @@ export function UsersManager({
                 </p>
 
                 <p className="text-xs text-zinc-500">
-                  Usuários inativos não podem entrar.
+                  Usuários inativos
+                  não podem entrar.
                 </p>
               </div>
 
               <input
                 type="checkbox"
-                checked={form.active}
-                disabled={
-                  editingUser?.id === currentUserId
+                checked={
+                  form.active
                 }
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    active: event.target.checked,
-                  }))
+                disabled={
+                  editingUser?.id ===
+                  currentUserId
+                }
+                onChange={(
+                  event,
+                ) =>
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      active:
+                        event
+                          .target
+                          .checked,
+                    }),
+                  )
                 }
                 className="h-4 w-4 accent-[#F57B00]"
               />
             </label>
 
             <ModalActions
-              saving={saving}
+              saving={
+                saving
+              }
               submitLabel={
                 editingUser
                   ? "Salvar alterações"
                   : "Criar usuário"
               }
-              onCancel={closeForm}
+              onCancel={
+                closeForm
+              }
             />
           </form>
         </Modal>
@@ -889,32 +1339,53 @@ export function UsersManager({
           title="Redefinir senha"
           onClose={() => {
             if (!saving) {
-              setPasswordUser(null);
+              setPasswordUser(
+                null,
+              );
             }
           }}
         >
           <form
-            onSubmit={handleResetPassword}
+            onSubmit={
+              handleResetPassword
+            }
             className="space-y-4"
           >
             <div className="rounded-lg bg-zinc-50 p-3">
               <p className="text-sm font-semibold text-zinc-800">
-                {passwordUser.name}
+                {
+                  passwordUser.name
+                }
               </p>
 
               <p className="text-xs text-zinc-500">
-                @{passwordUser.username}
+                @
+                {
+                  passwordUser.username
+                }
               </p>
             </div>
 
-            <FormField label="Nova senha" required>
+            <FormField
+              label="Nova senha"
+              required
+            >
               <input
                 type="password"
-                value={newPassword}
-                onChange={(event) =>
-                  setNewPassword(event.target.value)
+                value={
+                  newPassword
                 }
-                className={inputClass}
+                onChange={(
+                  event,
+                ) =>
+                  setNewPassword(
+                    event.target
+                      .value,
+                  )
+                }
+                className={
+                  inputClass
+                }
                 placeholder="Mínimo de 8 caracteres"
                 autoComplete="new-password"
                 autoFocus
@@ -927,23 +1398,34 @@ export function UsersManager({
             >
               <input
                 type="password"
-                value={confirmNewPassword}
-                onChange={(event) =>
+                value={
+                  confirmNewPassword
+                }
+                onChange={(
+                  event,
+                ) =>
                   setConfirmNewPassword(
-                    event.target.value,
+                    event.target
+                      .value,
                   )
                 }
-                className={inputClass}
+                className={
+                  inputClass
+                }
                 placeholder="Digite novamente"
                 autoComplete="new-password"
               />
             </FormField>
 
             <ModalActions
-              saving={saving}
+              saving={
+                saving
+              }
               submitLabel="Redefinir senha"
               onCancel={() =>
-                setPasswordUser(null)
+                setPasswordUser(
+                  null,
+                )
               }
             />
           </form>
@@ -971,7 +1453,9 @@ function FormField({
         {label}
 
         {required ? (
-          <span className="ml-1 text-red-500">*</span>
+          <span className="ml-1 text-red-500">
+            *
+          </span>
         ) : null}
       </span>
 
@@ -999,7 +1483,9 @@ function Modal({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={
+              onClose
+            }
             className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800"
             aria-label="Fechar"
           >
@@ -1007,7 +1493,9 @@ function Modal({
           </button>
         </header>
 
-        <div className="p-5">{children}</div>
+        <div className="p-5">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -1026,8 +1514,12 @@ function ModalActions({
     <div className="flex justify-end gap-2 border-t border-zinc-100 pt-4">
       <button
         type="button"
-        onClick={onCancel}
-        disabled={saving}
+        onClick={
+          onCancel
+        }
+        disabled={
+          saving
+        }
         className="h-10 rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50"
       >
         Cancelar
@@ -1035,14 +1527,19 @@ function ModalActions({
 
       <button
         type="submit"
-        disabled={saving}
+        disabled={
+          saving
+        }
         className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DE7000] disabled:cursor-not-allowed disabled:opacity-60"
       >
         {saving ? (
           "Salvando..."
         ) : (
           <>
-            <CheckCircle2 size={16} />
+            <CheckCircle2
+              size={16}
+            />
+
             {submitLabel}
           </>
         )}
@@ -1069,10 +1566,15 @@ function ActionButton({
       type="button"
       title={title}
       aria-label={title}
-      disabled={disabled}
-      onClick={onClick}
+      disabled={
+        disabled
+      }
+      onClick={
+        onClick
+      }
       className={[
         "flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-30",
+
         danger
           ? "border-red-100 text-red-500 hover:bg-red-50"
           : "border-zinc-200 text-zinc-500 hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]",
@@ -1092,13 +1594,24 @@ function SummaryCard({
   title: string;
   value: number;
   icon: React.ReactNode;
-  color: "zinc" | "green" | "red" | "orange";
+  color:
+    | "zinc"
+    | "green"
+    | "red"
+    | "orange";
 }) {
   const colors = {
-    zinc: "bg-zinc-100 text-zinc-700",
-    green: "bg-emerald-50 text-emerald-600",
-    red: "bg-red-50 text-red-600",
-    orange: "bg-orange-50 text-[#F57B00]",
+    zinc:
+      "bg-zinc-100 text-zinc-700",
+
+    green:
+      "bg-emerald-50 text-emerald-600",
+
+    red:
+      "bg-red-50 text-red-600",
+
+    orange:
+      "bg-orange-50 text-[#F57B00]",
   };
 
   return (

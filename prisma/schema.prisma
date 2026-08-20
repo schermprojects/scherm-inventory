@@ -235,6 +235,7 @@ model AuditLog {
 
 enum UserRole {
   ADMIN
+  BACKOFFICE
   COMMERCIAL
   VIEWER
 }

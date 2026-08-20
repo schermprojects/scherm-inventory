@@ -1,5 +1,6 @@
 export type Role =
   | "ADMIN"
+  | "BACKOFFICE"
   | "COMMERCIAL"
   | "VIEWER";
 
@@ -7,6 +8,7 @@ export const permissions = {
   dashboard: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
@@ -15,40 +17,55 @@ export const permissions = {
   inventory: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
+
     create: [
       "ADMIN",
-      "COMMERCIAL",
+      "BACKOFFICE",
     ],
+
     update: [
       "ADMIN",
-      "COMMERCIAL",
+      "BACKOFFICE",
     ],
+
     stockEntry: [
       "ADMIN",
-      "COMMERCIAL",
+      "BACKOFFICE",
     ],
-    delete: ["ADMIN"],
+
+    delete: [
+      "ADMIN",
+      "BACKOFFICE",
+    ],
   },
 
   projects: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
+
     create: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
     ],
+
     update: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
     ],
+
     delete: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
     ],
   },
@@ -56,10 +73,13 @@ export const permissions = {
   purchases: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
     ],
+
     update: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
     ],
   },
@@ -67,11 +87,14 @@ export const permissions = {
   reports: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
+
     export: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
@@ -85,14 +108,21 @@ export const permissions = {
     changeAnyPassword: ["ADMIN"],
   },
 
+  audit: {
+    view: ["ADMIN"],
+  },
+
   account: {
     view: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
+
     changeOwnPassword: [
       "ADMIN",
+      "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
     ],
@@ -113,4 +143,19 @@ export function isAdmin(
   role: Role,
 ): boolean {
   return role === "ADMIN";
+}
+
+export function isBackoffice(
+  role: Role,
+): boolean {
+  return role === "BACKOFFICE";
+}
+
+export function canManageOperations(
+  role: Role,
+): boolean {
+  return (
+    role === "ADMIN" ||
+    role === "BACKOFFICE"
+  );
 }

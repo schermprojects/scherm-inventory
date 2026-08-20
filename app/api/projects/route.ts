@@ -48,6 +48,7 @@ const PROJECT_PRIORITY_WEIGHT: Record<
 
 type UserRole =
   | "ADMIN"
+  | "BACKOFFICE"
   | "COMMERCIAL"
   | "VIEWER";
 
@@ -296,6 +297,7 @@ function canManageProjects(
 ): boolean {
   return (
     role === "ADMIN" ||
+    role === "BACKOFFICE" ||
     role === "COMMERCIAL"
   );
 }
@@ -456,6 +458,7 @@ function parseProjectEquipment(
 async function validateActiveUser(
   userId: string | null,
   label: string,
+  allowedRoles?: UserRole[],
 ): Promise<void> {
   if (!userId) {
     return;
@@ -470,6 +473,7 @@ async function validateActiveUser(
       select: {
         id: true,
         active: true,
+        role: true,
       },
     });
 
@@ -482,6 +486,17 @@ async function validateActiveUser(
   if (!user.active) {
     throw new Error(
       `O ${label} selecionado está inativo.`,
+    );
+  }
+
+  if (
+    allowedRoles &&
+    !allowedRoles.includes(
+      user.role as UserRole,
+    )
+  ) {
+    throw new Error(
+      `O ${label} selecionado não possui um perfil permitido.`,
     );
   }
 }
@@ -1570,16 +1585,21 @@ export async function POST(
       );
 
     await Promise.all([
-      validateActiveUser(
-        responsibleId,
-        "responsável",
-      ),
+  validateActiveUser(
+    responsibleId,
+    "responsável",
+  ),
 
-      validateActiveUser(
-        salespersonId,
-        "vendedor",
-      ),
-    ]);
+  validateActiveUser(
+    salespersonId,
+    "vendedor",
+    [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+    ],
+  ),
+]);
 
     const project =
       await prisma.$transaction(

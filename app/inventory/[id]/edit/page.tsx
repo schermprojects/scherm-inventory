@@ -39,7 +39,8 @@ export default async function EditEquipmentPage({
   }
 
   const canManageInventory =
-    session.user.role === "ADMIN";
+      session.user.role === "ADMIN" ||
+      session.user.role === "BACKOFFICE";
 
   if (!canManageInventory) {
     redirect("/inventory");

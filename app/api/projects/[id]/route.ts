@@ -277,6 +277,7 @@ function canManageProjects(
 ): boolean {
   return (
     role === UserRole.ADMIN ||
+    role === UserRole.BACKOFFICE ||
     role === UserRole.COMMERCIAL
   );
 }
@@ -1291,6 +1292,7 @@ export async function PUT(
         "Vendedor",
         [
           UserRole.ADMIN,
+          UserRole.BACKOFFICE,
           UserRole.COMMERCIAL,
         ],
       ),
@@ -2182,21 +2184,21 @@ export async function DELETE(
   const sessionUser =
     session.user as SessionUser;
 
-  if (
-    sessionUser.role !== UserRole.ADMIN
-  ) {
-    return Response.json(
-      {
-        success: false,
-        message:
-          "Somente administradores podem excluir projetos.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
-
+if (
+  sessionUser.role !== UserRole.ADMIN &&
+  sessionUser.role !== UserRole.BACKOFFICE
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para excluir projetos.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
   if (!sessionUser.id) {
     return Response.json(
       {

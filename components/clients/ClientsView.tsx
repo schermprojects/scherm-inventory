@@ -283,17 +283,19 @@ export function ClientsView() {
         | undefined
     )?.role ?? "VIEWER";
 
-  /*
-   * ADMIN e COMMERCIAL podem alterar.
-   *
-   * VIEWER / Consulta possui acesso
-   * somente de leitura.
-   */
-  const canEdit =
-    role === "ADMIN" ||
-    role === "COMMERCIAL";
-  
-  const canViewClientDetails = canEdit;
+/*
+ * ADMIN, BACKOFFICE e COMMERCIAL
+ * podem gerenciar clientes.
+ *
+ * VIEWER / Consulta possui acesso
+ * somente de leitura.
+ */
+const canEdit =
+  role === "ADMIN" ||
+  role === "BACKOFFICE" ||
+  role === "COMMERCIAL";
+
+const canViewClientDetails = canEdit;
 
   const [clients, setClients] =
     useState<ClientItem[]>([]);

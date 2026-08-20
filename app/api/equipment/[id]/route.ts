@@ -207,6 +207,21 @@ async function requireAuthentication(): Promise<
   return session as AuthenticatedSession;
 }
 
+function canUpdateEquipment(
+  role: Session["user"]["role"],
+): boolean {
+  return (
+    role === "ADMIN" ||
+    role === "BACKOFFICE"
+  );
+}
+
+function canDeleteEquipment(
+  role: Session["user"]["role"],
+): boolean {
+  return role === "ADMIN";
+}
+
 function serializeEquipmentForAudit(
   equipment: {
     id: string;
@@ -364,6 +379,7 @@ export async function PATCH(
   const session =
     await requireAuthentication();
 
+
   if (!session) {
     return Response.json(
       {
@@ -375,6 +391,23 @@ export async function PATCH(
       },
     );
   }
+
+  if (
+  !canUpdateEquipment(
+    session.user.role,
+  )
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para editar equipamentos.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
 
   try {
     const { id } =
@@ -613,6 +646,23 @@ export async function DELETE(
       },
     );
   }
+
+  if (
+  !canDeleteEquipment(
+    session.user.role,
+  )
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para excluir equipamentos.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
 
   try {
     const { id } =

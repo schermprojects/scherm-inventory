@@ -217,6 +217,7 @@ function canManageClients(
 ): boolean {
   return (
     role === UserRole.ADMIN ||
+    role === UserRole.BACKOFFICE ||
     role === UserRole.COMMERCIAL
   );
 }
@@ -746,13 +747,13 @@ export async function DELETE(
       );
     }
 
-    const isAdmin =
-      sessionUser.role ===
-      UserRole.ADMIN;
+const canPermanentlyDelete =
+  sessionUser.role === UserRole.ADMIN ||
+  sessionUser.role === UserRole.BACKOFFICE;
 
-    const mustDeactivate =
-      !isAdmin ||
-      client._count.projects > 0;
+const mustDeactivate =
+  !canPermanentlyDelete ||
+  client._count.projects > 0;
 
     if (mustDeactivate) {
       if (!client.active) {

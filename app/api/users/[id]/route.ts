@@ -15,6 +15,7 @@ type UserRouteProps = {
 
 const allowedRoles = [
   "ADMIN",
+  "BACKOFFICE",
   "COMMERCIAL",
   "VIEWER",
 ] as const;

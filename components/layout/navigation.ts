@@ -24,37 +24,66 @@ export const navigationItems: readonly NavigationItem[] = [
     label: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
-    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
   },
   {
     label: "Inventário",
     href: "/inventory",
     icon: Boxes,
-    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
   },
   {
     label: "Projetos",
     href: "/projects",
     icon: FolderKanban,
-    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
   },
   {
-  label: "Clientes",
-  href: "/clients",
-  icon: Building2,
-  roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
-},
+    label: "Clientes",
+    href: "/clients",
+    icon: Building2,
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
+  },
   {
     label: "Compras",
     href: "/purchases",
     icon: ShoppingCart,
-    roles: ["ADMIN", "COMMERCIAL"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+    ],
   },
   {
     label: "Relatórios",
     href: "/reports",
     icon: BarChart3,
-    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
   },
   {
     label: "Usuários",
@@ -66,7 +95,12 @@ export const navigationItems: readonly NavigationItem[] = [
     label: "Minha conta",
     href: "/account",
     icon: UserRound,
-    roles: ["ADMIN", "COMMERCIAL", "VIEWER"],
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
+      "COMMERCIAL",
+      "VIEWER",
+    ],
   },
 ] as const;
 
@@ -76,4 +110,4 @@ export function getNavigationForRole(
   return navigationItems.filter((item) =>
     item.roles.includes(role),
   );
-} 
+}

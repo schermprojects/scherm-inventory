@@ -163,10 +163,11 @@ export async function PATCH(
   const sessionUser =
     session.user as SessionUser;
 
-  if (
-    sessionUser.role !== "ADMIN" &&
-    sessionUser.role !== "COMMERCIAL"
-  ) {
+if (
+  sessionUser.role !== "ADMIN" &&
+  sessionUser.role !== "BACKOFFICE" &&
+  sessionUser.role !== "COMMERCIAL"
+) {
     return Response.json(
       {
         success: false,

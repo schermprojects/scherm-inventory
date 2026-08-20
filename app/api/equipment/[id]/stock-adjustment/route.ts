@@ -82,30 +82,21 @@ export async function PATCH(
   const sessionUser =
     session.user as SessionUser;
 
-  /*
-   * Por enquanto somente ADMIN.
-   *
-   * Quando BACKOFFICE existir:
-   *
-   * if (
-   *   sessionUser.role !== "ADMIN" &&
-   *   sessionUser.role !== "BACKOFFICE"
-   * )
-   */
-  if (
-    sessionUser.role !== "ADMIN"
-  ) {
-    return Response.json(
-      {
-        success: false,
-        message:
-          "Você não possui permissão para ajustar o estoque.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
+if (
+  sessionUser.role !== "ADMIN" &&
+  sessionUser.role !== "BACKOFFICE"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Você não possui permissão para ajustar o estoque.",
+    },
+    {
+      status: 403,
+    },
+  );
+}
 
   if (!sessionUser.id) {
     return Response.json(

@@ -28,6 +28,7 @@ const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
 
 type UserRole =
   | "ADMIN"
+  | "BACKOFFICE"
   | "COMMERCIAL"
   | "VIEWER";
 
@@ -141,6 +142,7 @@ function getUserRole(
 ): UserRole | null {
   if (
     role === "ADMIN" ||
+    role === "BACKOFFICE" ||
     role === "COMMERCIAL" ||
     role === "VIEWER"
   ) {
@@ -155,7 +157,7 @@ function canCreateEquipment(
 ): boolean {
   return (
     role === "ADMIN" ||
-    role === "COMMERCIAL"
+    role === "BACKOFFICE"
   );
 }
 
@@ -470,8 +472,9 @@ export async function POST(
     );
   }
 
-  const isAdministrator =
-    role === "ADMIN";
+const canSetInitialStock =
+  role === "ADMIN" ||
+  role === "BACKOFFICE";
 
   try {
     const body =
@@ -491,49 +494,49 @@ const requestedDamagedQuantity =
     0,
   );
 
-    /*
-     * ADMIN pode definir o estoque inicial.
-     *
-     * COMMERCIAL pode cadastrar um item
-     * de catálogo para utilizar em projetos,
-     * mas ele sempre nasce com estoque
-     * físico igual a zero.
-     */
+/*
+ * ADMIN e BACKOFFICE podem cadastrar
+ * equipamentos diretamente no inventário
+ * e definir o estoque inicial.
+ *
+ * O COMMERCIAL utiliza o fluxo específico
+ * de cadastro rápido dentro de projetos.
+ */
     const quantity =
-      isAdministrator
-        ? requestedQuantity
-        : 0;
+  canSetInitialStock
+    ? requestedQuantity
+    : 0;
 
-        const damagedQuantity =
-          isAdministrator
-            ? requestedDamagedQuantity
-            : 0;
+const damagedQuantity =
+  canSetInitialStock
+    ? requestedDamagedQuantity
+    : 0;
 
-    /*
-     * O comercial não confirma entrada física,
-     * nota fiscal, estado ou condição operacional.
-     *
-     * Esses campos são controlados pelo
-     * administrador.
-     */
-    const invoiceNumber =
-      isAdministrator
-        ? optionalText(
-            body.invoiceNumber,
-          )
-        : null;
+/*
+ * Estoque inicial, nota fiscal, status
+ * e condição operacional são controlados
+ * por ADMIN e BACKOFFICE neste fluxo.
+ */
+const invoiceNumber =
+  canSetInitialStock
+    ? optionalText(
+        body.invoiceNumber,
+      )
+    : null;
 
-    const status =
-      isAdministrator
-        ? parseStatus(body.status)
-        : EquipmentStatus.AVAILABLE;
+const status =
+  canSetInitialStock
+    ? parseStatus(
+        body.status,
+      )
+    : EquipmentStatus.AVAILABLE;
 
-    const condition =
-      isAdministrator
-        ? parseCondition(
-            body.condition,
-          )
-        : EquipmentCondition.NEW;
+const condition =
+  canSetInitialStock
+    ? parseCondition(
+        body.condition,
+      )
+    : EquipmentCondition.NEW;
 
     const equipment =
       await prisma.equipment.create({
@@ -642,9 +645,7 @@ const requestedDamagedQuantity =
         success: true,
 
         message:
-          role === "COMMERCIAL"
-            ? "Equipamento cadastrado com estoque inicial zerado."
-            : "Equipamento cadastrado com sucesso.",
+  "Equipamento cadastrado com sucesso.",
 
         data: {
           ...equipment,

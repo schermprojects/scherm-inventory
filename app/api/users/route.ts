@@ -10,6 +10,7 @@ import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 const allowedRoles = [
   "ADMIN",
+  "BACKOFFICE",
   "COMMERCIAL",
   "VIEWER",
 ] as const;

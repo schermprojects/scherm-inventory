@@ -21,7 +21,11 @@ type HeaderProps = {
 type SessionUser = {
   name?: string | null;
   username?: string | null;
-  role?: "ADMIN" | "COMMERCIAL" | "VIEWER";
+  role?:
+    | "ADMIN"
+    | "BACKOFFICE"
+    | "COMMERCIAL"
+    | "VIEWER";
 };
 
 const roleLabels: Record<
@@ -29,6 +33,7 @@ const roleLabels: Record<
   string
 > = {
   ADMIN: "Administrador",
+  BACKOFFICE: "Backoffice",
   COMMERCIAL: "Comercial",
   VIEWER: "Consulta",
 };
@@ -64,7 +69,8 @@ export function Header({ onMenuClick }: HeaderProps) {
   const initials = getInitials(userName);
 
 const canCreateEquipment =
-  userRole === "ADMIN" ;
+  userRole === "ADMIN" ||
+  userRole === "BACKOFFICE";
 
 const showNewEquipmentButton =
   canCreateEquipment &&

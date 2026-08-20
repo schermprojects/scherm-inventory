@@ -4,11 +4,16 @@ import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
 
-type UserRole = "ADMIN" | "COMMERCIAL" | "VIEWER";
+type UserRole =
+  | "ADMIN"
+  | "BACKOFFICE"
+  | "COMMERCIAL"
+  | "VIEWER";
 
 function isUserRole(value: unknown): value is UserRole {
   return (
     value === "ADMIN" ||
+    value === "BACKOFFICE" ||
     value === "COMMERCIAL" ||
     value === "VIEWER"
   );

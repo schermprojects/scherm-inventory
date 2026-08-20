@@ -293,9 +293,9 @@ export function InventoryView() {
   const searchParams =
     useSearchParams();
 
-  const canManageInventory =
-  session?.user?.role ===
-  "ADMIN";
+ const canManageInventory =
+  session?.user?.role === "ADMIN" ||
+  session?.user?.role === "BACKOFFICE";
 
   const [
     equipmentList,

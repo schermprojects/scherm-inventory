@@ -5,7 +5,11 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type UserRole = "ADMIN" | "COMMERCIAL" | "VIEWER";
+type UserRole =
+  | "ADMIN"
+  | "BACKOFFICE"
+  | "COMMERCIAL"
+  | "VIEWER";
 
 type SessionUser = {
   id?: string;
@@ -30,9 +34,10 @@ export async function GET() {
 
   const sessionUser = session.user as SessionUser;
 
-  if (
-    sessionUser.role !== "ADMIN" &&
-    sessionUser.role !== "COMMERCIAL"
+if (
+  sessionUser.role !== "ADMIN" &&
+  sessionUser.role !== "BACKOFFICE" &&
+  sessionUser.role !== "COMMERCIAL"
   ) {
     return NextResponse.json(
       {
