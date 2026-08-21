@@ -26,6 +26,10 @@ type EquipmentCondition =
   | "NEW"
   | "DAMAGED";
 
+type EquipmentModalMode =
+  | "ADD"
+  | "MANAGE";
+
 type EquipmentImage = {
   id: string;
   url: string;
@@ -70,6 +74,7 @@ type MutationResponse = {
 type ProjectEquipmentModalProps = {
   open: boolean;
   projectId: string;
+  mode: EquipmentModalMode;
   onClose: () => void;
   onUpdated: () => Promise<void> | void;
 };
@@ -96,6 +101,7 @@ const MAX_QUANTITY = 999999;
 export function ProjectEquipmentModal({
   open,
   projectId,
+  mode,
   onClose,
   onUpdated,
 }: ProjectEquipmentModalProps) {
@@ -128,6 +134,12 @@ export function ProjectEquipmentModal({
   const isMutating =
     updatingId !== null ||
     removingId !== null;
+
+  const isAddMode =
+    mode === "ADD";
+
+  const isManageMode =
+    mode === "MANAGE";
 
   const loadEquipment = useCallback(
     async () => {
@@ -175,15 +187,16 @@ export function ProjectEquipmentModal({
 
               next[item.id] =
                 savedQuantity ??
-                (projectQuantity > 0
-                  ? projectQuantity
-                  : 1);
+                (
+                  projectQuantity > 0
+                    ? projectQuantity
+                    : 1
+                );
 
               if (
                 next[item.id] < 1
               ) {
-                next[item.id] =
-                  1;
+                next[item.id] = 1;
               }
 
               if (
@@ -207,9 +220,7 @@ export function ProjectEquipmentModal({
             : "Não foi possível carregar os equipamentos.",
         );
       } finally {
-        setLoading(
-          false,
-        );
+        setLoading(false);
       }
     },
     [projectId],
@@ -227,6 +238,7 @@ export function ProjectEquipmentModal({
     void loadEquipment();
   }, [
     open,
+    mode,
     loadEquipment,
   ]);
 
@@ -272,6 +284,26 @@ export function ProjectEquipmentModal({
     onClose,
   ]);
 
+  const modeEquipment =
+    useMemo(() => {
+      if (isAddMode) {
+        return equipment.filter(
+          (item) =>
+            item.currentProjectQuantity ===
+            0,
+        );
+      }
+
+      return equipment.filter(
+        (item) =>
+          item.currentProjectQuantity >
+          0,
+      );
+    }, [
+      equipment,
+      isAddMode,
+    ]);
+
   const filteredEquipment =
     useMemo(() => {
       const normalizedSearch =
@@ -284,10 +316,10 @@ export function ProjectEquipmentModal({
       if (
         !normalizedSearch
       ) {
-        return equipment;
+        return modeEquipment;
       }
 
-      return equipment.filter(
+      return modeEquipment.filter(
         (item) => {
           const searchableText =
             [
@@ -309,7 +341,7 @@ export function ProjectEquipmentModal({
         },
       );
     }, [
-      equipment,
+      modeEquipment,
       search,
     ]);
 
@@ -399,12 +431,44 @@ export function ProjectEquipmentModal({
       setError(
         `Informe uma quantidade inteira entre 1 e ${MAX_QUANTITY}.`,
       );
+
       return;
     }
 
     const alreadyReserved =
       item.currentProjectQuantity >
       0;
+
+    /*
+     * Proteção adicional.
+     *
+     * ADD nunca deve editar reserva
+     * já existente.
+     *
+     * MANAGE nunca deve adicionar
+     * item novo.
+     */
+    if (
+      isAddMode &&
+      alreadyReserved
+    ) {
+      setError(
+        "Este equipamento já está reservado neste projeto.",
+      );
+
+      return;
+    }
+
+    if (
+      isManageMode &&
+      !alreadyReserved
+    ) {
+      setError(
+        "Este equipamento ainda não está reservado neste projeto.",
+      );
+
+      return;
+    }
 
     try {
       setUpdatingId(
@@ -427,10 +491,12 @@ export function ProjectEquipmentModal({
               alreadyReserved
                 ? "PUT"
                 : "POST",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body:
               JSON.stringify(
                 alreadyReserved
@@ -492,6 +558,10 @@ export function ProjectEquipmentModal({
       item.currentProjectQuantity <
       1
     ) {
+      return;
+    }
+
+    if (!isManageMode) {
       return;
     }
 
@@ -568,6 +638,28 @@ export function ProjectEquipmentModal({
     return null;
   }
 
+  const modalTitle =
+    isAddMode
+      ? "Adicionar equipamento"
+      : "Gerenciar reservas";
+
+  const modalDescription =
+    isAddMode
+      ? "Selecione novos equipamentos para adicionar ao projeto."
+      : "Altere a quantidade ou remova equipamentos já reservados.";
+
+  const emptyTitle =
+    isAddMode
+      ? "Nenhum equipamento disponível para adicionar"
+      : "Nenhuma reserva encontrada";
+
+  const emptyDescription =
+    search.trim()
+      ? "Nenhum equipamento corresponde à busca informada."
+      : isAddMode
+        ? "Todos os equipamentos disponíveis já estão reservados neste projeto."
+        : "Este projeto ainda não possui equipamentos reservados.";
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
@@ -596,15 +688,11 @@ export function ProjectEquipmentModal({
               id="equipment-modal-title"
               className="text-lg font-bold text-zinc-900"
             >
-              Equipamentos do
-              projeto
+              {modalTitle}
             </h2>
 
             <p className="mt-1 text-sm text-zinc-500">
-              Adicione, altere ou
-              remova equipamentos
-              necessários ao
-              projeto.
+              {modalDescription}
             </p>
           </div>
 
@@ -641,7 +729,11 @@ export function ProjectEquipmentModal({
                     .value,
                 );
               }}
-              placeholder="Buscar por nome, categoria, fabricante, modelo ou número de série"
+              placeholder={
+                isAddMode
+                  ? "Buscar equipamentos para adicionar..."
+                  : "Buscar reservas do projeto..."
+              }
               className="h-11 w-full rounded-lg border border-zinc-200 bg-white pl-10 pr-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
             />
           </div>
@@ -682,8 +774,7 @@ export function ProjectEquipmentModal({
                 className="mr-2 animate-spin"
               />
 
-              Carregando
-              equipamentos...
+              Carregando equipamentos...
             </div>
           ) : filteredEquipment.length ===
             0 ? (
@@ -695,15 +786,11 @@ export function ProjectEquipmentModal({
               </div>
 
               <h3 className="mt-4 font-bold text-zinc-900">
-                Nenhum equipamento
-                encontrado
+                {emptyTitle}
               </h3>
 
               <p className="mt-1 max-w-md text-sm text-zinc-500">
-                Verifique a busca
-                ou cadastre
-                equipamentos no
-                inventário.
+                {emptyDescription}
               </p>
             </div>
           ) : (
@@ -770,18 +857,15 @@ export function ProjectEquipmentModal({
                                 }
                               </h3>
 
-                              {alreadyReserved ? (
+                              {isManageMode ? (
                                 <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
-                                  Reservado
-                                  neste
-                                  projeto
+                                  Reservado neste projeto
                                 </span>
                               ) : null}
 
                               {hasNoStock ? (
                                 <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                                  Sem
-                                  estoque
+                                  Sem estoque
                                 </span>
                               ) : (
                                 <EquipmentStatusBadge
@@ -848,7 +932,7 @@ export function ProjectEquipmentModal({
                                 }
                               />
 
-                              {alreadyReserved ? (
+                              {isManageMode ? (
                                 <StockValue
                                   label="Neste projeto"
                                   value={
@@ -974,14 +1058,15 @@ export function ProjectEquipmentModal({
                                   size={16}
                                 />
 
-                                {alreadyReserved
+                                {isManageMode
                                   ? "Atualizar"
                                   : "Adicionar"}
                               </>
                             )}
                           </button>
 
-                          {alreadyReserved ? (
+                          {isManageMode &&
+                          alreadyReserved ? (
                             <button
                               type="button"
                               onClick={() => {
@@ -1035,16 +1120,14 @@ export function ProjectEquipmentModal({
                               }
                             </strong>{" "}
                             disponível(is).
-                            O déficit
-                            de{" "}
+                            O déficit de{" "}
                             <strong>
                               {
                                 requestedShortage
                               }
                             </strong>{" "}
                             unidade(s)
-                            será
-                            registrado
+                            será registrado
                             para compra.
                           </span>
                         </div>
@@ -1056,17 +1139,14 @@ export function ProjectEquipmentModal({
                           />
 
                           <span>
-                            Não há
-                            estoque
+                            Não há estoque
                             disponível no
                             momento. O
-                            equipamento
-                            ainda pode ser
-                            adicionado ao
-                            projeto e a
-                            necessidade
-                            será enviada
-                            para compra.
+                            equipamento ainda
+                            pode ser adicionado
+                            ao projeto e a
+                            necessidade será
+                            enviada para compra.
                           </span>
                         </div>
                       ) : null}
@@ -1085,7 +1165,7 @@ export function ProjectEquipmentModal({
             }{" "}
             de{" "}
             {
-              equipment.length
+              modeEquipment.length
             }{" "}
             equipamento(s)
           </p>

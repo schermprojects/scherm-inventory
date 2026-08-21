@@ -362,10 +362,22 @@ const [
   const [showEditModal, setShowEditModal] =
     useState(false);
 
-  const [
+type EquipmentModalMode =
+  | "ADD"
+  | "MANAGE";
+
+const [
   showEquipmentModal,
   setShowEquipmentModal,
 ] = useState(false);
+
+const [
+  equipmentModalMode,
+  setEquipmentModalMode,
+] =
+  useState<EquipmentModalMode>(
+    "ADD",
+  );
 
 const [
   showQuickEquipmentModal,
@@ -1220,7 +1232,7 @@ async function handleReopenProject() {
     }));
   }
 
-function openEquipmentModal() {
+function openAddEquipmentModal() {
   if (
     !project ||
     !canEdit ||
@@ -1228,6 +1240,24 @@ function openEquipmentModal() {
   ) {
     return;
   }
+
+  setEquipmentModalMode("ADD");
+  setSuccessMessage("");
+  setShowEquipmentModal(true);
+}
+
+function openManageEquipmentModal() {
+  if (
+    !project ||
+    !canEdit ||
+    project.status === "COMPLETED"
+  ) {
+    return;
+  }
+
+  setEquipmentModalMode(
+    "MANAGE",
+  );
 
   setSuccessMessage("");
   setShowEquipmentModal(true);
@@ -1967,14 +1997,16 @@ return (
 
              {canEdit && !isProjectLocked ? (
   <div className="flex flex-wrap items-center justify-end gap-2">
-    <button
-      type="button"
-      onClick={openEquipmentModal}
-      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-3 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-    >
-      <Package size={16} />
-      Adicionar
-    </button>
+<button
+  type="button"
+  onClick={
+    openAddEquipmentModal
+  }
+  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-3 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+>
+  <Package size={16} />
+  Adicionar
+</button>
 
 <button
   type="button"
@@ -1985,12 +2017,18 @@ return (
   Novo equipamento
 </button>
 
-    <button
+<button
   type="button"
-  onClick={openEquipmentModal}
-  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00]"
+  onClick={
+    openManageEquipmentModal
+  }
+  disabled={
+    project.equipment.length === 0
+  }
+  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-300 hover:bg-orange-50 hover:text-[#F57B00] disabled:cursor-not-allowed disabled:opacity-50"
 >
   <Pencil size={14} />
+
   Gerenciar reservas
 </button>
 {hasAllocatedEquipment ? (
@@ -3591,11 +3629,19 @@ return (
   }}
 />
 
-           <ProjectEquipmentModal
-  open={canEdit && showEquipmentModal}
+<ProjectEquipmentModal
+  open={
+    canEdit &&
+    showEquipmentModal
+  }
   projectId={project.id}
-  onClose={closeEquipmentModal}
-  onUpdated={loadProject}
+  mode={equipmentModalMode}
+  onClose={
+    closeEquipmentModal
+  }
+  onUpdated={async () => {
+    await loadProject();
+  }}
 />
     </div>
   </>
