@@ -558,7 +558,7 @@ function handleProjectChange(
 
               <p className="mt-0.5 break-words text-xs text-zinc-600">
                 {equipmentDescription ||
-                  "Equipamento do inventário"}
+                  "Equipamento do estoque"}
               </p>
             </div>
           </section>

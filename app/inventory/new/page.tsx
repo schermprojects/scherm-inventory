@@ -24,12 +24,12 @@ const canManageInventory =
     <DashboardLayout>
       <PageContainer
         title="Novo equipamento"
-        description="Cadastre um novo item no inventário da Scherm."
+        description="Cadastre um novo item no estoque da Scherm."
         breadcrumb={
           <Breadcrumb
             items={[
               {
-                label: "Inventário",
+                label: "Estoque",
                 href: "/inventory",
               },
               {

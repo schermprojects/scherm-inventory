@@ -66,7 +66,7 @@ export default function LoginPage() {
           </div>
 
           <p className="mt-4 text-sm tracking-wide text-white/90">
-            Sistema de Gestão de Inventário
+            Sistema de Gestão de Estoque
           </p>
         </header>
 

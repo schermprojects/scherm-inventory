@@ -22,7 +22,7 @@ export default function EquipmentNotFound() {
         className="mt-6 inline-flex h-11 items-center gap-2 rounded-lg bg-[#F57B00] px-5 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
       >
         <ArrowLeft size={17} />
-        Voltar ao inventário
+        Voltar ao estoque
       </Link>
     </div>
   );

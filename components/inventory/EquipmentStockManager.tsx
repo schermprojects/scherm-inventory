@@ -530,7 +530,7 @@ function requestUpdate() {
         </option>
 
         <option value="INVENTORY_CORRECTION">
-          Correção de inventário
+          Correção de estoque
         </option>
 
         <option value="LOSS">

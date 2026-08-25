@@ -432,7 +432,7 @@ export function InventoryView() {
         ) {
           throw new Error(
             result.message ??
-              "Não foi possível carregar o inventário.",
+              "Não foi possível carregar o estoque.",
           );
         }
 
@@ -461,7 +461,7 @@ export function InventoryView() {
         setLoadError(
           error instanceof Error
             ? error.message
-            : "Não foi possível carregar o inventário.",
+            : "Não foi possível carregar o estoque.",
         );
       } finally {
         if (
@@ -816,7 +816,7 @@ export function InventoryView() {
 
           <p className="text-sm font-medium">
             Carregando
-            inventário...
+            estoque...
           </p>
         </div>
       </div>
@@ -828,7 +828,7 @@ export function InventoryView() {
       <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 px-5 text-center">
         <p className="font-semibold text-red-800">
           Não foi possível
-          carregar o inventário
+          carregar o estoque
         </p>
 
         <p className="mt-2 max-w-md text-sm text-red-600">
@@ -2290,7 +2290,7 @@ function EmptyInventory({
       <p className="mt-2 max-w-md text-sm text-zinc-500">
         {hasEquipment
           ? "Não encontramos equipamentos correspondentes à busca e aos filtros selecionados."
-          : "O inventário ainda está vazio. Cadastre o primeiro equipamento para começar."}
+          : "O estoque ainda está vazio. Cadastre o primeiro equipamento para começar."}
       </p>
 
       {hasEquipment ? (

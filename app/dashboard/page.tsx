@@ -334,7 +334,7 @@ const hiddenStockAlertsCount =
         <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <div>
             <h2 className="text-base font-bold text-zinc-900">
-              Visão geral do inventário
+              Visão geral do estoque
             </h2>
 
             <p className="mt-1 text-sm text-zinc-500">
@@ -444,7 +444,7 @@ const hiddenStockAlertsCount =
     >
       {hiddenStockAlertsCount > 0
         ? `Ver todos os ${data.stockAlertItems.length} alertas`
-        : "Ver alertas no inventário"}
+        : "Ver alertas no estoque"}
     </Link>
   </div>
 </div>
@@ -645,7 +645,7 @@ function InventoryDonutChart({
               chartBackground,
           }}
           role="img"
-          aria-label={`Gráfico do inventário: ${available} disponíveis, ${inUse} em uso, ${damaged} danificadas e ${shortage} em déficit.`}
+          aria-label={`Gráfico do estoque: ${available} disponíveis, ${inUse} em uso, ${damaged} danificadas e ${shortage} em déficit.`}
         >
           <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white shadow-sm">
             <span className="text-2xl font-black text-zinc-900">

@@ -228,7 +228,7 @@ const activeDemand = requestedQuantity;
             <Link
               href="/inventory"
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
-              aria-label="Voltar ao inventário"
+              aria-label="Voltar ao estoque"
             >
               <ArrowLeft
                 size={18}
@@ -485,7 +485,7 @@ const activeDemand = requestedQuantity;
           <DetailsSection
             icon={Boxes}
             title="Informações do equipamento"
-            description="Dados principais do item cadastrado no inventário."
+            description="Dados principais do item cadastrado no estoque."
           >
             <DetailsGrid>
               <DetailItem

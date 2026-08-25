@@ -135,7 +135,7 @@ export function DashboardCharts({
       </ChartCard>
 
       <ChartCard
-        title="Status do inventário"
+        title="Status do estoque"
         description="Situação operacional dos equipamentos."
       >
         <div className="grid min-h-[310px] items-center gap-4 sm:grid-cols-[1fr_180px]">

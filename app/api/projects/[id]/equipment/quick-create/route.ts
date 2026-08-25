@@ -120,7 +120,7 @@ export async function POST(
    *
    * COMMERCIAL pode criar a necessidade
    * de equipamento aqui, mas não pelo
-   * módulo Inventário.
+   * módulo Estoque.
    */
   if (
     sessionUser.role !==

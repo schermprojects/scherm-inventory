@@ -9,13 +9,13 @@ export default function InventoryPage() {
   return (
     <DashboardLayout>
       <PageContainer
-        title="Inventário"
+        title="Estoque"
         description="Consulte, filtre e gerencie os equipamentos cadastrados."
         breadcrumb={
           <Breadcrumb
             items={[
               {
-                label: "Inventário",
+                label: "Estoque",
               },
             ]}
           />
@@ -35,7 +35,7 @@ function InventoryViewFallback() {
         <div className="h-9 w-9 animate-spin rounded-full border-4 border-zinc-200 border-t-[#F57B00]" />
 
         <p className="text-sm font-medium">
-          Carregando inventário...
+          Carregando estoque...
         </p>
       </div>
     </div>

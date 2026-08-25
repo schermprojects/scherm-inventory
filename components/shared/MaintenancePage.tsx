@@ -37,7 +37,7 @@ export function MaintenancePage({
         <div className="mt-8 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
           <div className="flex items-center justify-center gap-2 text-sm font-medium text-zinc-600">
             <PackageSearch size={18} />
-            Cadastro e inventário continuam disponíveis normalmente.
+            Cadastro e estoque continuam disponíveis normalmente.
           </div>
         </div>
 
@@ -45,7 +45,7 @@ export function MaintenancePage({
           href="/inventory"
           className="mt-7 inline-flex h-11 items-center justify-center rounded-lg bg-[#F57B00] px-5 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
         >
-          Acessar inventário
+          Acessar estoque
         </Link>
       </section>
     </div>

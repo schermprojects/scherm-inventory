@@ -2062,7 +2062,7 @@ return (
 
                 <p className="mt-1 max-w-sm text-sm text-zinc-500">
                   Adicione equipamentos do
-                  inventário para reservar as
+                  estoque para reservar as
                   unidades necessárias.
                 </p>
               </div>

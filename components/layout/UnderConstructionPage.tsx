@@ -77,7 +77,7 @@ export function UnderConstructionPage({
 
             <div className="mt-10 rounded-xl border border-orange-100 bg-orange-50/50 p-4">
               <p className="text-xs leading-5 text-zinc-600">
-                O cadastro e a consulta do inventário continuam disponíveis
+                O cadastro e a consulta do estoque continuam disponíveis
                 normalmente. Esta página não interfere nos dados já registrados.
               </p>
             </div>

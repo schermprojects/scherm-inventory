@@ -32,7 +32,7 @@ export const navigationItems: readonly NavigationItem[] = [
     ],
   },
   {
-    label: "Inventário",
+    label: "Estoque",
     href: "/inventory",
     icon: Boxes,
     roles: [

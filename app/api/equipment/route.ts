@@ -496,7 +496,7 @@ const requestedDamagedQuantity =
 
 /*
  * ADMIN e BACKOFFICE podem cadastrar
- * equipamentos diretamente no inventário
+ * equipamentos diretamente no estoque
  * e definir o estoque inicial.
  *
  * O COMMERCIAL utiliza o fluxo específico

@@ -45,7 +45,7 @@ export function RecentMovements() {
           </h2>
 
           <p className="mt-1 text-sm text-zinc-500">
-            Últimas alterações registradas no inventário.
+            Últimas alterações registradas no estoque.
           </p>
         </div>
 
