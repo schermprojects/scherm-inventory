@@ -51,6 +51,15 @@ type ApiEquipmentCondition =
   | "NEW"
   | "DAMAGED";
 
+type ApiEquipmentRmaStatus =
+  | "NONE"
+  | "PENDING"
+  | "SENT"
+  | "APPROVED"
+  | "REJECTED"
+  | "RETURNED"
+  | "REPLACED";
+
 type EquipmentImage = {
   id?: string;
   url: string;
@@ -67,6 +76,7 @@ type ApiEquipment = {
   quantity: number;
 
   physicalStock: number;
+  installedQuantity: number;
   inUse: number;
   availableStock: number;
   shortage: number;
@@ -81,6 +91,7 @@ type ApiEquipment = {
 
   status: ApiEquipmentStatus;
   condition: ApiEquipmentCondition;
+  rmaStatus: ApiEquipmentRmaStatus;
 
   invoiceNumber: string | null;
   notes: string | null;
@@ -100,6 +111,7 @@ type Equipment = {
   quantity: number;
 
   physicalStock: number;
+  installedQuantity: number;
   inUse: number;
   availableStock: number;
   shortage: number;
@@ -114,6 +126,7 @@ type Equipment = {
 
   status: EquipmentStatus;
   condition: EquipmentCondition;
+  rmaStatus: ApiEquipmentRmaStatus;
 
   invoiceNumber: string | null;
   notes: string | null;
@@ -187,6 +200,9 @@ function mapApiEquipment(
     physicalStock:
       item.physicalStock,
 
+    installedQuantity:
+      item.installedQuantity ?? 0,
+
     inUse:
       item.inUse,
 
@@ -220,6 +236,9 @@ function mapApiEquipment(
         item.condition
       ],
 
+    rmaStatus:
+        item.rmaStatus,
+
     invoiceNumber:
       item.invoiceNumber,
 
@@ -235,6 +254,20 @@ function mapApiEquipment(
     updatedAt:
       item.updatedAt,
   };
+}
+
+/*
+ * Equipamentos substituídos por RMA permanecem apenas
+ * como histórico. Na listagem, priorizamos esse estado
+ * em vez de alertas operacionais ou da condição danificada.
+ */
+function isHistoricalRmaReplacement(
+  item: Equipment,
+): boolean {
+  return (
+    item.rmaStatus ===
+    "REPLACED"
+  );
 }
 
 /*
@@ -278,6 +311,14 @@ function isFullyCommitted(
 function hasStockAlert(
   item: Equipment,
 ): boolean {
+  if (
+    isHistoricalRmaReplacement(
+      item,
+    )
+  ) {
+    return false;
+  }
+
   return (
     isOutOfStock(item) ||
     isLowStock(item) ||
@@ -587,23 +628,35 @@ export function InventoryView() {
               )) ||
             (stockFilter ===
               "Sem estoque" &&
+              !isHistoricalRmaReplacement(
+                equipment,
+              ) &&
               isOutOfStock(
                 equipment,
               )) ||
+              (stockFilter ===
+                "Instalados" &&
+                equipment.installedQuantity >
+              0) ||
             (stockFilter ===
-              "Danificados" &&
-              equipment.damagedQuantity >
-                0) ||
+            "Danificados" &&
+            !isHistoricalRmaReplacement(
+              equipment,
+            ) &&
+            equipment.damagedQuantity >
+              0) ||
             (stockFilter ===
-              "Estoque normal" &&
-              !isOutOfStock(
-                equipment,
-              ) &&
-              !isLowStock(
-                equipment,
-              ) &&
-              equipment.shortage ===
-                0);
+  "Estoque normal" &&
+  !isOutOfStock(
+    equipment,
+  ) &&
+  !isLowStock(
+    equipment,
+  ) &&
+  equipment.shortage ===
+    0 &&
+  equipment.installedQuantity ===
+    0);
 
           return (
             matchesSearch &&
@@ -690,22 +743,23 @@ export function InventoryView() {
 
   function exportCsv() {
     const columns = [
-      "Equipamento",
-      "Fabricante",
-      "Modelo",
-      "Estoque físico",
-      "Disponível",
-      "Em uso",
-      "Déficit",
-      "Danificados",
-      "Estoque mínimo",
-      "Número de série",
-      "Categoria",
-      "Status",
-      "Condição",
-      "Nota fiscal",
-      "Observações",
-    ];
+  "Equipamento",
+  "Fabricante",
+  "Modelo",
+  "Estoque físico",
+  "Disponível",
+  "Em uso",
+  "Instalados",
+  "Déficit",
+  "Danificados",
+  "Estoque mínimo",
+  "Número de série",
+  "Categoria",
+  "Status",
+  "Condição",
+  "Nota fiscal",
+  "Observações",
+];
 
     const rows =
       filteredEquipment.map(
@@ -723,6 +777,8 @@ export function InventoryView() {
           equipment.availableStock,
 
           equipment.inUse,
+
+          equipment.installedQuantity,
 
           equipment.shortage,
 
@@ -882,7 +938,7 @@ export function InventoryView() {
                     1,
                   );
                 }}
-                placeholder="Buscar por nome, modelo ou número de série..."
+                placeholder="Buscar por nome, fabricante, modelo, categoria ou número de série..."
                 className="h-11 w-full rounded-lg border border-zinc-200 bg-zinc-50 pl-10 pr-10 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:bg-white focus:ring-2 focus:ring-[#F57B00]/15"
               />
 
@@ -1090,13 +1146,14 @@ export function InventoryView() {
                 stockFilter
               }
               options={[
-                "Todos",
-                "Alertas de estoque",
-                "Estoque normal",
-                "Baixo estoque",
-                "Sem estoque",
-                "Danificados",
-              ]}
+  "Todos",
+  "Alertas de estoque",
+  "Estoque normal",
+  "Baixo estoque",
+  "Sem estoque",
+  "Instalados",
+  "Danificados",
+]}
               onChange={(
                 value,
               ) =>
@@ -1280,6 +1337,17 @@ function InventorySummary({
       0,
     );
 
+  const totalInstalled =
+  equipment.reduce(
+    (
+      total,
+      item,
+    ) =>
+      total +
+      item.installedQuantity,
+    0,
+  );
+
   const totalDamaged =
     equipment.reduce(
       (
@@ -1349,6 +1417,23 @@ function InventorySummary({
     },
 
     {
+  label:
+    "Unidades instaladas",
+
+  value:
+    totalInstalled,
+
+  color:
+    "text-violet-700",
+
+  background:
+    "bg-violet-50",
+
+  icon:
+    Boxes,
+},
+
+    {
       label:
         "Unidades danificadas",
 
@@ -1394,7 +1479,7 @@ function InventorySummary({
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
       {summary.map(
         (item) => {
           const Icon =
@@ -1598,6 +1683,11 @@ function EquipmentTable({
                 item.images[0]
                   ?.url;
 
+              const isHistorical =
+                isHistoricalRmaReplacement(
+                  item,
+                );
+
               return (
                 <tr
                   key={
@@ -1665,8 +1755,8 @@ function EquipmentTable({
                             "Sem fabricante ou modelo"}
                         </p>
 
-                        {item.damagedQuantity >
-                        0 ? (
+                        {!isHistorical &&
+                          item.damagedQuantity > 0 ? (
                           <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">
                             <AlertTriangle
                               size={
@@ -1708,35 +1798,53 @@ function EquipmentTable({
                   </td>
 
                   <td className="whitespace-nowrap px-5 py-4">
-                    <StockBadge
-                      physicalStock={
-                        item.physicalStock
-                      }
-                      inUse={
-                        item.inUse
-                      }
-                      availableStock={
-                        item.availableStock
-                      }
-                      shortage={
-                        item.shortage
-                      }
-                      damagedQuantity={
-                        item.damagedQuantity
-                      }
-                      minimumStock={
-                        item.minimumStock
-                      }
-                    />
+                   <StockBadge
+                    physicalStock={
+                      item.physicalStock
+                    }
+                    inUse={
+                      item.inUse
+                    }
+                    availableStock={
+                      item.availableStock
+                    }
+                    installedQuantity={
+                      item.installedQuantity
+                    }
+                    shortage={
+                      item.shortage
+                    }
+                    damagedQuantity={
+                      item.damagedQuantity
+                    }
+                    minimumStock={
+                      item.minimumStock
+                    }
+                    isHistorical={
+                      isHistorical
+                    }
+                  />
                   </td>
 
                   <td className="px-5 py-4">
+                  {isHistorical ? (
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span className="inline-flex whitespace-nowrap rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-600/20">
+                        Histórico de RMA
+                      </span>
+
+                      <span className="inline-flex whitespace-nowrap rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-600/20">
+                        Substituído
+                      </span>
+                    </div>
+                  ) : (
                     <ConditionBadge
                       condition={
                         item.condition
                       }
                     />
-                  </td>
+                  )}
+                </td>
 
                   <td className="px-5 py-4 text-right">
                     <span className="inline-flex translate-x-2 items-center gap-1 whitespace-nowrap text-sm font-semibold text-zinc-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[#F57B00] group-hover:opacity-100 group-focus:translate-x-0 group-focus:text-[#F57B00] group-focus:opacity-100">
@@ -1785,6 +1893,11 @@ function EquipmentCards({
     <div className="grid gap-4 p-4 sm:p-5 md:grid-cols-2 2xl:grid-cols-3">
       {equipment.map(
         (item) => {
+          const isHistorical =
+            isHistoricalRmaReplacement(
+              item,
+            );
+
           const outOfStock =
             isOutOfStock(
               item,
@@ -1854,8 +1967,8 @@ function EquipmentCards({
                         "Sem fabricante ou modelo"}
                     </p>
 
-                    {item.damagedQuantity >
-                    0 ? (
+                    {!isHistorical &&
+                      item.damagedQuantity > 0 ? (
                       <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">
                         <AlertTriangle
                           size={
@@ -1872,6 +1985,17 @@ function EquipmentCards({
                           : "unidades danificadas"}
                       </span>
                     ) : null}
+
+                    {item.installedQuantity >
+0 ? (
+  <span className="mt-2 inline-flex items-center rounded-md bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700">
+    {item.installedQuantity}{" "}
+    {item.installedQuantity ===
+    1
+      ? "unidade instalada"
+      : "unidades instaladas"}
+  </span>
+) : null}
                   </div>
                 </div>
               </div>
@@ -1897,11 +2021,23 @@ function EquipmentCards({
                   </dt>
 
                   <dd className="mt-1">
-                    <ConditionBadge
-                      condition={
-                        item.condition
-                      }
-                    />
+                    {isHistorical ? (
+                      <div className="flex flex-col items-start gap-1.5">
+                        <span className="inline-flex whitespace-nowrap rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-600/20">
+                          Histórico de RMA
+                        </span>
+
+                        <span className="inline-flex whitespace-nowrap rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-600/20">
+                          Substituído
+                        </span>
+                      </div>
+                    ) : (
+                      <ConditionBadge
+                        condition={
+                          item.condition
+                        }
+                      />
+                    )}
                   </dd>
                 </div>
 
@@ -1921,6 +2057,9 @@ function EquipmentCards({
                       availableStock={
                         item.availableStock
                       }
+                      installedQuantity={
+                        item.installedQuantity
+                      }
                       shortage={
                         item.shortage
                       }
@@ -1930,6 +2069,9 @@ function EquipmentCards({
                       minimumStock={
                         item.minimumStock
                       }
+                      isHistorical={
+                      isHistorical
+                    }
                     />
                   </dd>
                 </div>
@@ -1961,7 +2103,8 @@ function EquipmentCards({
                 />
               </dl>
 
-              {outOfStock ? (
+              {!isHistorical &&
+              outOfStock ? (
                 <div className="mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
                   <AlertTriangle
                     size={
@@ -2002,8 +2145,8 @@ function EquipmentCards({
                 </div>
               ) : null}
 
-              {item.shortage >
-              0 ? (
+              {!isHistorical &&
+              item.shortage > 0 ? (
                 <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
                   <AlertTriangle
                     size={
@@ -2071,19 +2214,30 @@ function StockBadge({
   physicalStock,
   inUse,
   availableStock,
+  installedQuantity,
   shortage,
   damagedQuantity,
   minimumStock,
+  isHistorical = false,
 }: {
   physicalStock: number;
   inUse: number;
   availableStock: number;
+  installedQuantity: number;
   shortage: number;
   damagedQuantity: number;
   minimumStock: number;
+  isHistorical?: boolean;
 }) {
   const hasNoPhysicalStock =
     physicalStock === 0;
+
+  const fullyInstalled =
+    physicalStock > 0 &&
+    installedQuantity > 0 &&
+    availableStock === 0 &&
+    inUse === 0 &&
+    damagedQuantity === 0;
 
   const fullyCommitted =
     physicalStock > 0 &&
@@ -2104,10 +2258,19 @@ function StockBadge({
 
   let dotStyles =
     "bg-emerald-500";
+  
+  if (isHistorical) {
+  label =
+    "Histórico de RMA";
 
-  if (
-    hasNoPhysicalStock
-  ) {
+  styles =
+    "bg-purple-50 text-purple-700 ring-purple-600/20";
+
+  dotStyles =
+    "bg-purple-500";
+} else if (
+  hasNoPhysicalStock
+) {
     label =
       "Sem estoque";
 
@@ -2116,6 +2279,17 @@ function StockBadge({
 
     dotStyles =
       "bg-red-500";
+  } else if (
+    fullyInstalled
+  ) {
+    label =
+      "Instalado";
+
+    styles =
+      "bg-violet-50 text-violet-700 ring-violet-600/20";
+
+    dotStyles =
+      "bg-violet-500";
   } else if (
     fullyCommitted
   ) {
@@ -2156,16 +2330,6 @@ function StockBadge({
         </div>
 
         <div className="flex justify-between gap-4">
-          <span className="text-blue-600">
-            Em uso
-          </span>
-
-          <span className="font-semibold text-blue-700">
-            {inUse}
-          </span>
-        </div>
-
-        <div className="flex justify-between gap-4">
           <span className="text-emerald-600">
             Disponível
           </span>
@@ -2177,16 +2341,26 @@ function StockBadge({
           </span>
         </div>
 
-        {shortage >
+        <div className="flex justify-between gap-4">
+          <span className="text-blue-600">
+            Em uso
+          </span>
+
+          <span className="font-semibold text-blue-700">
+            {inUse}
+          </span>
+        </div>
+
+        {installedQuantity >
         0 ? (
           <div className="flex justify-between gap-4">
-            <span className="font-medium text-red-600">
-              Déficit
+            <span className="text-violet-600">
+              Instalado
             </span>
 
-            <span className="font-bold text-red-700">
+            <span className="font-semibold text-violet-700">
               {
-                shortage
+                installedQuantity
               }
             </span>
           </div>
@@ -2206,33 +2380,44 @@ function StockBadge({
             </span>
           </div>
         ) : null}
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        <span
-          className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles}`}
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${dotStyles}`}
-          />
-
-          {label}
-        </span>
 
         {shortage >
         0 ? (
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">
-            <AlertTriangle
-              size={
-                12
-              }
-            />
+          <div className="flex justify-between gap-4">
+            <span className="font-medium text-red-600">
+              Déficit
+            </span>
 
-            Déficit:{" "}
-            {shortage}
-          </span>
+            <span className="font-bold text-red-700">
+              {
+                shortage
+              }
+            </span>
+          </div>
         ) : null}
       </div>
+
+        {!isHistorical ? (
+          <div className="flex flex-wrap gap-1.5">
+            <span
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles}`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${dotStyles}`}
+              />
+
+              {label}
+            </span>
+
+            {shortage > 0 ? (
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">
+                <AlertTriangle size={12} />
+
+                Déficit: {shortage}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
     </div>
   );
 }

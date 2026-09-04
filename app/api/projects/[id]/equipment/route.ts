@@ -171,54 +171,133 @@ export async function GET(
       );
     }
 
-    const equipment =
-      await prisma.equipment.findMany(
-        {
-          include: {
-            images: {
-              orderBy: {
-                position:
-                  "asc",
-              },
-
-              take: 1,
-            },
-
-            projects: {
-              select: {
-                projectId:
-                  true,
-
-                quantity:
-                  true,
-
-                allocatedQuantity:
-                  true,
-
-                project: {
-                  select: {
-                    status:
-                      true,
-                  },
-                },
+const equipment =
+  await prisma.equipment.findMany(
+    {
+      /*
+       * Componentes que estão totalmente
+       * instalados em uma máquina não podem
+       * ser selecionados diretamente para
+       * projetos.
+       *
+       * IMPORTANTE:
+       *
+       * quantity = estoque operacional.
+       * installedQuantity = estoque instalado.
+       *
+       * Não filtramos simplesmente
+       * installedQuantity > 0 porque, no
+       * futuro, um Equipment agregado pode
+       * possuir unidades disponíveis e
+       * instaladas ao mesmo tempo.
+       */
+      where: {
+        NOT: {
+          AND: [
+            {
+              installedQuantity: {
+                gt: 0,
               },
             },
-          },
-
-          orderBy: [
             {
-              name: "asc",
-            },
-            {
-              createdAt:
-                "desc",
+              quantity: 0,
             },
           ],
         },
+      },
+
+      include: {
+        images: {
+          orderBy: {
+            position: "asc",
+          },
+
+          take: 1,
+        },
+
+        projects: {
+          select: {
+            projectId: true,
+            quantity: true,
+            allocatedQuantity: true,
+
+            project: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        },
+
+        machines: {
+  select: {
+    id: true,
+    status: true,
+  },
+
+  take: 1,
+},
+      },
+
+      orderBy: [
+        {
+          name: "asc",
+        },
+        {
+          createdAt: "desc",
+        },
+      ],
+    },
+  );
+
+  const selectableEquipment =
+  equipment.filter((item) => {
+    /*
+     * Componente totalmente instalado
+     * dentro de uma máquina.
+     */
+    const isInstalledComponent =
+      Math.max(
+        item.installedQuantity,
+        0,
+      ) > 0 &&
+      Math.max(
+        item.quantity,
+        0,
+      ) === 0;
+
+    if (isInstalledComponent) {
+      return false;
+    }
+
+    /*
+     * Equipment que representa uma máquina.
+     */
+    const isMachine =
+      item.machines.length > 0;
+
+    /*
+     * Máquina sem estoque operacional significa
+     * que ela não está em condição de ser
+     * adicionada a um projeto.
+     */
+    const isUnavailableMachine =
+      isMachine &&
+      (
+        item.quantity <= 0 ||
+        item.status ===
+          "UNAVAILABLE"
       );
 
+    if (isUnavailableMachine) {
+      return false;
+    }
+
+    return true;
+  });
+
     const data =
-      equipment.map(
+  selectableEquipment.map(
         (item) => {
           /*
            * Relação deste equipamento
@@ -372,6 +451,12 @@ export async function GET(
 
             quantity:
               operationalStock,
+            
+            installedQuantity:
+              Math.max(
+              item.installedQuantity,
+              0,
+            ),
 
             status:
               item.status,
@@ -552,30 +637,78 @@ export async function POST(
             );
           }
 
-          const equipment =
-            await transaction.equipment.findUnique(
-              {
-                where: {
-                  id:
-                    equipmentId,
-                },
+const equipment =
+  await transaction.equipment.findUnique({
+    where: {
+      id: equipmentId,
+    },
 
-                select: {
-                  id: true,
-                  name: true,
-                  quantity: true,
-                  status: true,
-                  condition: true,
-                },
-              },
-            );
+    select: {
+      id: true,
+      name: true,
+      quantity: true,
+      installedQuantity: true,
+      status: true,
+      condition: true,
 
-          if (!equipment) {
-            throw new Error(
-              "Equipamento não encontrado.",
-            );
-          }
+      machines: {
+        select: {
+          id: true,
+        },
+        take: 1,
+      },
+    },
+  });
 
+if (!equipment) {
+  throw new Error(
+    "Equipamento não encontrado.",
+  );
+}
+
+/*
+ * Um componente totalmente instalado
+ * pertence fisicamente à composição
+ * de uma máquina e não pode ser
+ * utilizado diretamente em projetos.
+ *
+ * Uma máquina cadastrada continua
+ * permitida porque possui:
+ *
+ * quantity = 1
+ * installedQuantity = 0
+ */
+const isInstalledEquipment =
+  Math.max(
+    equipment.installedQuantity,
+    0,
+  ) > 0 &&
+  Math.max(
+    equipment.quantity,
+    0,
+  ) === 0;
+
+if (isInstalledEquipment) {
+  throw new Error(
+    `"${equipment.name}" está instalado em uma máquina e não pode ser adicionado diretamente a um projeto.`,
+  );
+}
+const isMachine =
+  equipment.machines.length > 0;
+
+const isUnavailableMachine =
+  isMachine &&
+  (
+    equipment.quantity <= 0 ||
+    equipment.status ===
+      "UNAVAILABLE"
+  );
+
+if (isUnavailableMachine) {
+  throw new Error(
+    `"${equipment.name}" é uma máquina indisponível e não pode ser adicionada ao projeto.`,
+  );
+}
           /*
            * Estoque zerado ou status
            * UNAVAILABLE não impedem a
@@ -738,22 +871,17 @@ export async function POST(
 
                 include: {
                   equipment: {
-                    select: {
-                      id: true,
-                      name: true,
-                      category:
-                        true,
-                      manufacturer:
-                        true,
-                      model:
-                        true,
-                      quantity:
-                        true,
-                      status:
-                        true,
-                      condition:
-                        true,
-                    },
+  select: {
+    id: true,
+    name: true,
+    category: true,
+    manufacturer: true,
+    model: true,
+    quantity: true,
+    installedQuantity: true,
+    status: true,
+    condition: true,
+  },
                   },
                 },
               },

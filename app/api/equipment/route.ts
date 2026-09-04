@@ -238,9 +238,10 @@ export async function GET() {
     0,
   );
 
-        const {
+const {
   physicalStock,
   operationalStock,
+  installedQuantity,
   inUse,
   availableStock,
   shortage,
@@ -248,8 +249,8 @@ export async function GET() {
   item.quantity,
   requested,
   item.damagedQuantity,
+  item.installedQuantity,
 );
-
         const stockAlertLevel =
           getStockAlertLevel(
             availableStock,
@@ -275,20 +276,20 @@ export async function GET() {
           ).size;
 
         return {
-          id: item.id,
-          name: item.name,
-          category: item.category,
-          manufacturer:
-            item.manufacturer,
-          model: item.model,
-          serialNumber:
-            item.serialNumber,
+  id: item.id,
+  name: item.name,
+  category: item.category,
+  manufacturer: item.manufacturer,
+  model: item.model,
+  serialNumber: item.serialNumber,
 
-          quantity: operationalStock,
-          physicalStock,
+  quantity: operationalStock,
+  physicalStock,
 
-damagedQuantity:
-  item.damagedQuantity,
+  installedQuantity,
+
+  damagedQuantity:
+    item.damagedQuantity,
 
 hasDamagedUnits:
   item.damagedQuantity > 0,
@@ -310,6 +311,7 @@ minimumStock:
 
           status: item.status,
           condition: item.condition,
+          rmaStatus: item.rmaStatus,
           notes: item.notes,
 
           images: item.images,
@@ -370,6 +372,9 @@ minimumStock:
 
           accumulator.totalAvailable +=
             item.availableStock;
+          
+          accumulator.totalInstalled +=
+            item.installedQuantity;
 
           accumulator.totalShortage +=
             item.shortage;
@@ -404,6 +409,7 @@ minimumStock:
           totalPhysicalStock: 0,
           totalInUse: 0,
           totalAvailable: 0,
+          totalInstalled: 0,
           totalShortage: 0,
           totalDamaged: 0,
           equipmentWithDamage: 0,
@@ -561,6 +567,9 @@ const condition =
             )?.toUpperCase() ?? null,
 
           quantity,
+
+          installedQuantity: 0,
+
           damagedQuantity,
 
           /*
@@ -616,6 +625,8 @@ const condition =
           equipment.serialNumber,
         quantity:
           equipment.quantity,
+        installedQuantity:
+          equipment.installedQuantity,
         damagedQuantity:
           equipment.damagedQuantity,
         minimumStock:
@@ -655,7 +666,11 @@ const condition =
 
           physicalStock:
             equipment.quantity +
+            equipment.installedQuantity +
             equipment.damagedQuantity,
+
+          installedQuantity:
+            equipment.installedQuantity,
 
           damagedQuantity:
             equipment.damagedQuantity,

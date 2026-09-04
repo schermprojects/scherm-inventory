@@ -147,6 +147,7 @@ type EquipmentOption = {
   notes?: string | null;
 
   physicalStock?: number;
+  installedQuantity?: number;
   inUse?: number;
   availableStock?: number;
   shortage?: number;
@@ -443,6 +444,21 @@ function getPhysicalStock(
     : 0;
 }
 
+function isInstalledEquipment(
+  equipment: EquipmentOption,
+): boolean {
+  return (
+    Math.max(
+      equipment.installedQuantity ?? 0,
+      0,
+    ) > 0 &&
+    Math.max(
+      equipment.quantity ?? 0,
+      0,
+    ) === 0
+  );
+}
+
 function getProjectNeededUnits(
   project: ProjectItem,
 ): number {
@@ -735,154 +751,182 @@ const salespersonOptions =
       );
     }, [users]);
 
-  const equipmentById =
-    useMemo(() => {
-      return new Map(
-        equipmentOptions.map(
-          (equipment) => [
-            equipment.id,
-            equipment,
-          ],
-        ),
-      );
-    }, [equipmentOptions]);
-
-  const selectedEquipmentIds =
-    useMemo(() => {
-      return new Set(
-        form.equipment
-          .map(
-            (item) =>
-              item.equipmentId,
-          )
-          .filter(Boolean),
-      );
-    }, [form.equipment]);
-
-  const filteredEquipmentOptions =
-    useMemo(() => {
-      const normalizedSearch =
-        equipmentPickerSearch
-          .trim()
-          .toLocaleLowerCase(
-            "pt-BR",
-          );
-
-      if (!normalizedSearch) {
-        return equipmentOptions;
-      }
-
-      return equipmentOptions.filter(
-        (equipment) => {
-          const searchableText =
-            [
-              equipment.name,
-              equipment.category,
-              equipment.manufacturer,
-              equipment.model,
-              equipment.serialNumber,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLocaleLowerCase(
-                "pt-BR",
-              );
-
-          return searchableText.includes(
-            normalizedSearch,
-          );
-        },
-      );
-    }, [
-      equipmentOptions,
-      equipmentPickerSearch,
-    ]);
-
-  const formEquipmentSummary =
-    useMemo(() => {
-      let totalNeeded = 0;
-      let totalAvailable = 0;
-      let totalShortage = 0;
-      let itemsWithShortage = 0;
-
-      for (const item of form.equipment) {
-        if (!item.equipmentId) {
-          continue;
-        }
-
-        const equipment =
-          equipmentById.get(
-            item.equipmentId,
-          );
-
-        if (!equipment) {
-          continue;
-        }
-
-        const quantity =
-          Number(item.quantity);
-
-        const needed =
-          Number.isInteger(quantity) &&
-          quantity > 0
-            ? quantity
-            : 0;
-
-        const physicalStock =
-          getPhysicalStock(
-            equipment,
-          );
-
-        const availableStock =
-          Math.max(
-            equipment.availableStock ??
-              physicalStock,
-            0,
-          );
-
-        const shortage =
-          Math.max(
-            needed -
-              availableStock,
-            0,
-          );
-
-        totalNeeded += needed;
-
-        totalAvailable +=
-          availableStock;
-
-        totalShortage +=
-          shortage;
-
-        if (shortage > 0) {
-          itemsWithShortage += 1;
-        }
-      }
-
-      return {
-        totalNeeded,
-        totalAvailable,
-        totalShortage,
-        itemsWithShortage,
-      };
-    }, [
-      equipmentById,
-      form.equipment,
-    ]);
-
-  const activeProjects =
-    useMemo(
-      () =>
-        projects.filter(
-          (project) =>
-            project.status ===
-              "PLANNING" ||
-            project.status ===
-              "IN_PROGRESS",
-        ),
-      [projects],
+const equipmentById =
+  useMemo(() => {
+    return new Map(
+      equipmentOptions.map(
+        (equipment) => [
+          equipment.id,
+          equipment,
+        ],
+      ),
     );
+  }, [equipmentOptions]);
+
+const selectedEquipmentIds =
+  useMemo(() => {
+    return new Set(
+      form.equipment
+        .map(
+          (item) =>
+            item.equipmentId,
+        )
+        .filter(Boolean),
+    );
+  }, [form.equipment]);
+
+/*
+ * Equipamentos fisicamente instalados
+ * dentro de máquinas não podem ser
+ * selecionados diretamente em projetos.
+ */
+const selectableEquipmentOptions =
+  useMemo(() => {
+    return equipmentOptions.filter(
+      (equipment) =>
+        !isInstalledEquipment(
+          equipment,
+        ),
+    );
+  }, [equipmentOptions]);
+
+/*
+ * Aplica a mesma proteção no modal
+ * de busca/adicionar equipamento.
+ */
+const filteredEquipmentOptions =
+  useMemo(() => {
+    const normalizedSearch =
+      equipmentPickerSearch
+        .trim()
+        .toLocaleLowerCase(
+          "pt-BR",
+        );
+
+    return equipmentOptions.filter(
+      (equipment) => {
+        if (
+          isInstalledEquipment(
+            equipment,
+          )
+        ) {
+          return false;
+        }
+
+        if (!normalizedSearch) {
+          return true;
+        }
+
+        const searchableText =
+          [
+            equipment.name,
+            equipment.category,
+            equipment.manufacturer,
+            equipment.model,
+            equipment.serialNumber,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLocaleLowerCase(
+              "pt-BR",
+            );
+
+        return searchableText.includes(
+          normalizedSearch,
+        );
+      },
+    );
+  }, [
+    equipmentOptions,
+    equipmentPickerSearch,
+  ]);
+
+const formEquipmentSummary =
+  useMemo(() => {
+    let totalNeeded = 0;
+    let totalAvailable = 0;
+    let totalShortage = 0;
+    let itemsWithShortage = 0;
+
+    for (const item of form.equipment) {
+      if (!item.equipmentId) {
+        continue;
+      }
+
+      const equipment =
+        equipmentById.get(
+          item.equipmentId,
+        );
+
+      if (!equipment) {
+        continue;
+      }
+
+      const quantity =
+        Number(item.quantity);
+
+      const needed =
+        Number.isInteger(quantity) &&
+        quantity > 0
+          ? quantity
+          : 0;
+
+      /*
+       * Projetos trabalham exclusivamente
+       * com estoque operacional.
+       *
+       * installedQuantity nunca deve entrar
+       * neste cálculo.
+       */
+      const availableStock =
+        Math.max(
+          equipment.availableStock ??
+            equipment.quantity ??
+            0,
+          0,
+        );
+
+      const shortage =
+        Math.max(
+          needed -
+            availableStock,
+          0,
+        );
+
+      totalNeeded += needed;
+      totalAvailable +=
+        availableStock;
+      totalShortage +=
+        shortage;
+
+      if (shortage > 0) {
+        itemsWithShortage += 1;
+      }
+    }
+
+    return {
+      totalNeeded,
+      totalAvailable,
+      totalShortage,
+      itemsWithShortage,
+    };
+  }, [
+    equipmentById,
+    form.equipment,
+  ]);
+
+const activeProjects =
+  useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          project.status ===
+            "PLANNING" ||
+          project.status ===
+            "IN_PROGRESS",
+      ),
+    [projects],
+  );
 
   const completedProjects =
     useMemo(
@@ -1725,6 +1769,36 @@ const salespersonOptions =
         return null;
       }
 
+      const selectedEquipment =
+  equipmentById.get(
+    item.equipmentId,
+  );
+
+if (!selectedEquipment) {
+  setFeedback({
+    type: "error",
+    message: `O equipamento da linha ${
+      index + 1
+    } não foi encontrado.`,
+  });
+
+  return null;
+}
+
+if (
+  isInstalledEquipment(
+    selectedEquipment,
+  )
+) {
+  setFeedback({
+    type: "error",
+    message:
+      `"${selectedEquipment.name}" está instalado em uma máquina e não pode ser selecionado diretamente para um projeto.`,
+  });
+
+  return null;
+}
+
       const quantity =
         Number(item.quantity);
 
@@ -1918,6 +1992,9 @@ const salespersonOptions =
             data.data.physicalStock ??
             data.data.quantity ??
             0,
+
+          installedQuantity:
+            data.data.installedQuantity ?? 0,
 
           inUse:
             data.data.inUse ?? 0,
@@ -2198,7 +2275,7 @@ const salespersonOptions =
         </div>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard
           title="Projetos cadastrados"
           value={summary.total}
@@ -2308,6 +2385,7 @@ const salespersonOptions =
               <option value="PLANNING">
                 Planejamento
               </option>
+
 
               <option value="IN_PROGRESS">
                 Em andamento
@@ -2425,7 +2503,7 @@ const salespersonOptions =
                     </h2>
 
                     <p className="mt-1 text-xs text-zinc-500">
-                      Projetos em planejamento ou em andamento.
+                      Projetos em planejamento, em compras ou em andamento.
                     </p>
                   </div>
 
@@ -2797,7 +2875,7 @@ const salespersonOptions =
                     <option value="PLANNING">
                       Planejamento
                     </option>
-
+      
                     <option value="IN_PROGRESS">
                       Em andamento
                     </option>
@@ -3093,7 +3171,7 @@ const salespersonOptions =
                                   Selecione um equipamento
                                 </option>
 
-                                {equipmentOptions.map(
+                                {selectableEquipmentOptions.map(
                                   (
                                     option,
                                   ) => {
@@ -3484,11 +3562,12 @@ const salespersonOptions =
                       );
 
                     const availableStock =
-                      Math.max(
-                        equipment.availableStock ??
-                          physicalStock,
-                        0,
-                      );
+  Math.max(
+    equipment.availableStock ??
+      equipment.quantity ??
+      0,
+    0,
+  );
 
                     const requestedShortage =
                       Math.max(
@@ -4557,19 +4636,22 @@ function StatusBadge({
 }: {
   status: ProjectStatus;
 }) {
-  const colors: Record<
-    ProjectStatus,
-    string
-  > = {
-    PLANNING:
-      "border-orange-100 bg-orange-50 text-orange-700",
-    IN_PROGRESS:
-      "border-blue-100 bg-blue-50 text-blue-700",
-    COMPLETED:
-      "border-emerald-100 bg-emerald-50 text-emerald-700",
-    CANCELLED:
-      "border-zinc-200 bg-zinc-100 text-zinc-600",
-  };
+ const colors: Record<
+  ProjectStatus,
+  string
+> = {
+  PLANNING:
+    "border-orange-100 bg-orange-50 text-orange-700",
+
+  IN_PROGRESS:
+    "border-blue-100 bg-blue-50 text-blue-700",
+
+  COMPLETED:
+    "border-emerald-100 bg-emerald-50 text-emerald-700",
+
+  CANCELLED:
+    "border-zinc-200 bg-zinc-100 text-zinc-600",
+};
 
   return (
     <span
@@ -4625,25 +4707,33 @@ function SummaryCard({
   title: string;
   value: number;
   icon: ReactNode;
-  color:
-    | "zinc"
-    | "orange"
-    | "blue"
-    | "green"
-    | "red";
+color:
+  | "zinc"
+  | "orange"
+  | "amber"
+  | "blue"
+  | "green"
+  | "red";
 }) {
-  const colors = {
-    zinc:
-      "bg-zinc-100 text-zinc-700",
-    orange:
-      "bg-orange-50 text-[#F57B00]",
-    blue:
-      "bg-blue-50 text-blue-600",
-    green:
-      "bg-emerald-50 text-emerald-600",
-    red:
-      "bg-red-50 text-red-600",
-  };
+const colors = {
+  zinc:
+    "bg-zinc-100 text-zinc-700",
+
+  orange:
+    "bg-orange-50 text-[#F57B00]",
+
+  amber:
+    "bg-amber-50 text-amber-600",
+
+  blue:
+    "bg-blue-50 text-blue-600",
+
+  green:
+    "bg-emerald-50 text-emerald-600",
+
+  red:
+    "bg-red-50 text-red-600",
+};
 
   return (
     <article className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">

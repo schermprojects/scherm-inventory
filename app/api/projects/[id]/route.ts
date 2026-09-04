@@ -472,47 +472,110 @@ async function validateEquipmentIds(
   selectedEquipment:
     NormalizedProjectEquipment[],
 ): Promise<void> {
-  if (selectedEquipment.length === 0) {
+  if (
+    selectedEquipment.length === 0
+  ) {
     return;
   }
 
   const equipmentIds =
     selectedEquipment.map(
-      (item) => item.equipmentId,
+      (item) =>
+        item.equipmentId,
     );
 
   const equipment =
-    await transaction.equipment.findMany({
-      where: {
-        id: {
-          in: equipmentIds,
+    await transaction.equipment.findMany(
+      {
+        where: {
+          id: {
+            in: equipmentIds,
+          },
+        },
+
+        select: {
+          id: true,
+          name: true,
+          quantity: true,
+          installedQuantity:
+            true,
         },
       },
+    );
 
-      select: {
-        id: true,
-      },
-    });
-
-  const existingIds = new Set(
-    equipment.map((item) => item.id),
-  );
+  const existingIds =
+    new Set(
+      equipment.map(
+        (item) =>
+          item.id,
+      ),
+    );
 
   const missingIds =
     equipmentIds.filter(
       (equipmentId) =>
-        !existingIds.has(equipmentId),
+        !existingIds.has(
+          equipmentId,
+        ),
     );
 
-  if (missingIds.length === 1) {
+  if (
+    missingIds.length === 1
+  ) {
     throw new Error(
       "Um dos equipamentos selecionados não foi encontrado.",
     );
   }
 
-  if (missingIds.length > 1) {
+  if (
+    missingIds.length > 1
+  ) {
     throw new Error(
       "Alguns equipamentos selecionados não foram encontrados.",
+    );
+  }
+
+  /*
+   * Componentes instalados em máquinas
+   * existem fisicamente no inventário,
+   * mas não fazem parte do estoque
+   * operacional disponível para projetos.
+   *
+   * IMPORTANTE:
+   *
+   * quantity = 0
+   * installedQuantity = 0
+   *
+   * continua permitido, pois representa
+   * uma necessidade que pode gerar
+   * déficit para compra.
+   */
+  const installedEquipment =
+    equipment.filter(
+      (item) =>
+        Math.max(
+          item.installedQuantity,
+          0,
+        ) > 0 &&
+        Math.max(
+          item.quantity,
+          0,
+        ) === 0,
+    );
+
+  if (
+    installedEquipment.length === 1
+  ) {
+    throw new Error(
+      `"${installedEquipment[0].name}" está instalado em uma máquina e não pode ser adicionado diretamente a um projeto.`,
+    );
+  }
+
+  if (
+    installedEquipment.length > 1
+  ) {
+    throw new Error(
+      "Um ou mais equipamentos selecionados estão instalados em máquinas e não podem ser adicionados diretamente a um projeto.",
     );
   }
 }
@@ -603,18 +666,18 @@ async function serializeProject(
     );
 
   /*
-   * Ordem única para disputa de estoque:
-   *
-   * 1. Em andamento
-   * 2. Planejamento
-   * 3. Prioridade
-   * 4. Prazo mais próximo
-   * 5. Projeto mais antigo
-   * 6. ID como desempate final
-   *
-   * Isso garante que a mesma unidade
-   * nunca seja contada em dois projetos.
-   */
+ * Ordem única para disputa de estoque:
+ *
+ * 1. Em andamento
+ * 2. Planejamento
+ * 3. Prioridade
+ * 4. Prazo mais próximo
+ * 5. Projeto mais antigo
+ * 6. ID como desempate final
+ *
+ * Isso garante que a mesma unidade
+ * nunca seja contada em dois projetos.
+ */
   const sortedActiveProjectEquipment =
     [...activeProjectEquipment].sort(
       (left, right) => {

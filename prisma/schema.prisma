@@ -8,30 +8,48 @@ datasource db {
 }
 
 model Equipment {
-  id            String             @id @default(cuid())
-  name          String
-  category      String
-  manufacturer  String?
-  model         String?
-  serialNumber  String?
-  quantity      Int                @default(1)
-  damagedQuantity Int                @default(0)
-  minimumStock  Int                @default(0)
-  invoiceNumber String?
-  status        EquipmentStatus    @default(AVAILABLE)
-  condition     EquipmentCondition @default(NEW)
-  notes         String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id                 String             @id @default(cuid())
+  name               String
+  category           String
+  manufacturer       String?
+  model              String?
+  serialNumber       String?
+  quantity           Int                @default(1)
+  installedQuantity  Int                @default(0)
+  damagedQuantity    Int                @default(0)
+  minimumStock       Int                @default(0)
+  invoiceNumber      String?
+  status             EquipmentStatus    @default(AVAILABLE)
+  condition          EquipmentCondition @default(NEW)
+  // O RMA representa o processo administrativo da peça danificada.
+  // rmaNotes registra a abertura; rmaResolutionNotes registra a decisão/fechamento.
+  // Uma substituição cria outro Equipment físico e preserva o serial original.
+  rmaStatus          EquipmentRmaStatus @default(NONE)
+  rmaReference       String?
+  rmaNotes           String?
+  rmaResolutionNotes String?
+  rmaOpenedAt        DateTime?
+  rmaClosedAt        DateTime?
 
-  movements EquipmentMovement[]
-  images    EquipmentImage[]
-  projects  ProjectEquipment[]
+  rmaReplacementEquipmentId String?
+  rmaReplacementEquipment   Equipment?  @relation("RmaReplacement", fields: [rmaReplacementEquipmentId], references: [id])
+  replacedRmaEquipment      Equipment[] @relation("RmaReplacement")
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  movements         EquipmentMovement[]
+  images            EquipmentImage[]
+  projects          ProjectEquipment[]
+  machineComponents MachineComponent[]
+  machines          Machine[]           @relation("MachineEquipment")
 
   @@index([name])
   @@index([category])
   @@index([status])
   @@index([condition])
+  @@index([rmaStatus])
   @@index([damagedQuantity])
   @@map("equipment")
 }
@@ -63,11 +81,13 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdProjects     Project[]           @relation("ProjectCreatedBy")
-  responsibleProjects Project[]           @relation("ProjectResponsible")
-  salesProjects       Project[]           @relation("ProjectSalesperson")
-  equipmentMovements  EquipmentMovement[] @relation("EquipmentMovementCreatedBy")
+  createdProjects     Project[]                  @relation("ProjectCreatedBy")
+  responsibleProjects Project[]                  @relation("ProjectResponsible")
+  salesProjects       Project[]                  @relation("ProjectSalesperson")
+  equipmentMovements  EquipmentMovement[]        @relation("EquipmentMovementCreatedBy")
   auditLogs           AuditLog[]
+  createdMachines     Machine[]                  @relation("MachineCreatedBy")
+  componentMovements  MachineComponentMovement[] @relation("MachineComponentMovementCreatedBy")
 
   @@index([name])
   @@index([role])
@@ -170,7 +190,8 @@ model ProjectEquipment {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
   equipment Equipment @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
 
   @@unique([projectId, equipmentId])
@@ -206,6 +227,107 @@ model EquipmentMovement {
   @@index([projectId])
   @@index([createdById])
   @@index([createdAt])
+}
+
+model Machine {
+  id String @id @default(cuid())
+
+  name         String
+  category     String?
+  manufacturer String?
+  model        String?
+
+  assetTag      String? @unique
+  serialNumber  String  @unique
+  invoiceNumber String?
+
+  receivedAt DateTime?
+
+  status MachineStatus @default(AVAILABLE)
+
+  notes String?
+
+  equipmentId String? @unique
+
+  equipment Equipment? @relation("MachineEquipment", fields: [equipmentId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("MachineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  components MachineComponent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@index([manufacturer])
+  @@index([model])
+  @@index([status])
+  @@index([createdById])
+  @@map("machines")
+}
+
+model MachineComponent {
+  id String @id @default(cuid())
+
+  machineId String
+  machine   Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  equipmentId String?
+  equipment   Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+
+  name         String
+  category     String
+  manufacturer String?
+  model        String?
+
+  serialNumber String
+
+  quantity Int @default(1)
+
+  status MachineComponentStatus @default(INSTALLED)
+
+  installedAt DateTime  @default(now())
+  removedAt   DateTime?
+
+  notes String?
+
+  movements MachineComponentMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([machineId])
+  @@index([equipmentId])
+  @@index([serialNumber])
+  @@index([category])
+  @@index([status])
+  @@index([removedAt])
+  @@map("machine_components")
+}
+
+model MachineComponentMovement {
+  id String @id @default(cuid())
+
+  type MachineComponentMovementType
+
+  machineComponentId String
+  machineComponent   MachineComponent @relation(fields: [machineComponentId], references: [id], onDelete: Restrict)
+
+  reason MachineComponentMovementReason
+  notes  String?
+
+  createdById String?
+  createdBy   User?   @relation("MachineComponentMovementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([machineComponentId])
+  @@index([type])
+  @@index([reason])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("machine_component_movements")
 }
 
 model AuditLog {
@@ -248,7 +370,18 @@ enum EquipmentStatus {
 
 enum EquipmentCondition {
   NEW
+  REPAIRED
   DAMAGED
+}
+
+enum EquipmentRmaStatus {
+  NONE
+  PENDING
+  SENT
+  APPROVED
+  REJECTED
+  RETURNED
+  REPLACED
 }
 
 enum ProjectStatus {
@@ -273,6 +406,39 @@ enum EquipmentMovementType {
   DAMAGED_RETURN
 }
 
+enum MachineStatus {
+  HOMOLOGATION
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  UNAVAILABLE
+  RETIRED
+}
+
+enum MachineComponentStatus {
+  INSTALLED
+  REMOVED
+  DAMAGED
+  MAINTENANCE
+  DISCARDED
+}
+
+enum MachineComponentMovementType {
+  INSTALL
+  REMOVE
+}
+
+enum MachineComponentMovementReason {
+  INITIAL_ASSEMBLY
+  UPGRADE
+  HARDWARE_FAILURE
+  MAINTENANCE
+  PREVENTIVE_REPLACEMENT
+  REALLOCATION
+  RETURN
+  OTHER
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -290,6 +456,8 @@ enum AuditEntity {
   CLIENT
   PROJECT
   EQUIPMENT
+  MACHINE
+  MACHINE_COMPONENT
   PURCHASE
   MOVEMENT
 }

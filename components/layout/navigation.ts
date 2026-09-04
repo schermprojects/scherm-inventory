@@ -4,6 +4,7 @@ import {
   Building2,
   FolderKanban,
   LayoutDashboard,
+  Server,
   ShoppingCart,
   UserRound,
   Users,
@@ -40,6 +41,15 @@ export const navigationItems: readonly NavigationItem[] = [
       "BACKOFFICE",
       "COMMERCIAL",
       "VIEWER",
+    ],
+  },
+  {
+    label: "Máquinas",
+    href: "/machines",
+    icon: Server,
+    roles: [
+      "ADMIN",
+      "BACKOFFICE",
     ],
   },
   {

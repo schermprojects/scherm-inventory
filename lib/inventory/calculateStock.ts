@@ -1,6 +1,7 @@
 export type StockCalculation = {
   physicalStock: number;
   operationalStock: number;
+  installedQuantity: number;
   requested: number;
   inUse: number;
   availableStock: number;
@@ -12,6 +13,7 @@ export function calculateStock(
   operationalStock: number,
   requested: number,
   damagedQuantity = 0,
+  installedQuantity = 0,
 ): StockCalculation {
   const normalizedOperationalStock =
     Math.max(
@@ -37,21 +39,37 @@ export function calculateStock(
       0,
     );
 
+  const normalizedInstalled =
+    Math.max(
+      Math.trunc(
+        Number(installedQuantity) || 0,
+      ),
+      0,
+    );
+
   /*
    * quantity contém somente unidades
    * operacionais.
    *
+   * installedQuantity contém unidades
+   * fisicamente existentes, porém
+   * instaladas dentro de máquinas.
+   *
    * damagedQuantity contém unidades
    * fisicamente existentes, porém
-   * indisponíveis para utilização.
+   * indisponíveis por dano.
    */
   const physicalStock =
     normalizedOperationalStock +
+    normalizedInstalled +
     normalizedDamaged;
 
   /*
    * Quantidade operacional comprometida
    * com projetos ativos.
+   *
+   * Componentes instalados não entram
+   * neste cálculo.
    */
   const inUse = Math.min(
     normalizedOperationalStock,
@@ -61,6 +79,9 @@ export function calculateStock(
   /*
    * Apenas estoque operacional pode
    * atender projetos.
+   *
+   * installedQuantity nunca aumenta
+   * a disponibilidade.
    */
   const availableStock = Math.max(
     normalizedOperationalStock -
@@ -68,6 +89,10 @@ export function calculateStock(
     0,
   );
 
+  /*
+   * Déficit calculado somente contra
+   * estoque operacional.
+   */
   const shortage = Math.max(
     normalizedRequested -
       normalizedOperationalStock,
@@ -76,13 +101,23 @@ export function calculateStock(
 
   return {
     physicalStock,
+
     operationalStock:
       normalizedOperationalStock,
-    requested: normalizedRequested,
+
+    installedQuantity:
+      normalizedInstalled,
+
+    requested:
+      normalizedRequested,
+
     inUse,
+
     availableStock,
+
     damagedQuantity:
       normalizedDamaged,
+
     shortage,
   };
 }

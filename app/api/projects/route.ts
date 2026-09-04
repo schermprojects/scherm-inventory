@@ -637,17 +637,17 @@ async function buildStockAllocation(
       ),
     );
 
-  /*
-   * Ordem determinística de
-   * atendimento:
-   *
-   * 1. Em andamento;
-   * 2. Planejamento;
-   * 3. Prioridade;
-   * 4. Prazo mais próximo;
-   * 5. Projeto mais antigo;
-   * 6. ID como desempate.
-   */
+/*
+ * Ordem determinística de
+ * atendimento:
+ *
+ * 1. Em andamento;
+ * 2. Planejamento;
+ * 3. Prioridade;
+ * 4. Prazo mais próximo;
+ * 5. Projeto mais antigo;
+ * 6. ID como desempate.
+ */
   const orderedDemand =
     [
       ...activeProjectEquipment,
@@ -1342,23 +1342,23 @@ export async function GET(
           ),
       );
 
-    const summary = {
-      total: 0,
+const summary = {
+  total: 0,
 
-      planning: 0,
+  planning: 0,
 
-      inProgress: 0,
+  inProgress: 0,
 
-      completed: 0,
+  completed: 0,
 
-      cancelled: 0,
+  cancelled: 0,
 
-      totalNeededUnits: 0,
+  totalNeededUnits: 0,
 
-      totalShortageUnits: 0,
+  totalShortageUnits: 0,
 
-      projectsWithShortage: 0,
-    };
+  projectsWithShortage: 0,
+};
 
     for (
       const item of
@@ -1645,63 +1645,113 @@ export async function POST(
           }
 
           if (
-            selectedEquipment.length >
-            0
-          ) {
-            const equipmentIds =
-              selectedEquipment.map(
-                (item) =>
-                  item.equipmentId,
-              );
+  selectedEquipment.length >
+  0
+) {
+  const equipmentIds =
+    selectedEquipment.map(
+      (item) =>
+        item.equipmentId,
+    );
 
-            const existingEquipment =
-              await transaction.equipment.findMany(
-                {
-                  where: {
-                    id: {
-                      in:
-                        equipmentIds,
-                    },
-                  },
+  const existingEquipment =
+    await transaction.equipment.findMany(
+      {
+        where: {
+          id: {
+            in:
+              equipmentIds,
+          },
+        },
 
-                  select: {
-                    id:
-                      true,
-                  },
-                },
-              );
+        select: {
+          id: true,
+          name: true,
+          quantity: true,
+          installedQuantity:
+            true,
+        },
+      },
+    );
 
-            const existingEquipmentIds =
-              new Set(
-                existingEquipment.map(
-                  (item) =>
-                    item.id,
-                ),
-              );
+  const existingEquipmentIds =
+    new Set(
+      existingEquipment.map(
+        (item) =>
+          item.id,
+      ),
+    );
 
-            const missingEquipmentIds =
-              equipmentIds.filter(
-                (
-                  equipmentId,
-                ) =>
-                  !existingEquipmentIds.has(
-                    equipmentId,
-                  ),
-              );
+  const missingEquipmentIds =
+    equipmentIds.filter(
+      (
+        equipmentId,
+      ) =>
+        !existingEquipmentIds.has(
+          equipmentId,
+        ),
+    );
 
-            if (
-              missingEquipmentIds.length >
-              0
-            ) {
-              throw new Error(
-                missingEquipmentIds.length ===
-                  1
-                  ? "Um dos equipamentos selecionados não foi encontrado."
-                  : "Alguns equipamentos selecionados não foram encontrados.",
-              );
-            }
-          }
+  if (
+    missingEquipmentIds.length >
+    0
+  ) {
+    throw new Error(
+      missingEquipmentIds.length ===
+        1
+        ? "Um dos equipamentos selecionados não foi encontrado."
+        : "Alguns equipamentos selecionados não foram encontrados.",
+    );
+  }
 
+  /*
+   * Um componente instalado em uma
+   * máquina existe fisicamente no
+   * inventário, mas não está disponível
+   * para ser utilizado diretamente
+   * em um projeto.
+   *
+   * quantity = 0 e
+   * installedQuantity > 0
+   * identifica esse cenário.
+   *
+   * quantity = 0 e
+   * installedQuantity = 0
+   * continua permitido, pois pode
+   * representar uma necessidade
+   * de compra do projeto.
+   */
+  const installedEquipment =
+    existingEquipment.filter(
+      (equipment) =>
+        Math.max(
+          equipment.installedQuantity,
+          0,
+        ) > 0 &&
+        Math.max(
+          equipment.quantity,
+          0,
+        ) === 0,
+    );
+
+  if (
+    installedEquipment.length >
+    0
+  ) {
+    if (
+      installedEquipment.length ===
+      1
+    ) {
+      throw new Error(
+        `"${installedEquipment[0].name}" está instalado em uma máquina e não pode ser adicionado diretamente a um projeto.`,
+      );
+    }
+
+    throw new Error(
+      "Um ou mais equipamentos selecionados estão instalados em máquinas e não podem ser adicionados diretamente a um projeto.",
+    );
+  }
+}
           return transaction.project.create(
             {
               data: {
