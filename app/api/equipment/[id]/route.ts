@@ -4,6 +4,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentCondition,
+  EquipmentRmaStatus,
   EquipmentStatus,
 } from "@/generated/prisma/enums";
 import { del } from "@vercel/blob";
@@ -446,6 +447,7 @@ export async function PATCH(
           category: true,
           status: true,
           condition: true,
+          rmaStatus: true,
           invoiceNumber: true,
           notes: true,
           createdAt: true,
@@ -462,6 +464,28 @@ export async function PATCH(
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    /*
+    * Uma peça substituída por RMA não está mais fisicamente
+    * no estoque. O Equipment original permanece somente como
+    * registro histórico e não pode sofrer novas alterações
+    * ou movimentações operacionais.
+    */
+    if (
+      existingEquipment.rmaStatus ===
+      EquipmentRmaStatus.REPLACED
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento foi substituído por RMA e está preservado somente para histórico.",
+        },
+        {
+          status: 409,
         },
       );
     }
@@ -698,6 +722,7 @@ export async function DELETE(
           category: true,
           status: true,
           condition: true,
+          rmaStatus: true,
           invoiceNumber: true,
           notes: true,
           createdAt: true,
@@ -720,6 +745,27 @@ export async function DELETE(
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    /*
+    * Equipamentos substituídos por RMA são registros
+    * históricos permanentes. A exclusão apagaria a ligação
+    * entre a peça defeituosa e a unidade que a substituiu.
+    */
+    if (
+      existingEquipment.rmaStatus ===
+      EquipmentRmaStatus.REPLACED
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento foi substituído por RMA e não pode ser excluído porque faz parte do histórico.",
+        },
+        {
+          status: 409,
         },
       );
     }

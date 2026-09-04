@@ -269,6 +269,27 @@ export async function POST(
     }
 
     /*
+ * Um equipamento substituído por RMA é preservado
+ * somente como registro histórico. O processo original
+ * é terminal e não pode receber um novo RMA.
+ */
+if (
+  equipment.rmaStatus ===
+  EquipmentRmaStatus.REPLACED
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      message:
+        "Este equipamento foi substituído por RMA e está preservado somente para histórico.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+    /*
      * damagedQuantity representa a quantidade física
      * atualmente existente no estoque danificado.
      *
@@ -605,6 +626,27 @@ export async function PATCH(
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    /*
+    * Um equipamento substituído por RMA é preservado
+    * somente como registro histórico. O processo original
+    * é terminal e não pode receber um novo RMA.
+    */
+    if (
+      equipment.rmaStatus ===
+      EquipmentRmaStatus.REPLACED
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Este equipamento foi substituído por RMA e está preservado somente para histórico.",
+        },
+        {
+          status: 409,
         },
       );
     }

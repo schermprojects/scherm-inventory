@@ -7,6 +7,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentMovementType,
+  EquipmentRmaStatus,
   ProjectStatus,
 } from "@/generated/prisma/enums";
 import { logAudit } from "@/lib/audit";
@@ -253,6 +254,7 @@ if (
                   name: true,
                   quantity: true,
                   status: true,
+                  rmaStatus: true,
                   invoiceNumber: true,
                   notes: true,
                 },
@@ -262,6 +264,20 @@ if (
           if (!existingEquipment) {
             throw new Error(
               "EQUIPMENT_NOT_FOUND",
+            );
+          }
+
+          /*
+          * Equipamentos substituídos por RMA não representam mais
+          * unidades físicas presentes no estoque. O registro original
+          * é histórico e não pode receber novas movimentações.
+          */
+          if (
+            existingEquipment.rmaStatus ===
+            EquipmentRmaStatus.REPLACED
+          ) {
+            throw new Error(
+              "HISTORICAL_RMA_EQUIPMENT",
             );
           }
 
@@ -783,6 +799,23 @@ if (
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "HISTORICAL_RMA_EQUIPMENT"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento foi substituído por RMA e está preservado somente para histórico. Novas movimentações de estoque não são permitidas.",
+        },
+        {
+          status: 409,
         },
       );
     }

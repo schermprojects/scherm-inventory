@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import {
   AuditAction,
   AuditEntity,
+  EquipmentRmaStatus,
 } from "@/generated/prisma/enums";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
@@ -154,6 +155,41 @@ export async function DELETE(
         ),
       ),
     ];
+
+    /*
+    * Uma máquina não pode excluir equipamentos preservados
+    * como histórico de RMA. Mesmo que não existam projetos
+    * ou movimentações, o registro REPLACED deve permanecer
+    * para manter a rastreabilidade da substituição.
+    */
+    if (equipmentIds.length > 0) {
+      const historicalRmaEquipmentCount =
+        await prisma.equipment.count({
+          where: {
+            id: {
+              in: equipmentIds,
+            },
+
+            rmaStatus:
+              EquipmentRmaStatus.REPLACED,
+          },
+        });
+
+      if (
+        historicalRmaEquipmentCount > 0
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "Esta máquina possui equipamento preservado como histórico de RMA e não pode ser excluída.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+    }
 
     /*
      * Uma máquina que já foi utilizada ou
@@ -694,6 +730,42 @@ export async function PATCH(
           status: 404,
         },
       );
+    }
+
+    /*
+    * O Equipment principal pode permanecer vinculado à máquina
+    * apenas para preservar o histórico. Se ele foi substituído
+    * por RMA, os dados cadastrais históricos não podem mais ser
+    * sincronizados por uma edição da máquina.
+    */
+    if (currentMachine.equipmentId) {
+      const machineEquipment =
+        await prisma.equipment.findUnique({
+          where: {
+            id:
+              currentMachine.equipmentId,
+          },
+
+          select: {
+            rmaStatus: true,
+          },
+        });
+
+      if (
+        machineEquipment?.rmaStatus ===
+        EquipmentRmaStatus.REPLACED
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "O equipamento principal desta máquina foi substituído por RMA e está preservado somente para histórico.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
     }
 
     const name =

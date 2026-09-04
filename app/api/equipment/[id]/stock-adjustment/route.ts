@@ -4,6 +4,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentMovementType,
+  EquipmentRmaStatus,
   EquipmentStatus,
 } from "@/generated/prisma/enums";
 import { logAudit } from "@/lib/audit";
@@ -162,6 +163,7 @@ if (
                   quantity: true,
                   damagedQuantity: true,
                   status: true,
+                  rmaStatus: true,
                 },
               },
             );
@@ -169,6 +171,20 @@ if (
           if (!equipment) {
             throw new Error(
               "EQUIPMENT_NOT_FOUND",
+            );
+          }
+
+          /*
+          * Um equipamento substituído por RMA é mantido somente
+          * para rastreabilidade histórica e não pode receber
+          * ajustes manuais de estoque operacional.
+          */
+          if (
+            equipment.rmaStatus ===
+            EquipmentRmaStatus.REPLACED
+          ) {
+            throw new Error(
+              "HISTORICAL_RMA_EQUIPMENT",
             );
           }
 
@@ -450,6 +466,23 @@ if (
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "HISTORICAL_RMA_EQUIPMENT"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este equipamento foi substituído por RMA e está preservado somente para histórico. Ajustes de estoque não são permitidos.",
+        },
+        {
+          status: 409,
         },
       );
     }

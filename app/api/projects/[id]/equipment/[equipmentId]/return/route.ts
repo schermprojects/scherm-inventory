@@ -4,6 +4,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentMovementType,
+  EquipmentRmaStatus,
   ProjectStatus,
   UserRole,
 } from "@/generated/prisma/enums";
@@ -34,12 +35,17 @@ type ReturnEquipmentBody = {
   condition?: unknown;
 };
 
+/*
+ * Registrar uma devolução movimenta fisicamente o estoque
+ * e altera o vínculo do equipamento com o projeto.
+ * Por isso, a operação é restrita à gestão operacional.
+ */
 function canManageEquipment(
   role: UserRole | undefined,
 ): boolean {
   return (
     role === UserRole.ADMIN ||
-    role === UserRole.COMMERCIAL
+    role === UserRole.BACKOFFICE
   );
 }
 
@@ -186,8 +192,8 @@ export async function POST(
                       id: true,
                       name: true,
                       quantity: true,
-                      damagedQuantity:
-                        true,
+                      damagedQuantity: true,
+                      rmaStatus: true,
                     },
                   },
                 },
@@ -197,6 +203,22 @@ export async function POST(
           if (!projectEquipment) {
             throw new Error(
               "PROJECT_EQUIPMENT_NOT_FOUND",
+            );
+          }
+
+          /*
+          * Um equipamento substituído por RMA permanece somente
+          * como registro histórico. Mesmo que exista um vínculo
+          * antigo com o projeto, ele não pode retornar ao estoque
+          * operacional nem ao estoque danificado.
+          */
+          if (
+            projectEquipment.equipment
+              .rmaStatus ===
+            EquipmentRmaStatus.REPLACED
+          ) {
+            throw new Error(
+              "HISTORICAL_RMA_EQUIPMENT",
             );
           }
 
@@ -591,6 +613,23 @@ if (remainingProjectQuantity === 0) {
         },
       );
     }
+
+    if (
+  error instanceof Error &&
+  error.message ===
+    "HISTORICAL_RMA_EQUIPMENT"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Este equipamento foi substituído por RMA e está preservado somente para histórico. Devoluções não são permitidas.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
 
     if (
       error instanceof Error &&

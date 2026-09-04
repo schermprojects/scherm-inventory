@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import {
   EquipmentCondition,
+  EquipmentRmaStatus,
   EquipmentStatus,
   MachineComponentMovementReason,
   MachineComponentMovementType,
@@ -317,6 +318,37 @@ export async function POST(
       await prisma.$transaction(
         async (transaction) => {
           /*
+          * Um componente substituído por RMA permanece vinculado
+          * ao sistema apenas como registro histórico. Mesmo que
+          * ainda exista uma inconsistência antiga em installedQuantity,
+          * nenhuma remoção ou movimentação física pode alterá-lo.
+          */
+          const equipmentRmaState =
+            await transaction.equipment.findUnique({
+              where: {
+                id: equipmentId,
+              },
+
+              select: {
+                rmaStatus: true,
+              },
+            });
+
+          if (!equipmentRmaState) {
+            throw new Error(
+              "EQUIPMENT_NOT_FOUND",
+            );
+          }
+
+          if (
+              equipmentRmaState.rmaStatus ===
+              EquipmentRmaStatus.REPLACED
+          ) {
+            throw new Error(
+              "HISTORICAL_RMA_EQUIPMENT",
+            );
+          }
+          /*
            * Primeiro retiramos a unidade do bucket
            * "installedQuantity".
            *
@@ -545,6 +577,41 @@ export async function POST(
       "Erro ao remover componente da máquina:",
       error,
     );
+
+     if (
+              error instanceof Error &&
+              error.message ===
+                "EQUIPMENT_NOT_FOUND"
+            ) {
+              return NextResponse.json(
+                {
+                  success: false,
+                  message:
+                    "O equipamento vinculado a este componente não foi encontrado.",
+                },
+                {
+                  status: 404,
+                },
+              );
+            }
+
+          if (
+            error instanceof Error &&
+            error.message ===
+              "HISTORICAL_RMA_EQUIPMENT"
+          ) {
+            return NextResponse.json(
+              {
+                success: false,
+                message:
+                  "Este componente foi substituído por RMA e está preservado somente para histórico. Novas movimentações não são permitidas.",
+              },
+              {
+                status: 409,
+              },
+            );
+          }
+
 
     /*
      * Esta situação normalmente indica:

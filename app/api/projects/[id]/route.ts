@@ -4,6 +4,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentMovementType,
+  EquipmentRmaStatus,
   ProjectPriority,
   ProjectStatus,
   UserRole,
@@ -497,8 +498,8 @@ async function validateEquipmentIds(
           id: true,
           name: true,
           quantity: true,
-          installedQuantity:
-            true,
+          installedQuantity: true,
+          rmaStatus: true,
         },
       },
     );
@@ -532,6 +533,30 @@ async function validateEquipmentIds(
   ) {
     throw new Error(
       "Alguns equipamentos selecionados não foram encontrados.",
+    );
+  }
+
+  /*
+  * Equipamentos substituídos por RMA permanecem no sistema
+  * apenas como histórico e não podem ser vinculados novamente
+  * a projetos ou participar de novas operações.
+  */
+  const historicalRmaEquipment =
+    equipment.filter(
+      (item) =>
+        item.rmaStatus ===
+        EquipmentRmaStatus.REPLACED,
+    );
+
+  if (historicalRmaEquipment.length === 1) {
+    throw new Error(
+      `"${historicalRmaEquipment[0].name}" foi substituído por RMA e está preservado somente para histórico.`,
+    );
+  }
+
+  if (historicalRmaEquipment.length > 1) {
+    throw new Error(
+      "Um ou mais equipamentos selecionados foram substituídos por RMA e estão preservados somente para histórico.",
     );
   }
 
@@ -1722,6 +1747,7 @@ if (isCompletingProject) {
                       id: true,
                       name: true,
                       quantity: true,
+                      rmaStatus: true,
                     },
                   },
                 },
@@ -1741,6 +1767,19 @@ if (isCompletingProject) {
             const item of
             finalProjectEquipment
           ) {
+            /*
+            * A conclusão não pode movimentar um Equipment histórico,
+            * inclusive quando o vínculo com o projeto foi criado antes
+            * da substituição por RMA.
+            */
+            if (
+              item.equipment.rmaStatus ===
+              EquipmentRmaStatus.REPLACED
+            ) {
+              throw new Error(
+                "HISTORICAL_RMA_EQUIPMENT",
+              );
+            }
             const quantityToDeduct =
               Math.max(
                 item.quantity -
@@ -1984,6 +2023,23 @@ if (isCompletingProject) {
       "Erro ao atualizar projeto:",
       error,
     );
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "HISTORICAL_RMA_EQUIPMENT"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "O projeto possui um equipamento substituído por RMA e preservado somente para histórico. A conclusão não pode movimentar esse equipamento.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
 
     if (
       error instanceof Error &&
