@@ -6,6 +6,7 @@ import {
   MachineComponentMovementReason,
   MachineComponentMovementType,
   MachineComponentStatus,
+  MachineStatus,
 } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
@@ -224,6 +225,7 @@ export async function POST(
             machine: {
               select: {
                 equipmentId: true,
+                status: true,
               },
             },
           },
@@ -239,6 +241,28 @@ export async function POST(
         },
         {
           status: 404,
+        },
+      );
+    }
+
+    /*
+    * Uma máquina em IN_USE saiu fisicamente pelo projeto.
+    * Enquanto a unidade principal não retornar ao estoque,
+    * sua composição atual permanece bloqueada e não pode
+    * sofrer remoções operacionais pela gestão de Máquinas.
+    */
+    if (
+      component.machine.status ===
+      MachineStatus.IN_USE
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Esta máquina está em uso em um projeto. Seus componentes permanecem bloqueados até o retorno físico da máquina ou até uma devolução parcial registrada pelo fluxo do projeto.",
+        },
+        {
+          status: 409,
         },
       );
     }

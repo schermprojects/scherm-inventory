@@ -5,6 +5,7 @@ import {
   AuditEntity,
   EquipmentMovementType,
   EquipmentRmaStatus,
+  MachineStatus,
   ProjectStatus,
   UserRole,
 } from "@/generated/prisma/enums";
@@ -276,6 +277,25 @@ export async function POST(
             );
           }
 
+          /*
+          * Um Equipment pode representar a unidade principal de uma
+          * Machine. Precisamos identificar esse vínculo para sincronizar
+          * o estado operacional da máquina durante o retorno físico.
+          *
+          * Os componentes não são movimentados neste fluxo.
+          */
+          const machine =
+            await transaction.machine.findFirst({
+              where: {
+                equipmentId,
+              },
+
+              select: {
+                id: true,
+                status: true,
+              },
+            });
+
           const previousAvailableQuantity =
             projectEquipment.equipment
               .quantity;
@@ -296,28 +316,49 @@ export async function POST(
            * A unidade volta para o estoque
            * disponível.
            */
-          if (
-            condition === "NORMAL"
-          ) {
-            currentAvailableQuantity =
-              previousAvailableQuantity +
-              quantity;
+            if (
+              condition === "NORMAL"
+            ) {
+              currentAvailableQuantity =
+                previousAvailableQuantity +
+                quantity;
 
-            await transaction.equipment.update(
-              {
-                where: {
-                  id: equipmentId,
-                },
+              await transaction.equipment.update(
+                {
+                  where: {
+                    id: equipmentId,
+                  },
 
-                data: {
-                  quantity: {
-                    increment:
-                      quantity,
+                  data: {
+                    quantity: {
+                      increment:
+                        quantity,
+                    },
                   },
                 },
-              },
-            );
-          }
+              );
+
+              /*
+              * O retorno da máquina completa movimenta somente o
+              * Equipment principal. Os componentes continuam fisicamente
+              * instalados na máquina e não retornam ao estoque disponível.
+              *
+              * Somente o retorno físico NORMAL libera novamente a Machine;
+              * a simples reabertura do projeto não altera esse estado.
+              */
+              if (machine) {
+                await transaction.machine.update({
+                  where: {
+                    id: machine.id,
+                  },
+
+                  data: {
+                    status:
+                      MachineStatus.AVAILABLE,
+                  },
+                });
+              }
+            }
 
           /*
            * DEVOLUÇÃO DANIFICADA

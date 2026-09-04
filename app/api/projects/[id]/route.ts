@@ -5,6 +5,7 @@ import {
   AuditEntity,
   EquipmentMovementType,
   EquipmentRmaStatus,
+  MachineStatus,
   ProjectPriority,
   ProjectStatus,
   UserRole,
@@ -1748,6 +1749,11 @@ if (isCompletingProject) {
                       name: true,
                       quantity: true,
                       rmaStatus: true,
+                      machines: {
+                        select: {
+                          id: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -1863,6 +1869,31 @@ if (isCompletingProject) {
                 previousQuantity,
                 quantityToDeduct,
               );
+            }
+
+            /*
+            * Quando o Equipment representa uma máquina completa,
+            * a baixa pelo projeto também altera o estado operacional
+            * da Machine. Os componentes permanecem instalados e não
+            * recebem qualquer movimentação individual neste momento.
+            */
+            const machineIds =
+              item.equipment.machines.map(
+                (machine) => machine.id,
+              );
+
+            if (machineIds.length > 0) {
+              await transaction.machine.updateMany({
+                where: {
+                  id: {
+                    in: machineIds,
+                  },
+                },
+
+                data: {
+                  status: MachineStatus.IN_USE,
+                },
+              });
             }
 
             await transaction.projectEquipment.update(

@@ -83,6 +83,7 @@ type HistoryItem = {
 
 type MachineDetails = {
   id: string;
+  status: string;
 
   name: string;
   category: string | null;
@@ -275,6 +276,18 @@ export function MachineDetailsView({
       null,
     );
 
+  /*
+  * IN_USE representa uma máquina que saiu fisicamente pelo
+  * projeto. Reabrir o projeto não libera estas ações; somente
+  * o retorno completo da unidade torna a máquina editável novamente.
+  */
+  const isMachineInUse =
+    machine?.status === "IN_USE";
+
+  const canModifyMachine =
+    canManage &&
+    !isMachineInUse;
+
   const [
   machineCategories,
   setMachineCategories,
@@ -451,7 +464,7 @@ const removalHistory =
 
 function openEditModal() {
   if (
-    !canManage ||
+    !canModifyMachine ||
     !machine
   ) {
     return;
@@ -630,12 +643,12 @@ async function handleEditMachine(
 }
 
 function openDeleteModal() {
-  if (
-    !canManage ||
-    !machine
-  ) {
-    return;
-  }
+    if (
+      !canModifyMachine ||
+      !machine
+    ) {
+      return;
+    }
 
   setDeleteError("");
   setDeleteOpen(true);
@@ -706,7 +719,7 @@ async function handleDeleteMachine() {
   function openRemovalModal(
     component: MachineComponent,
   ) {
-    if (!canManage) {
+    if (!canModifyMachine) {
       return;
     }
 
@@ -925,6 +938,27 @@ async function handleDeleteMachine() {
           </div>
         ) : null}
 
+        {isMachineInUse ? (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+            <AlertTriangle
+              size={18}
+              className="mt-0.5 shrink-0"
+            />
+
+            <div>
+              <p className="text-sm font-bold">
+                Máquina entregue
+              </p>
+
+              <p className="mt-1 text-xs leading-5">
+                Esta máquina saiu fisicamente pelo projeto e permanece
+                bloqueada para edição, exclusão e remoção de componentes
+                até que seu retorno completo ao estoque seja registrado.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
 <div className="flex items-center justify-between gap-4 border-b border-zinc-200 px-5 py-4">
   <div>
@@ -939,10 +973,16 @@ async function handleDeleteMachine() {
 
   {canManage ? (
     <div className="flex shrink-0 items-center gap-2">
-      <button
+     <button
         type="button"
         onClick={openEditModal}
-        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
+        disabled={isMachineInUse}
+        title={
+          isMachineInUse
+            ? "Disponível novamente após o retorno completo da máquina."
+            : "Editar dados da máquina"
+        }
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00] disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:hover:border-zinc-200 disabled:hover:bg-zinc-100 disabled:hover:text-zinc-400"
       >
         <Pencil size={15} />
 
@@ -954,7 +994,13 @@ async function handleDeleteMachine() {
       <button
         type="button"
         onClick={openDeleteModal}
-        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+        disabled={isMachineInUse}
+        title={
+          isMachineInUse
+            ? "Disponível novamente após o retorno completo da máquina."
+            : "Excluir máquina"
+        }
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:hover:bg-zinc-100"
       >
         <Trash2 size={15} />
 
@@ -1140,7 +1186,13 @@ async function handleDeleteMachine() {
             component,
           )
         }
-        className="inline-flex h-9 w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 sm:w-auto"
+        disabled={isMachineInUse}
+        title={
+          isMachineInUse
+            ? "Os componentes não podem ser alterados enquanto a máquina estiver entregue."
+            : "Remover componente"
+        }
+        className="inline-flex h-9 w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:hover:bg-zinc-100 sm:w-auto"
       >
         <Trash2 size={15} />
 

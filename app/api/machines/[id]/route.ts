@@ -3,6 +3,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentRmaStatus,
+  MachineStatus,
 } from "@/generated/prisma/enums";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
@@ -116,6 +117,22 @@ export async function DELETE(
           },
         },
       );
+
+      if (
+        machine.status ===
+        MachineStatus.IN_USE
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "Esta máquina está em uso em um projeto e permanece bloqueada até seu retorno físico ao estoque.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
 
     if (
       componentMovementCount > 0
@@ -731,6 +748,22 @@ export async function PATCH(
         },
       );
     }
+
+        if (
+          currentMachine.status ===
+          MachineStatus.IN_USE
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                "Esta máquina está em uso em um projeto e permanece bloqueada até seu retorno físico ao estoque.",
+            },
+            {
+              status: 409,
+            },
+          );
+        }
 
     /*
     * O Equipment principal pode permanecer vinculado à máquina

@@ -1218,11 +1218,69 @@ const normalizedSerials =
   );
 }
 
+/*
+ * IN_USE representa uma máquina que já saiu fisicamente
+ * pelo projeto. Na gestão de Máquinas exibimos esse estado
+ * como "Entregue", que corresponde ao processo operacional.
+ */
+function getMachineStatusLabel(
+  status: MachineStatus,
+) {
+  switch (status) {
+    case "AVAILABLE":
+      return {
+        label: "Disponível",
+        className:
+          "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+
+    case "IN_USE":
+      return {
+        label: "Entregue",
+        className:
+          "border-blue-200 bg-blue-50 text-blue-700",
+      };
+
+    case "HOMOLOGATION":
+      return {
+        label: "Homologação",
+        className:
+          "border-violet-200 bg-violet-50 text-violet-700",
+      };
+
+    case "MAINTENANCE":
+      return {
+        label: "Manutenção",
+        className:
+          "border-amber-200 bg-amber-50 text-amber-700",
+      };
+
+    case "UNAVAILABLE":
+      return {
+        label: "Indisponível",
+        className:
+          "border-red-200 bg-red-50 text-red-700",
+      };
+
+    case "RETIRED":
+      return {
+        label: "Retirada",
+        className:
+          "border-zinc-200 bg-zinc-100 text-zinc-600",
+      };
+  }
+}
+
 function MachineRow({
   machine,
 }: {
   machine: Machine;
 }) {
+  const machineStatus =
+    getMachineStatusLabel(
+      machine.status,
+    );
+
   return (
     <article className="px-5 py-4 transition hover:bg-orange-50/30">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px] lg:items-center">
@@ -1235,9 +1293,17 @@ function MachineRow({
           </div>
 
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-bold text-zinc-900 sm:text-[15px]">
-              {machine.name}
-            </h3>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 className="min-w-0 truncate text-sm font-bold text-zinc-900 sm:text-[15px]">
+                {machine.name}
+              </h3>
+
+              <span
+                className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${machineStatus.className}`}
+              >
+                {machineStatus.label}
+              </span>
+            </div>
 
             <p className="mt-1 truncate text-xs text-zinc-500">
               {[
