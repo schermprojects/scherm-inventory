@@ -85,8 +85,8 @@ const showNewEquipmentButton =
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-20 items-center justify-between border-b border-zinc-200 bg-white px-4 sm:px-6">
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-zinc-200 bg-white px-3 sm:px-4 lg:h-20 lg:px-6">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <button
           type="button"
           onClick={onMenuClick}
@@ -102,7 +102,7 @@ const showNewEquipmentButton =
         {showNewEquipmentButton ? (
           <Link
             href="/inventory/new"
-            className="hidden items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] sm:inline-flex"
+            className="hidden items-center gap-2 rounded-lg bg-[#F57B00] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#DD6F00] lg:inline-flex"
           >
             <Plus size={18} />
             Novo equipamento

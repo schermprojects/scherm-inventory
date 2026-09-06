@@ -17,11 +17,15 @@ export function PageContainer({
 }: PageContainerProps) {
   return (
     <main className="flex-1 bg-[#F6F7F9]">
-      <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
-        {breadcrumb ? <div className="mb-4">{breadcrumb}</div> : null}
+      <div className="mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-5 lg:px-6">
+        {breadcrumb ? (
+          <div className="mb-3">
+            {breadcrumb}
+          </div>
+        ) : null}
 
         {title || description || actions ? (
-          <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div>
               {title ? (
                 <h1 className="text-2xl font-bold tracking-tight text-zinc-900">

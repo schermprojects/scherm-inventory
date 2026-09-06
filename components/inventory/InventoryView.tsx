@@ -966,7 +966,7 @@ export function InventoryView() {
               ) : null}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto">
               <button
                 type="button"
                 onClick={() =>
@@ -997,7 +997,7 @@ export function InventoryView() {
                 ) : null}
               </button>
 
-              <div className="flex rounded-lg border border-zinc-200 bg-white p-1">
+              <div className="hidden rounded-lg border border-zinc-200 bg-white p-1 md:flex">
                 <button
                   type="button"
                   onClick={() =>
@@ -1081,15 +1081,21 @@ export function InventoryView() {
               </button>
 
               {canManageInventory ? (
-  <Link
-    href="/inventory/new"
-    className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-  >
-    <Plus size={18} />
+                <Link
+                  href="/inventory/new"
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#F57B00] px-3 text-sm font-semibold text-white transition hover:bg-[#DD6F00] sm:px-4"
+                >
+                  <Plus size={18} />
 
-    Novo equipamento
-  </Link>
-) : null}
+                  <span className="hidden sm:inline">
+                    Novo equipamento
+                  </span>
+
+                  <span className="sm:hidden">
+                    Novo
+                  </span>
+                </Link>
+                ) : null}
             </div>
           </div>
 
@@ -1256,33 +1262,37 @@ export function InventoryView() {
           ) : null}
         </div>
 
-        {paginatedEquipment.length ===
-        0 ? (
+        {paginatedEquipment.length === 0 ? (
           <EmptyInventory
-  hasEquipment={
-    equipmentList.length >
-    0
-  }
-  onClear={
-    clearFilters
-  }
-  canEdit={
-    canManageInventory
-  }
-/>
-        ) : viewMode ===
-          "table" ? (
-          <EquipmentTable
-            equipment={
-              paginatedEquipment
-            }
+            hasEquipment={equipmentList.length > 0}
+            onClear={clearFilters}
+            canEdit={canManageInventory}
           />
         ) : (
-          <EquipmentCards
-            equipment={
-              paginatedEquipment
-            }
-          />
+          <>
+            {/*
+            * Em telas pequenas usamos cards independentemente da preferência
+            * de visualização, evitando transformar a tabela desktop em uma
+            * área com rolagem horizontal.
+            */}
+            <div className="md:hidden">
+              <EquipmentCards
+                equipment={paginatedEquipment}
+              />
+            </div>
+
+            <div className="hidden md:block">
+              {viewMode === "table" ? (
+                <EquipmentTable
+                  equipment={paginatedEquipment}
+                />
+              ) : (
+                <EquipmentCards
+                  equipment={paginatedEquipment}
+                />
+              )}
+            </div>
+          </>
         )}
 
         <Pagination
@@ -1479,7 +1489,7 @@ function InventorySummary({
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       {summary.map(
         (item) => {
           const Icon =
@@ -1490,7 +1500,7 @@ function InventorySummary({
               key={
                 item.label
               }
-              className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm"
+              className="rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm"
             >
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -1501,7 +1511,7 @@ function InventorySummary({
                   </p>
 
                   <p
-                    className={`mt-2 text-2xl font-bold ${item.color}`}
+                    className={`mt-1.5 text-xl font-bold ${item.color}`}
                   >
                     {
                       item.value
@@ -1510,13 +1520,9 @@ function InventorySummary({
                 </div>
 
                 <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.background} ${item.color}`}
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${item.background} ${item.color}`}
                 >
-                  <Icon
-                    size={
-                      19
-                    }
-                  />
+                  <Icon size={18} />
                 </div>
               </div>
             </article>
@@ -1611,6 +1617,12 @@ function FilterTag({
   );
 }
 
+/*
+ * No desktop, a linha inteira funciona como link para os detalhes.
+ * Por isso não mantemos uma coluna exclusiva de ações e priorizamos
+ * a largura da tabela para a identificação do equipamento.
+ */
+
 function EquipmentTable({
   equipment,
 }: {
@@ -1647,31 +1659,27 @@ function EquipmentTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1080px] border-collapse text-left">
+      <table className="w-full min-w-[920px] table-fixed border-collapse text-left">
         <thead>
           <tr className="border-b border-zinc-200 bg-zinc-50">
-            <TableHeader>
+            <TableHeader className="w-[34%]">
               Equipamento
             </TableHeader>
 
-            <TableHeader>
+            <TableHeader className="w-[20%]">
               Modelo / Série
             </TableHeader>
 
-            <TableHeader>
+            <TableHeader className="w-[16%]">
               Categoria
             </TableHeader>
 
-            <TableHeader>
+            <TableHeader className="w-[18%]">
               Estoque
             </TableHeader>
 
-            <TableHeader>
+            <TableHeader className="w-[12%]">
               Condição
-            </TableHeader>
-
-            <TableHeader className="text-right">
-              Detalhes
             </TableHeader>
           </tr>
         </thead>
@@ -1713,9 +1721,9 @@ function EquipmentTable({
                   className="group cursor-pointer border-b border-zinc-100 outline-none transition last:border-0 hover:bg-[#F57B00]/[0.06] hover:shadow-[inset_3px_0_0_#F57B00] focus:bg-[#F57B00]/[0.06] focus:shadow-[inset_3px_0_0_#F57B00] focus:ring-2 focus:ring-inset focus:ring-[#F57B00]/20"
                   aria-label={`Abrir detalhes de ${item.name}`}
                 >
-                  <td className="px-5 py-4">
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50 text-[#F57B00]">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-orange-50 text-[#F57B00]">
                         {mainImage ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -1735,13 +1743,14 @@ function EquipmentTable({
                       </div>
 
                       <div className="min-w-0">
-                        <p className="max-w-[260px] truncate text-sm font-semibold text-zinc-900 transition group-hover:text-[#D96D00]">
-                          {
-                            item.name
-                          }
+                        <p
+                          className="line-clamp-2 text-sm font-semibold leading-5 text-zinc-900 transition group-hover:text-[#D96D00]"
+                          title={item.name}
+                        >
+                          {item.name}
                         </p>
 
-                        <p className="mt-1 text-xs text-zinc-500">
+                        <p className="mt-1 truncate text-xs text-zinc-500">
                           {[
                             item.manufacturer,
                             item.model,
@@ -1777,7 +1786,7 @@ function EquipmentTable({
                     </div>
                   </td>
 
-                  <td className="px-5 py-4">
+                  <td className="px-4 py-3">
                     <p className="text-sm font-medium text-zinc-700">
                       {item.model ||
                         "—"}
@@ -1789,7 +1798,7 @@ function EquipmentTable({
                     </p>
                   </td>
 
-                  <td className="px-5 py-4">
+                  <td className="px-4 py-3">
                     <CategoryBadge
                       category={
                         item.category
@@ -1797,7 +1806,7 @@ function EquipmentTable({
                     />
                   </td>
 
-                  <td className="whitespace-nowrap px-5 py-4">
+                  <td className="whitespace-nowrap px-4 py-3">
                    <StockBadge
                     physicalStock={
                       item.physicalStock
@@ -1826,7 +1835,7 @@ function EquipmentTable({
                   />
                   </td>
 
-                  <td className="px-5 py-4">
+                  <td className="px-4 py-3">
                   {isHistorical ? (
                     <div className="flex flex-col items-start gap-1.5">
                       <span className="inline-flex whitespace-nowrap rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-600/20">
@@ -1845,19 +1854,6 @@ function EquipmentTable({
                     />
                   )}
                 </td>
-
-                  <td className="px-5 py-4 text-right">
-                    <span className="inline-flex translate-x-2 items-center gap-1 whitespace-nowrap text-sm font-semibold text-zinc-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[#F57B00] group-hover:opacity-100 group-focus:translate-x-0 group-focus:text-[#F57B00] group-focus:opacity-100">
-                      Ver
-                      detalhes
-
-                      <ChevronRight
-                        size={
-                          16
-                        }
-                      />
-                    </span>
-                  </td>
                 </tr>
               );
             },
@@ -1877,7 +1873,7 @@ function TableHeader({
 }) {
   return (
     <th
-      className={`whitespace-nowrap px-5 py-4 text-xs font-semibold uppercase tracking-wide text-zinc-500 ${className}`}
+      className={`whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 ${className}`}
     >
       {children}
     </th>
@@ -1890,7 +1886,7 @@ function EquipmentCards({
   equipment: Equipment[];
 }) {
   return (
-    <div className="grid gap-4 p-4 sm:p-5 md:grid-cols-2 2xl:grid-cols-3">
+    <div className="grid gap-3 p-3 sm:p-4 md:grid-cols-2 md:gap-4 lg:grid-cols-3 lg:p-4">
       {equipment.map(
         (item) => {
           const isHistorical =
@@ -1923,11 +1919,11 @@ function EquipmentCards({
                 item.id
               }
               href={`/inventory/${item.id}`}
-              className="group block rounded-xl border border-zinc-200 bg-white p-4 outline-none transition hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md focus:border-[#F57B00] focus:ring-2 focus:ring-[#F57B00]/20"
+              className="group block rounded-xl border border-zinc-200 bg-white p-3 outline-none transition hover:border-orange-200 hover:shadow-md focus:border-[#F57B00] focus:ring-2 focus:ring-[#F57B00]/20 sm:p-4 md:hover:-translate-y-0.5"
             >
               <div className="flex items-start gap-3">
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50 text-[#F57B00]">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-orange-50 text-[#F57B00] sm:h-14 sm:w-14 sm:rounded-xl">
                     {mainImage ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -2000,7 +1996,7 @@ function EquipmentCards({
                 </div>
               </div>
 
-              <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3">
+              <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2.5">
                 <div className="min-w-0">
                   <dt className="text-xs font-medium text-zinc-400">
                     Categoria
@@ -2103,6 +2099,7 @@ function EquipmentCards({
                 />
               </dl>
 
+              <div className="md:hidden">
               {!isHistorical &&
               outOfStock ? (
                 <div className="mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
@@ -2123,11 +2120,13 @@ function EquipmentCards({
                       15
                     }
                   />
+                  <span className="md:hidden">
+                    Todo o estoque está comprometido com projetos
+                  </span>
 
-                  Todo o
-                  estoque está
-                  comprometido
-                  com projetos
+                  <span className="hidden md:inline">
+                    Estoque totalmente comprometido
+                  </span>
                 </div>
               ) : lowStock ? (
                 <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
@@ -2147,25 +2146,17 @@ function EquipmentCards({
 
               {!isHistorical &&
               item.shortage > 0 ? (
-                <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-                  <AlertTriangle
-                    size={
-                      15
-                    }
-                  />
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                <AlertTriangle size={15} />
 
-                  Déficit de{" "}
-                  {
-                    item.shortage
-                  }{" "}
-                  unidade(s)
-                </div>
-              ) : null}
-
-              <div className="mt-5 border-t border-zinc-100 pt-4 text-center text-sm font-semibold text-zinc-700 transition group-hover:text-[#F57B00]">
-                Abrir
-                detalhes
+                Déficit: {item.shortage}
               </div>
+              ) : null}
+              </div>
+
+                <div className="mt-4 border-t border-zinc-100 pt-3 text-center text-sm font-semibold text-zinc-700 transition group-hover:text-[#F57B00] md:hidden">
+                  Abrir detalhes
+                </div>
             </Link>
           );
         },
@@ -2573,7 +2564,7 @@ function Pagination({
         equipamentos
       </p>
 
-      <div className="flex items-center gap-1">
+     <div className="flex max-w-full items-center gap-1 overflow-x-auto pb-1">
         <button
           type="button"
           disabled={
