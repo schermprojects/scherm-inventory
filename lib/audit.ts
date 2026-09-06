@@ -35,6 +35,20 @@ const LABEL_PROPERTIES = [
   "id",
 ] as const;
 
+const SENSITIVE_AUDIT_KEYS =
+  new Set([
+    "password",
+    "passwordhash",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "secret",
+    "clientsecret",
+    "authorization",
+    "cookie",
+    "set-cookie",
+  ]);
+
 function isGenericRecord(
   value: unknown,
 ): value is GenericRecord {
@@ -45,6 +59,50 @@ function isGenericRecord(
   );
 }
 
+/*
+ * Dados sensíveis nunca devem ser persistidos em snapshots de auditoria,
+ * mesmo que sejam enviados acidentalmente por alguma rota futura.
+ */
+function sanitizeAuditValue(
+  value: unknown,
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map(
+      sanitizeAuditValue,
+    );
+  }
+
+  if (!isGenericRecord(value)) {
+    return value;
+  }
+
+  const sanitized: GenericRecord = {};
+
+  for (
+    const [key, currentValue] of
+    Object.entries(value)
+  ) {
+    if (
+      SENSITIVE_AUDIT_KEYS.has(
+        key.toLowerCase(),
+      )
+    ) {
+      continue;
+    }
+
+    sanitized[key] =
+      sanitizeAuditValue(
+        currentValue,
+      );
+  }
+
+  return sanitized;
+}
+
+/*
+ * Converte valores vindos do Prisma e do domínio para um formato
+ * JSON persistível no AuditLog, preservando datas e valores bigint.
+ */
 function normalizeJsonValue(
   value: unknown,
 ): Prisma.InputJsonValue | undefined {
@@ -52,8 +110,11 @@ function normalizeJsonValue(
     return undefined;
   }
 
+  const sanitizedValue =
+    sanitizeAuditValue(value);
+
   const serialized = JSON.stringify(
-    value,
+    sanitizedValue,
     (_key, currentValue: unknown) => {
       if (
         typeof currentValue === "bigint"
@@ -69,7 +130,8 @@ function normalizeJsonValue(
 
       if (
         currentValue &&
-        typeof currentValue === "object" &&
+        typeof currentValue ===
+          "object" &&
         "toJSON" in currentValue &&
         typeof (
           currentValue as {
@@ -173,6 +235,11 @@ export async function logAudit({
     const normalizedNewData =
       normalizeJsonValue(newData);
 
+    /*
+     * A auditoria é complementar à operação principal.
+     * Uma falha ao registrar o log não deve transformar uma operação
+     * de negócio já concluída em erro para o usuário.
+     */
     await prisma.auditLog.create({
       data: {
         action,
