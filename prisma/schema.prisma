@@ -281,7 +281,7 @@ model MachineComponent {
   manufacturer String?
   model        String?
 
-  serialNumber String
+  serialNumber String?
 
   quantity Int @default(1)
 

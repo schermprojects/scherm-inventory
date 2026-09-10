@@ -2,6 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Cpu,
@@ -52,7 +53,7 @@ type MachineComponent = {
   category: string;
   manufacturer: string | null;
   model: string | null;
-  serialNumber: string;
+  serialNumber: string | null;
 
   quantity: number;
 
@@ -107,6 +108,33 @@ type MachinesResponse = {
 type MachineMutationResponse = {
   success: boolean;
   data?: Machine;
+  message?: string;
+};
+
+type CloneMachineResponse = {
+  success: boolean;
+  data?: {
+    id: string;
+    name: string;
+    category: string | null;
+    manufacturer: string | null;
+    model: string | null;
+    assetTag: string | null;
+    serialNumber: string;
+    invoiceNumber: string | null;
+    receivedAt: string | null;
+    notes: string | null;
+
+    components: Array<{
+      id: string;
+      name: string;
+      category: string;
+      manufacturer: string | null;
+      model: string | null;
+      serialNumber: string | null;
+      notes: string | null;
+    }>;
+  };
   message?: string;
 };
 
@@ -190,6 +218,12 @@ function formatDate(value: string) {
 }
 
 export function MachinesView() {
+  const searchParams =
+  useSearchParams();
+
+  const cloneMachineId =
+    searchParams.get("clone");
+  
   const {
     data: session,
   } = useSession();
@@ -214,6 +248,11 @@ const canManageMachines =
   ] = useState<Machine[]>([]);
 
 const [
+  cloneMode,
+  setCloneMode,
+] = useState(false);
+
+  const [
   machineCategories,
   setMachineCategories,
 ] = useState<string[]>([]);
@@ -394,6 +433,147 @@ setMachineManufacturers(
     refreshKey,
   ]);
 
+  useEffect(() => {
+  if (
+    !cloneMachineId ||
+    !canManageMachines
+  ) {
+    return;
+  }
+
+  let cancelled = false;
+
+  async function loadMachineToClone() {
+    try {
+      const response =
+        await fetch(
+          `/api/machines/${cloneMachineId}`,
+          {
+            method: "GET",
+            cache: "no-store",
+
+            headers: {
+              Accept:
+                "application/json",
+            },
+          },
+        );
+
+      const data =
+        (await response.json()) as CloneMachineResponse;
+
+      if (
+        !response.ok ||
+        !data.success ||
+        !data.data
+      ) {
+        throw new Error(
+          data.message ??
+            "Não foi possível carregar a máquina para clonagem.",
+        );
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      const sourceMachine =
+        data.data;
+
+      setMachineForm({
+        name: sourceMachine.name,
+
+        category:
+          sourceMachine.category ?? "",
+
+        manufacturer:
+          sourceMachine.manufacturer ??
+          "",
+
+        model:
+          sourceMachine.model ?? "",
+
+        /*
+         * O clone é uma nova unidade física.
+         * Serial e patrimônio devem ser definidos
+         * para a nova máquina.
+         */
+        serialNumber: "",
+        assetTag: "",
+
+        invoiceNumber:
+          sourceMachine.invoiceNumber ??
+          "",
+
+        receivedAt:
+          sourceMachine.receivedAt
+            ? sourceMachine.receivedAt.slice(
+                0,
+                10,
+              )
+            : "",
+
+        notes:
+          sourceMachine.notes ?? "",
+      });
+
+      /*
+       * A composição é reaproveitada,
+       * mas os componentes representam
+       * novas peças físicas.
+       */
+      setComponents(
+        sourceMachine.components.map(
+          (component) => ({
+            localId:
+              crypto.randomUUID(),
+
+            name: component.name,
+            category:
+              component.category,
+
+            manufacturer:
+              component.manufacturer ??
+              "",
+
+            model:
+              component.model ?? "",
+
+            serialNumber: "",
+
+            notes:
+              component.notes ?? "",
+          }),
+        ),
+      );
+
+      setModalError("");
+      setComponentEditorOpen(false);
+      setCloneMode(true);
+      setModalOpen(true);
+    } catch (error) {
+      if (cancelled) {
+        return;
+      }
+
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível carregar a máquina para clonagem.",
+      );
+    }
+  }
+
+  void loadMachineToClone();
+
+  return () => {
+    cancelled = true;
+  };
+}, [
+  cloneMachineId,
+  canManageMachines,
+]);
+
 const filteredMachines =
   useMemo(() => {
     const normalizedSearch =
@@ -485,6 +665,8 @@ const filteredMachines =
       return;
     }
 
+    setCloneMode(false);
+
     setMachineForm(
       createInitialMachineForm(),
     );
@@ -500,6 +682,69 @@ const filteredMachines =
     setModalOpen(true);
   }
 
+  function openCloneModal(
+    machine: Machine,
+  ) {
+    if (!canManageMachines) {
+      return;
+    }
+
+    setMachineForm({
+      name: machine.name,
+      category: machine.category ?? "",
+      manufacturer:
+        machine.manufacturer ?? "",
+      model: machine.model ?? "",
+
+      /*
+      * A máquina clonada é uma nova unidade física.
+      * Serial e patrimônio não são reaproveitados.
+      */
+      serialNumber: "",
+      assetTag: "",
+
+      invoiceNumber:
+        machine.invoiceNumber ?? "",
+
+      receivedAt: "",
+
+      notes: machine.notes ?? "",
+    });
+
+    setComponents(
+      machine.components.map(
+        (component) => ({
+          localId: crypto.randomUUID(),
+
+          name: component.name,
+          category: component.category,
+
+          manufacturer:
+            component.manufacturer ?? "",
+
+          model:
+            component.model ?? "",
+
+          /*
+          * O clone reaproveita a configuração,
+          * não a identidade física da peça.
+          */
+          serialNumber: "",
+
+          notes: "",
+        }),
+      ),
+    );
+
+    setModalError("");
+
+    setComponentEditorOpen(false);
+
+    setCloneMode(true);
+
+    setModalOpen(true);
+  }
+
   function closeCreateModal() {
     if (
       saving ||
@@ -510,6 +755,7 @@ const filteredMachines =
 
     setModalOpen(false);
     setModalError("");
+    setCloneMode(false);
 
     setMachineForm(
       createInitialMachineForm(),
@@ -631,28 +877,22 @@ const filteredMachines =
       return;
     }
 
-    if (!serialNumber) {
-      setComponentEditorError(
-        "Informe o número de série do componente.",
-      );
-
-      return;
-    }
-
 /*
- * Cada componente representa uma peça física individual.
- * Por isso, dois componentes da mesma máquina não podem compartilhar o mesmo serial.
+ * Quando informado, o serial identifica uma peça física específica
+ * e não pode se repetir dentro da mesma máquina.
+ * Componentes sem serial conhecido podem coexistir.
  */
 const duplicateSerial =
+  serialNumber !== "" &&
   components.some(
-        (component) =>
-          component.localId !==
-            componentEditorForm.localId &&
-          component.serialNumber
-            .trim()
-            .toUpperCase() ===
-            serialNumber,
-      );
+    (component) =>
+      component.localId !==
+        componentEditorForm.localId &&
+      component.serialNumber
+        .trim()
+        .toUpperCase() ===
+        serialNumber,
+  );
 
     if (duplicateSerial) {
       setComponentEditorError(
@@ -773,17 +1013,17 @@ const duplicateSerial =
     }
 
 /*
- * Fazemos a validação também no formulário completo
- * para impedir serial duplicado mesmo que o estado local
- * tenha sido alterado fora do editor de componente.
+ * Seriais informados não podem se repetir na composição.
+ * Componentes sem serial conhecido são ignorados nesta validação.
  */
 const normalizedSerials =
-  components.map(
-        (component) =>
-          component.serialNumber
-            .trim()
-            .toUpperCase(),
-      );
+  components
+    .map((component) =>
+      component.serialNumber
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean);
 
     if (
       new Set(normalizedSerials)
@@ -824,6 +1064,11 @@ const normalizedSerials =
             },
 
             body: JSON.stringify({
+              cloneSourceMachineId:
+                cloneMode
+                  ? cloneMachineId
+                  : null,
+
               name,
 
               category:
@@ -877,7 +1122,8 @@ const normalizedSerials =
                     serialNumber:
                       component.serialNumber
                         .trim()
-                        .toUpperCase(),
+                        .toUpperCase() ||
+                      null,
 
                     /*
                     * Cada MachineComponent representa exatamente
@@ -1151,6 +1397,7 @@ const normalizedSerials =
       {modalOpen &&
       canManageMachines ? (
         <CreateMachineModal
+          isClone={cloneMode}
           machineForm={
             machineForm
           }
@@ -1375,12 +1622,17 @@ function MachineRow({
             .map((component) => (
               <span
                 key={component.id}
-                title={`${component.name} · SN ${component.serialNumber}`}
+                title={
+                  component.serialNumber
+                    ? `${component.name} · SN ${component.serialNumber}`
+                    : component.name
+                }
                 className="inline-flex max-w-52 truncate rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-600"
               >
                 {component.name}
-                {" · "}
-                {component.serialNumber}
+                {component.serialNumber
+                  ? ` · ${component.serialNumber}`
+                  : null}
               </span>
             ))}
 
@@ -1464,6 +1716,7 @@ function LoadingState() {
 }
 
 function CreateMachineModal({
+  isClone,
   machineForm,
   machineCategories,
   machineManufacturers,
@@ -1478,6 +1731,7 @@ function CreateMachineModal({
   onEditComponent,
   onRemoveComponent,
 }: {
+  isClone: boolean;
   machineForm: MachineForm;
   machineCategories: string[];
   machineManufacturers: string[];
@@ -1579,11 +1833,15 @@ function CreateMachineModal({
               id="create-machine-title"
               className="text-lg font-bold text-zinc-900"
             >
-              Nova máquina
+              {isClone
+                ? "Clonar máquina"
+                : "Nova máquina"}
             </h2>
 
             <p className="mt-1 text-sm text-zinc-500">
-              Cadastre a máquina recebida e monte sua composição inicial.
+              {isClone
+                ? "Revise os dados da nova máquina e informe suas identificações próprias."
+                : "Cadastre a máquina recebida e monte sua composição inicial."}
             </p>
           </div>
 
@@ -1966,9 +2224,7 @@ function CreateMachineModal({
 
                           <div>
                             <p className="font-mono text-xs font-semibold text-zinc-700">
-                              {
-                                component.serialNumber
-                              }
+                              {component.serialNumber || "Não informado"}
                             </p>
                           </div>
 
@@ -2018,10 +2274,9 @@ function CreateMachineModal({
                         components.length
                       }
                     </strong>{" "}
-                    {components.length ===
-                    1
-                      ? "componente identificado"
-                      : "componentes identificados"}
+                    {components.length === 1
+                      ? "componente adicionado"
+                      : "componentes adicionados"}
                   </div>
                 </div>
               )}
@@ -2057,12 +2312,17 @@ function CreateMachineModal({
                       className="animate-spin"
                     />
 
-                    Cadastrando...
+                    {isClone
+                      ? "Clonando..."
+                      : "Cadastrando..."}
                   </>
                 ) : (
                   <>
                     <Plus size={16} />
-                    Cadastrar máquina
+
+                    {isClone
+                      ? "Clonar máquina"
+                      : "Cadastrar máquina"}
                   </>
                 )}
               </button>
@@ -2172,7 +2432,7 @@ function ComponentEditorModal({
               </h2>
 
               <p className="mt-1 text-sm text-zinc-500">
-                Cada peça física deve possuir seu próprio número de série.
+                Informe o número de série quando estiver disponível.
               </p>
             </div>
           </div>
@@ -2264,30 +2524,18 @@ function ComponentEditorModal({
                 />
               </FormField>
 
-              <FormField
-                label="Número de série"
-                required
-              >
+              <FormField label="Número de série">
                 <input
                   type="text"
-                  value={
-                    form.serialNumber
-                  }
-                  onChange={(
-                    event,
-                  ) =>
+                  value={form.serialNumber}
+                  onChange={(event) =>
                     onChange(
                       "serialNumber",
-                      event.target
-                        .value
-                        .toUpperCase(),
+                      event.target.value.toUpperCase(),
                     )
                   }
-                  placeholder="Serial individual da peça"
-                  className={
-                    inputClassName
-                  }
-                  required
+                  placeholder="Serial individual da peça (opcional)"
+                  className={inputClassName}
                 />
               </FormField>
 
@@ -2362,7 +2610,7 @@ function ComponentEditorModal({
               <strong>
                 Rastreabilidade:
               </strong>{" "}
-              este cadastro representa uma única peça física. Caso existam dois componentes iguais, cadastre cada um separadamente com seu respectivo Serial Number.
+              este cadastro representa uma única peça física. Caso existam dois componentes iguais, cadastre cada um separadamente. Informe o Serial Number quando estiver disponível.
             </div>
           </div>
 

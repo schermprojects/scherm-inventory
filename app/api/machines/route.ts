@@ -45,6 +45,7 @@ type MachineBody = {
   receivedAt?: unknown;
   notes?: unknown;
   components?: unknown;
+  cloneSourceMachineId?: unknown;
 };
 
 /*
@@ -406,6 +407,34 @@ export async function POST(
   try {
     const body =
       (await request.json()) as MachineBody;
+    
+    const cloneSourceMachineId =
+      optionalText(
+        body.cloneSourceMachineId,
+      );
+
+    const cloneSourceMachine =
+      cloneSourceMachineId
+        ? await prisma.machine.findUnique({
+            where: {
+              id: cloneSourceMachineId,
+            },
+            select: {
+              id: true,
+              name: true,
+              serialNumber: true,
+            },
+          })
+        : null;
+
+    if (
+      cloneSourceMachineId &&
+      !cloneSourceMachine
+    ) {
+      throw new ValidationError(
+        "A máquina utilizada como origem da clonagem não foi encontrada.",
+      );
+    }
 
     const name = requiredText(
       body.name,
@@ -462,9 +491,8 @@ export async function POST(
             ),
 
             serialNumber:
-              normalizeSerial(
+              normalizeOptionalSerial(
                 component.serialNumber,
-                `Número de série do componente ${position}`,
               ),
 
             quantity: 1,
@@ -475,35 +503,34 @@ export async function POST(
           };
         },
       );
-
     /*
-     * Dentro da mesma máquina não permitimos
-     * repetir o mesmo número de série.
-     *
-     * O banco não possui UNIQUE global para
-     * serial de componentes, então esta regra
-     * evita duplicação acidental no cadastro
-     * da composição inicial.
-     */
-    const componentSerials =
-      new Set<string>();
+ * Seriais informados não podem se repetir
+ * dentro da mesma composição.
+ * Componentes sem serial conhecido são ignorados.
+ */
+const componentSerials =
+  new Set<string>();
 
-    for (const component of
-      parsedComponents) {
-      if (
-        componentSerials.has(
-          component.serialNumber,
-        )
-      ) {
-        throw new ValidationError(
-         `O número de série "${component.serialNumber}" foi informado mais de uma vez nos componentes.`,
-        );
-      }
+for (const component of
+  parsedComponents) {
+  if (!component.serialNumber) {
+    continue;
+  }
 
-      componentSerials.add(
-        component.serialNumber,
-      );
-    }
+  if (
+    componentSerials.has(
+      component.serialNumber,
+    )
+  ) {
+    throw new ValidationError(
+      `O número de série "${component.serialNumber}" foi informado mais de uma vez nos componentes.`,
+    );
+  }
+
+  componentSerials.add(
+    component.serialNumber,
+  );
+}
 
     /*
      * Máquina, Equipment principal e componentes físicos
@@ -798,8 +825,9 @@ try {
       session.user.id ??
       null,
 
-    description:
-      `Máquina "${machine.name}" cadastrada com ${machine.components.length} componente(s).`,
+    description: cloneSourceMachine
+      ? `Máquina "${machine.name}" clonada a partir da máquina SN ${cloneSourceMachine.serialNumber} com ${machine.components.length} componente(s).`
+      : `Máquina "${machine.name}" cadastrada com ${machine.components.length} componente(s).`,
 
     newData: {
       id: machine.id,

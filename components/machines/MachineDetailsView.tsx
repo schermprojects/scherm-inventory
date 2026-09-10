@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarDays,
+  Copy,
   Cpu,
   FileText,
   History,
@@ -47,7 +48,7 @@ type MachineComponent = {
   manufacturer: string | null;
   model: string | null;
 
-  serialNumber: string;
+  serialNumber: string | null;
 
   status: string;
 
@@ -993,6 +994,23 @@ async function handleDeleteMachine() {
 
       <button
         type="button"
+        onClick={() =>
+          router.push(
+            `/machines?clone=${machine.id}`,
+          )
+        }
+        title="Clonar máquina"
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-[#F57B00]"
+      >
+        <Copy size={15} />
+
+        <span className="hidden sm:inline">
+          Clonar máquina
+        </span>
+      </button>
+
+      <button
+        type="button"
         onClick={openDeleteModal}
         disabled={isMachineInUse}
         title={
@@ -1160,7 +1178,7 @@ async function handleDeleteMachine() {
           </p>
 
           <p className="mt-0.5 break-all font-mono text-xs font-semibold text-zinc-700">
-            {component.serialNumber}
+            {component.serialNumber || "Não informado"}
           </p>
         </div>
 
@@ -1260,10 +1278,7 @@ async function handleDeleteMachine() {
                         <p className="mt-2 text-sm text-zinc-600">
                           SN{" "}
                           <strong className="font-mono text-zinc-800">
-                            {
-                              item.component
-                                .serialNumber
-                            }
+                            {item.component.serialNumber || "Não informado"}
                           </strong>
                         </p>
 
@@ -1791,15 +1806,15 @@ async function handleDeleteMachine() {
                   </p>
 
                   <p className="mt-1 text-xs text-zinc-500">
-                    {
-                      removalComponent.category
-                    }{" "}
-                    · SN{" "}
-                    <strong>
-                      {
-                        removalComponent.serialNumber
-                      }
-                    </strong>
+                    {removalComponent.category}
+                    {removalComponent.serialNumber ? (
+                      <>
+                        {" "}· SN{" "}
+                        <strong>
+                          {removalComponent.serialNumber}
+                        </strong>
+                      </>
+                    ) : null}
                   </p>
                 </div>
 
