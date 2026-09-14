@@ -602,10 +602,14 @@ export function InventoryView() {
             );
 
           const matchesStatus =
-            status ===
-              "Todos" ||
-            equipment.status ===
-              status;
+            status === "Todos" ||
+            (status === "Em uso" &&
+              equipment.inUse > 0) ||
+            (status === "Disponível" &&
+              equipment.availableStock > 0) ||
+            (status === "Indisponível" &&
+              equipment.status ===
+                "Indisponível");
 
           const matchesCategory =
             category ===

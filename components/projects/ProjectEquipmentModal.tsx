@@ -57,6 +57,7 @@ type InventoryEquipment = {
   currentProjectQuantity: number;
   availableForProject: number;
   availableNow: number;
+  inUse: number;
 };
 
 type EquipmentListResponse = {
@@ -819,7 +820,9 @@ export function ProjectEquipmentModal({
 
                   const availableNow =
                     Math.max(
-                      item.availableNow,
+                      isManageMode
+                        ? item.availableForProject
+                        : item.availableNow,
                       0,
                     );
 
@@ -908,9 +911,9 @@ export function ProjectEquipmentModal({
                               />
 
                               <StockValue
-                                label="Reservado"
+                                label="Em uso"
                                 value={
-                                  item.totalReserved
+                                  item.inUse
                                 }
                               />
 

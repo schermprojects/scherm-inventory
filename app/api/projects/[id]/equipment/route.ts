@@ -338,6 +338,46 @@ const equipment =
                 ),
             );
 
+            const totalPendingDemand =
+              activeReservations.reduce(
+                (
+                  total,
+                  reservation,
+                ) =>
+                  total +
+                  Math.max(
+                    reservation.quantity -
+                      reservation.allocatedQuantity,
+                    0,
+                  ),
+                0,
+              );
+
+            const pendingByOtherProjects =
+              activeReservations.reduce(
+                (
+                  total,
+                  reservation,
+                ) => {
+                  if (
+                    reservation.projectId ===
+                    projectId
+                  ) {
+                    return total;
+                  }
+
+                  return (
+                    total +
+                    Math.max(
+                      reservation.quantity -
+                        reservation.allocatedQuantity,
+                      0,
+                    )
+                  );
+                },
+                0,
+              );
+
           /*
            * Quantidade efetivamente
            * alocada em projetos ativos.
@@ -404,10 +444,16 @@ const equipment =
            * Disponível para qualquer
            * nova demanda agora.
            */
+          const inUse =
+            Math.min(
+              operationalStock,
+              totalPendingDemand,
+            );
+
           const availableNow =
             Math.max(
               operationalStock -
-                totalAllocated,
+                totalPendingDemand,
               0,
             );
 
@@ -420,7 +466,7 @@ const equipment =
           const availableForProject =
             Math.max(
               operationalStock -
-                allocatedByOtherProjects,
+                pendingByOtherProjects,
               0,
             );
 
@@ -492,6 +538,7 @@ const equipment =
             availableForProject,
 
             availableNow,
+            inUse,
           };
         },
       );
