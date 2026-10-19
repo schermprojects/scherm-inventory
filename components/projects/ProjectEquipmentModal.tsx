@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Loader2,
   Package,
   Plus,
@@ -40,6 +41,12 @@ type EquipmentImage = {
   position: number;
 };
 
+type AvailableEquipmentUnit = {
+  id: string;
+  serialNumber: string;
+  assignedToCurrentProject: boolean;
+};
+
 type InventoryEquipment = {
   id: string;
   name: string;
@@ -54,10 +61,16 @@ type InventoryEquipment = {
 
   totalReserved: number;
   reservedByOtherProjects: number;
+
   currentProjectQuantity: number;
+  currentProjectReserved: number;
+  currentProjectAllocated: number;
+  currentProjectShortage: number;
+
   availableForProject: number;
   availableNow: number;
   inUse: number;
+  availableEquipmentUnits: AvailableEquipmentUnit[];
 };
 
 type EquipmentListResponse = {
@@ -69,6 +82,23 @@ type EquipmentListResponse = {
 
 type MutationResponse = {
   success: boolean;
+  message?: string;
+};
+
+type TransferSourceProject = {
+  projectId: string;
+  projectName: string;
+  clientName: string | null;
+  reservedQuantity: number;
+  assignedSerialQuantity: number;
+  transferableQuantity: number;
+};
+
+type TransferOptionsResponse = {
+  success: boolean;
+  data?: TransferSourceProject[];
+  targetShortage?: number;
+  transferLocked?: boolean;
   message?: string;
 };
 
@@ -112,6 +142,11 @@ export function ProjectEquipmentModal({
   const [quantities, setQuantities] =
     useState<Record<string, number>>({});
 
+  const [
+  selectedEquipmentUnitIds,
+  setSelectedEquipmentUnitIds,
+] = useState<Record<string, string[]>>({});
+
   const [search, setSearch] =
     useState("");
 
@@ -132,9 +167,45 @@ export function ProjectEquipmentModal({
     setSuccessMessage,
   ] = useState("");
 
-  const isMutating =
-    updatingId !== null ||
-    removingId !== null;
+  const [
+  transferItemId,
+  setTransferItemId,
+] = useState<string | null>(null);
+
+const [
+  transferSources,
+  setTransferSources,
+] = useState<TransferSourceProject[]>([]);
+
+const [
+  transferSourceProjectId,
+  setTransferSourceProjectId,
+] = useState("");
+
+const [
+  transferQuantity,
+  setTransferQuantity,
+] = useState(1);
+
+const [
+  transferTargetShortage,
+  setTransferTargetShortage,
+] = useState(0);
+
+const [
+  loadingTransferOptions,
+  setLoadingTransferOptions,
+] = useState(false);
+
+const [
+  transferring,
+  setTransferring,
+] = useState(false);
+
+const isMutating =
+  updatingId !== null ||
+  removingId !== null ||
+  transferring;
 
   const isAddMode =
     mode === "ADD";
@@ -171,6 +242,22 @@ export function ProjectEquipmentModal({
         }
 
         setEquipment(data.data);
+
+        setSelectedEquipmentUnitIds(() => {
+          const next: Record<string, string[]> = {};
+
+          for (const item of data.data ?? []) {
+            next[item.id] =
+              item.availableEquipmentUnits
+                .filter(
+                  (unit) =>
+                    unit.assignedToCurrentProject,
+                )
+                .map((unit) => unit.id);
+          }
+
+          return next;
+        });
 
         setQuantities(
           (current) => {
@@ -389,6 +476,27 @@ export function ProjectEquipmentModal({
           normalizedValue,
       }),
     );
+    setSelectedEquipmentUnitIds(
+  (current) => {
+    const selected =
+      current[item.id] ?? [];
+
+    if (
+      selected.length <=
+      normalizedValue
+    ) {
+      return current;
+    }
+
+    return {
+      ...current,
+      [item.id]: selected.slice(
+        0,
+        normalizedValue,
+      ),
+    };
+  },
+);
   }
 
   function changeQuantity(
@@ -412,7 +520,305 @@ export function ProjectEquipmentModal({
           nextQuantity,
       }),
     );
+    setSelectedEquipmentUnitIds(
+  (current) => {
+    const selected =
+      current[item.id] ?? [];
+
+    if (
+      selected.length <=
+      nextQuantity
+    ) {
+      return current;
+    }
+
+    return {
+      ...current,
+      [item.id]: selected.slice(
+        0,
+        nextQuantity,
+      ),
+    };
+  },
+);
   }
+
+  function toggleEquipmentUnit(
+  item: InventoryEquipment,
+  equipmentUnitId: string,
+) {
+  const quantity =
+    quantities[item.id] ?? 1;
+
+  setSelectedEquipmentUnitIds(
+    (current) => {
+      const selected =
+        current[item.id] ?? [];
+
+      const isSelected =
+        selected.includes(
+          equipmentUnitId,
+        );
+
+      if (isSelected) {
+        return {
+          ...current,
+          [item.id]: selected.filter(
+            (id) =>
+              id !== equipmentUnitId,
+          ),
+        };
+      }
+
+      if (
+        selected.length >= quantity
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [item.id]: [
+          ...selected,
+          equipmentUnitId,
+        ],
+      };
+    },
+  );
+}
+
+async function handleOpenTransfer(
+  item: InventoryEquipment,
+) {
+  try {
+    setLoadingTransferOptions(true);
+    setError("");
+    setSuccessMessage("");
+
+    setTransferItemId(item.id);
+    setTransferSources([]);
+    setTransferSourceProjectId("");
+    setTransferQuantity(1);
+    setTransferTargetShortage(0);
+
+    const response =
+      await fetch(
+        `/api/projects/${projectId}/equipment/${item.id}/transfer`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
+
+    const data =
+      (await response.json()) as TransferOptionsResponse;
+
+    if (
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível carregar as reservas disponíveis para transferência.",
+      );
+    }
+
+    const sources =
+      data.data ?? [];
+
+    setTransferSources(
+      sources,
+    );
+
+    setTransferTargetShortage(
+      data.targetShortage ?? 0,
+    );
+
+    if (
+      data.transferLocked
+    ) {
+      setError(
+        "A transferência de reserva está bloqueada para este item.",
+      );
+      return;
+    }
+
+    if (
+      sources.length === 0
+    ) {
+      setError(
+        "Não há reservas disponíveis em outros projetos para transferência.",
+      );
+      return;
+    }
+
+    setTransferSourceProjectId(
+      sources[0].projectId,
+    );
+
+    setTransferQuantity(
+      1,
+    );
+  } catch (
+    transferError
+  ) {
+    setTransferItemId(
+      null,
+    );
+
+    setTransferSources(
+      [],
+    );
+
+    setTransferSourceProjectId(
+      "",
+    );
+
+    setTransferTargetShortage(
+      0,
+    );
+
+    setError(
+      transferError instanceof Error
+        ? transferError.message
+        : "Não foi possível carregar as reservas disponíveis para transferência.",
+    );
+  } finally {
+    setLoadingTransferOptions(
+      false,
+    );
+  }
+}
+
+async function handleTransfer(
+  item: InventoryEquipment,
+) {
+  const source =
+    transferSources.find(
+      (candidate) =>
+        candidate.projectId ===
+        transferSourceProjectId,
+    );
+
+  if (!source) {
+    setError(
+      "Selecione um projeto de origem.",
+    );
+    return;
+  }
+
+  if (
+    !Number.isInteger(
+      transferQuantity,
+    ) ||
+    transferQuantity < 1
+  ) {
+    setError(
+      "Informe uma quantidade válida para transferência.",
+    );
+    return;
+  }
+
+  if (
+    transferQuantity >
+    source.transferableQuantity
+  ) {
+    setError(
+      `Este projeto possui no máximo ${source.transferableQuantity} unidade(s) disponível(is) para transferência.`,
+    );
+    return;
+  }
+
+  if (
+    transferQuantity >
+    transferTargetShortage
+  ) {
+    setError(
+      `O déficit atual deste projeto é de ${transferTargetShortage} unidade(s).`,
+    );
+    return;
+  }
+
+  try {
+    setTransferring(true);
+    setError("");
+    setSuccessMessage("");
+
+    const response =
+      await fetch(
+        `/api/projects/${projectId}/equipment/${item.id}/transfer`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            sourceProjectId:
+              source.projectId,
+
+            quantity:
+              transferQuantity,
+          }),
+        },
+      );
+
+    const data =
+      (await response.json()) as MutationResponse;
+
+    if (
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        data.message ??
+          "Não foi possível transferir a reserva.",
+      );
+    }
+
+    setSuccessMessage(
+      data.message ??
+        "Reserva transferida com sucesso.",
+    );
+
+    setTransferItemId(
+      null,
+    );
+
+    setTransferSources(
+      [],
+    );
+
+    setTransferSourceProjectId(
+      "",
+    );
+
+    setTransferQuantity(
+      1,
+    );
+
+    setTransferTargetShortage(
+      0,
+    );
+
+    await loadEquipment();
+    await onUpdated();
+  } catch (
+    transferError
+  ) {
+    setError(
+      transferError instanceof Error
+        ? transferError.message
+        : "Não foi possível transferir a reserva.",
+    );
+  } finally {
+    setTransferring(
+      false,
+    );
+  }
+}
 
   async function handleSave(
     item: InventoryEquipment,
@@ -420,6 +826,11 @@ export function ProjectEquipmentModal({
     const quantity =
       quantities[item.id] ??
       1;
+
+    const equipmentUnitIds =
+      selectedEquipmentUnitIds[
+        item.id
+      ] ?? [];
 
     if (
       !Number.isInteger(
@@ -501,14 +912,16 @@ export function ProjectEquipmentModal({
             body:
               JSON.stringify(
                 alreadyReserved
-                  ? {
-                      quantity,
-                    }
-                  : {
-                      equipmentId:
-                        item.id,
-                      quantity,
-                    },
+                ? {
+                    quantity,
+                    equipmentUnitIds,
+                  }
+                : {
+                    equipmentId:
+                      item.id,
+                    quantity,
+                    equipmentUnitIds,
+                  },
               ),
           },
         );
@@ -527,16 +940,30 @@ export function ProjectEquipmentModal({
       }
 
       setSuccessMessage(
-        data.message ??
-          (
-            alreadyReserved
-              ? "Quantidade atualizada com sucesso."
-              : "Equipamento adicionado com sucesso."
-          ),
-      );
+  data.message ??
+    (
+      alreadyReserved
+        ? "Quantidade atualizada com sucesso."
+        : "Equipamento adicionado com sucesso."
+    ),
+);
 
-      await loadEquipment();
-      await onUpdated();
+if (!alreadyReserved) {
+  setSelectedEquipmentUnitIds(
+    (current) => {
+      const next = {
+        ...current,
+      };
+
+      delete next[item.id];
+
+      return next;
+    },
+  );
+}
+
+await loadEquipment();
+await onUpdated();
     } catch (
       saveError
     ) {
@@ -803,6 +1230,25 @@ export function ProjectEquipmentModal({
                       item.id
                     ] ?? 1;
 
+                  const selectedUnitIds =
+                    selectedEquipmentUnitIds[
+                      item.id
+                    ] ?? [];
+
+                  const availableUnits =
+                    item.availableEquipmentUnits ??
+                    [];
+
+                  const selectedUnitCount =
+                    selectedUnitIds.length;
+
+                  const unidentifiedQuantity =
+                    Math.max(
+                      quantity -
+                        selectedUnitCount,
+                      0,
+                    );
+
                   const alreadyReserved =
                     item.currentProjectQuantity >
                     0;
@@ -827,11 +1273,13 @@ export function ProjectEquipmentModal({
                     );
 
                   const requestedShortage =
-                    Math.max(
-                      quantity -
-                        availableNow,
-                      0,
-                    );
+                    isManageMode
+                      ? item.currentProjectShortage
+                      : Math.max(
+                          quantity -
+                            availableNow,
+                          0,
+                        );
 
                   const hasNoStock =
                     availableNow ===
@@ -871,11 +1319,9 @@ export function ProjectEquipmentModal({
                                   Sem estoque
                                 </span>
                               ) : (
-                                <EquipmentStatusBadge
-                                  status={
-                                    item.status
-                                  }
-                                />
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                  Disponível
+                                </span>
                               )}
                             </div>
 
@@ -918,7 +1364,11 @@ export function ProjectEquipmentModal({
                               />
 
                               <StockValue
-                                label="Disponível agora"
+                                label={
+                                  isManageMode
+                                    ? "Disponível para este projeto"
+                                    : "Disponível agora"
+                                }
                                 value={
                                   availableNow
                                 }
@@ -937,14 +1387,96 @@ export function ProjectEquipmentModal({
 
                               {isManageMode ? (
                                 <StockValue
-                                  label="Neste projeto"
+                                  label="Reservado neste projeto"
                                   value={
-                                    item.currentProjectQuantity
+                                    item.currentProjectReserved
                                   }
                                   highlighted
                                 />
                               ) : null}
                             </div>
+
+                            {availableUnits.length > 0 ? (
+                                <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                    {isManageMode
+                                      ? "S/N designados ao projeto"
+                                      : "S/N disponíveis"}
+                                  </p>
+
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {availableUnits.map(
+                                      (unit) => {
+                                        const checked =
+                                          selectedUnitIds.includes(
+                                            unit.id,
+                                          );
+
+                                        const selectionLimitReached =
+                                          !checked &&
+                                          selectedUnitCount >=
+                                            quantity;
+
+                                        return (
+                                          <label
+                                            key={unit.id}
+                                            className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                                              checked
+                                                ? "border-orange-300 bg-orange-50 font-semibold text-orange-800"
+                                                : "border-zinc-200 bg-white text-zinc-700 hover:border-orange-200"
+                                            } ${
+                                              disabled ||
+                                              selectionLimitReached
+                                                ? "cursor-not-allowed opacity-50"
+                                                : ""
+                                            }`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              disabled={
+                                                disabled ||
+                                                selectionLimitReached
+                                              }
+                                              onChange={() => {
+                                                toggleEquipmentUnit(
+                                                  item,
+                                                  unit.id,
+                                                );
+                                              }}
+                                              className="h-4 w-4 accent-[#F57B00]"
+                                            />
+
+                                            <span>
+                                              {unit.serialNumber}
+                                            </span>
+                                          </label>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+
+                                  <div className="mt-3 text-xs text-zinc-500">
+                                    <strong className="text-zinc-700">
+                                      {selectedUnitCount}
+                                    </strong>{" "}
+                                    de{" "}
+                                    <strong className="text-zinc-700">
+                                      {quantity}
+                                    </strong>{" "}
+                                    unidade(s) com S/N
+                                    selecionado.
+                                  </div>
+
+                                  {unidentifiedQuantity > 0 ? (
+                                    <p className="mt-1 text-xs text-zinc-500">
+                                      {unidentifiedQuantity}{" "}
+                                      unidade(s) seguirá(ão) sem
+                                      S/N designado.
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null}
 
                             {item.condition ===
                             "DAMAGED" ? (
@@ -1099,42 +1631,64 @@ export function ProjectEquipmentModal({
                         </div>
                       </div>
 
-                      {requestedShortage >
-                      0 ? (
-                        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
-                          <AlertTriangle
-                            size={16}
-                            className="mt-0.5 shrink-0"
-                          />
+                     {requestedShortage > 0 ? (
+                      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex items-start gap-2 text-sm font-medium text-amber-700">
+                            <AlertTriangle
+                              size={16}
+                              className="mt-0.5 shrink-0"
+                            />
 
-                          <span>
-                            A solicitação
-                            é de{" "}
-                            <strong>
-                              {
-                                quantity
+                            <span>
+                              A solicitação é de{" "}
+                              <strong>
+                                {quantity}
+                              </strong>{" "}
+                              unidade(s), mas há{" "}
+                              <strong>
+                                {availableNow}
+                              </strong>{" "}
+                              disponível(is). O déficit de{" "}
+                              <strong>
+                                {requestedShortage}
+                              </strong>{" "}
+                              unidade(s) será registrado para compra.
+                            </span>
+                          </div>
+
+                          {isManageMode ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleOpenTransfer(
+                                  item,
+                                );
+                              }}
+                              disabled={
+                                isMutating ||
+                                loadingTransferOptions
                               }
-                            </strong>{" "}
-                            unidade(s),
-                            mas há{" "}
-                            <strong>
-                              {
-                                availableNow
-                              }
-                            </strong>{" "}
-                            disponível(is).
-                            O déficit de{" "}
-                            <strong>
-                              {
-                                requestedShortage
-                              }
-                            </strong>{" "}
-                            unidade(s)
-                            será registrado
-                            para compra.
-                          </span>
+                              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-3 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {loadingTransferOptions &&
+                              transferItemId === item.id ? (
+                                <Loader2
+                                  size={15}
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <ArrowRightLeft
+                                  size={15}
+                                />
+                              )}
+
+                              Transferir reserva
+                            </button>
+                          ) : null}
                         </div>
-                      ) : hasNoStock ? (
+                      </div>
+                    ) : hasNoStock ? (
                         <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
                           <AlertTriangle
                             size={16}
@@ -1153,6 +1707,176 @@ export function ProjectEquipmentModal({
                           </span>
                         </div>
                       ) : null}
+                      {isManageMode &&
+                        transferItemId === item.id ? (
+                          <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <h4 className="text-sm font-bold text-zinc-900">
+                                  Transferir reserva de outro projeto
+                                </h4>
+
+                                <p className="mt-1 text-xs text-zinc-500">
+                                  Déficit atual deste projeto:{" "}
+                                  <strong className="text-zinc-700">
+                                    {transferTargetShortage}
+                                  </strong>{" "}
+                                  unidade(s).
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTransferItemId(null);
+                                  setTransferSources([]);
+                                  setTransferSourceProjectId("");
+                                  setTransferQuantity(1);
+                                  setTransferTargetShortage(0);
+                                }}
+                                disabled={isMutating}
+                                aria-label="Fechar transferência"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+
+                            {loadingTransferOptions ? (
+                              <div className="mt-4 flex items-center gap-2 text-sm text-zinc-500">
+                                <Loader2
+                                  size={16}
+                                  className="animate-spin"
+                                />
+
+                                Buscando reservas disponíveis...
+                              </div>
+                            ) : transferSources.length > 0 ? (
+                              <div className="mt-4 grid gap-4 md:grid-cols-[1fr_140px_auto] md:items-end">
+                                <div>
+                                  <label
+                                    htmlFor={`transfer-source-${item.id}`}
+                                    className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                                  >
+                                    Projeto de origem
+                                  </label>
+
+                                  <select
+                                    id={`transfer-source-${item.id}`}
+                                    value={
+                                      transferSourceProjectId
+                                    }
+                                    onChange={(event) => {
+                                      setTransferSourceProjectId(
+                                        event.target.value,
+                                      );
+
+                                      setTransferQuantity(1);
+                                    }}
+                                    disabled={isMutating}
+                                    className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                                  >
+                                    {transferSources.map(
+                                      (source) => (
+                                        <option
+                                          key={source.projectId}
+                                          value={
+                                            source.projectId
+                                          }
+                                        >
+                                          {source.projectName}
+                                          {source.clientName
+                                            ? ` · ${source.clientName}`
+                                            : ""}
+                                          {" · "}
+                                          {
+                                            source.transferableQuantity
+                                          }{" "}
+                                          disponível(is)
+                                        </option>
+                                      ),
+                                    )}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label
+                                    htmlFor={`transfer-quantity-${item.id}`}
+                                    className="mb-2 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                                  >
+                                    Quantidade
+                                  </label>
+
+                                  <input
+                                    id={`transfer-quantity-${item.id}`}
+                                    type="number"
+                                    min={1}
+                                    max={
+                                      Math.min(
+                                        transferTargetShortage,
+                                        transferSources.find(
+                                          (source) =>
+                                            source.projectId ===
+                                            transferSourceProjectId,
+                                        )
+                                          ?.transferableQuantity ??
+                                          1,
+                                      )
+                                    }
+                                    step={1}
+                                    value={transferQuantity}
+                                    onChange={(event) => {
+                                      const value =
+                                        Number(
+                                          event.target.value,
+                                        );
+
+                                      setTransferQuantity(
+                                        Number.isFinite(value)
+                                          ? Math.max(
+                                              1,
+                                              Math.trunc(
+                                                value,
+                                              ),
+                                            )
+                                          : 1,
+                                      );
+                                    }}
+                                    disabled={isMutating}
+                                    className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-bold text-zinc-900 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                                  />
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleTransfer(
+                                      item,
+                                    );
+                                  }}
+                                  disabled={
+                                    isMutating ||
+                                    !transferSourceProjectId
+                                  }
+                                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {transferring ? (
+                                    <Loader2
+                                      size={16}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <ArrowRightLeft
+                                      size={16}
+                                    />
+                                  )}
+
+                                  Confirmar transferência
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                     </article>
                   );
                 },

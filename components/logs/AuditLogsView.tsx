@@ -114,6 +114,10 @@ const FIELD_LABELS: Record<
     "Quantidade danificada",
   returnedQuantity:
     "Quantidade devolvida",
+  returnedSerialNumbers:
+    "Números de série devolvidos",
+  allocatedSerialNumbers:
+    "Números de série baixados",
   returnCondition:
     "Condição da devolução",
 
@@ -260,6 +264,7 @@ const EQUIPMENT_DETAIL_FIELDS = [
   "serialNumber",
   "quantity",
   "allocatedQuantity",
+  "allocatedSerialNumbers",
 ] as const;
 
 function formatDateTime(
@@ -362,6 +367,24 @@ function formatAuditValue(
 
     return value;
   }
+
+  if (
+  (
+    field === "returnedSerialNumbers" ||
+    field === "allocatedSerialNumbers"
+  ) &&
+  Array.isArray(value)
+) {
+  const serialNumbers = value.filter(
+    (item): item is string =>
+      typeof item === "string" &&
+      Boolean(item.trim()),
+  );
+
+  return serialNumbers.length > 0
+    ? serialNumbers.join(", ")
+    : "Nenhum";
+}
 
   if (Array.isArray(value)) {
     return `${value.length} ${
@@ -949,7 +972,7 @@ const hasActiveFilters =
             page: String(page),
             pageSize: "25",
           });
-        
+
         if (debouncedSearch) {
           searchParams.set(
             "q",

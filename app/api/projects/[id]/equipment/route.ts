@@ -18,6 +18,7 @@ type RouteContext = {
 type AddEquipmentBody = {
   equipmentId?: unknown;
   quantity?: unknown;
+  equipmentUnitIds?: unknown;
 };
 
 type SessionUser = {
@@ -78,6 +79,41 @@ function requiredQuantity(
   }
 
   return quantity;
+}
+
+function optionalEquipmentUnitIds(
+  value: unknown,
+): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      'O campo "S/N selecionados" deve ser uma lista.',
+    );
+  }
+
+  const ids = value.map((item) => {
+    if (
+      typeof item !== "string" ||
+      !item.trim()
+    ) {
+      throw new Error(
+        "Foi informado um S/N inválido.",
+      );
+    }
+
+    return item.trim();
+  });
+
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(
+      "O mesmo S/N foi selecionado mais de uma vez.",
+    );
+  }
+
+  return ids;
 }
 
 /**
@@ -219,6 +255,7 @@ const equipment =
           select: {
             projectId: true,
             quantity: true,
+            reservedQuantity: true,
             allocatedQuantity: true,
 
             project: {
@@ -228,6 +265,33 @@ const equipment =
             },
           },
         },
+      
+      equipmentUnits: {
+  include: {
+    movements: {
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 1,
+    },
+
+    projectAssignment: {
+      select: {
+        projectEquipmentId: true,
+
+        projectEquipment: {
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    },
+  },
+
+  orderBy: {
+    createdAt: "asc",
+  },
+},
 
         machines: {
   select: {
@@ -296,9 +360,114 @@ const equipment =
     return true;
   });
 
+  const equipmentIds = selectableEquipment.map(
+  (item) => item.id,
+);
+
+const installedComponents =
+  equipmentIds.length > 0
+    ? await prisma.machineComponent.findMany({
+        where: {
+          equipmentId: {
+            in: equipmentIds,
+          },
+
+          status: "INSTALLED",
+
+          serialNumber: {
+            not: null,
+          },
+        },
+
+        select: {
+          equipmentId: true,
+          serialNumber: true,
+        },
+      })
+    : [];
+
+const installedUnitKeys = new Set(
+  installedComponents
+    .filter(
+      (
+        component,
+      ): component is typeof component & {
+        equipmentId: string;
+        serialNumber: string;
+      } =>
+        Boolean(
+          component.equipmentId &&
+            component.serialNumber,
+        ),
+    )
+    .map(
+      (component) =>
+        `${component.equipmentId}:${component.serialNumber
+          .trim()
+          .toUpperCase()}`,
+    ),
+);
+
     const data =
   selectableEquipment.map(
         (item) => {
+          const availableEquipmentUnits =
+  item.equipmentUnits
+    .filter((unit) => {
+      if (unit.condition !== "OPERATIONAL") {
+        return false;
+      }
+
+      const latestMovement =
+        unit.movements[0] ?? null;
+
+      if (
+        latestMovement?.type === "EXIT"
+      ) {
+        return false;
+      }
+
+      const installedKey =
+        `${item.id}:${unit.serialNumber
+          .trim()
+          .toUpperCase()}`;
+
+      if (
+        installedUnitKeys.has(
+          installedKey,
+        )
+      ) {
+        return false;
+      }
+
+      const assignedProjectId =
+        unit.projectAssignment
+          ?.projectEquipment.projectId;
+
+      if (
+        assignedProjectId &&
+        assignedProjectId !== projectId
+      ) {
+        return false;
+      }
+
+      return true;
+    })
+    .map((unit) => ({
+      id: unit.id,
+      serialNumber: unit.serialNumber,
+
+      assignedToCurrentProject:
+        unit.projectAssignment
+          ?.projectEquipment.projectId ===
+        projectId,
+    }));
+
+    const assignedToCurrentProjectCount =
+  availableEquipmentUnits.filter(
+    (unit) =>
+      unit.assignedToCurrentProject,
+  ).length;
           /*
            * Relação deste equipamento
            * com o projeto atual.
@@ -322,6 +491,11 @@ const equipment =
               ?.allocatedQuantity ??
             0;
 
+          const currentProjectReserved =
+            currentReservation
+              ?.reservedQuantity ??
+            0;
+
           /*
            * Só projetos ativos ocupam
            * estoque operacional.
@@ -338,147 +512,126 @@ const equipment =
                 ),
             );
 
-            const totalPendingDemand =
-              activeReservations.reduce(
-                (
-                  total,
-                  reservation,
-                ) =>
-                  total +
-                  Math.max(
-                    reservation.quantity -
-                      reservation.allocatedQuantity,
-                    0,
-                  ),
-                0,
-              );
+            /*
+ * Quantidade atualmente reservada
+ * nos projetos ativos.
+ *
+ * A solicitação, por si só, não deve
+ * ser recalculada ou redistribuída
+ * entre os projetos.
+ */
+const totalReserved =
+  activeReservations.reduce(
+    (
+      total,
+      reservation,
+    ) =>
+      total +
+      Math.max(
+        reservation.reservedQuantity,
+        0,
+      ),
+    0,
+  );
 
-            const pendingByOtherProjects =
-              activeReservations.reduce(
-                (
-                  total,
-                  reservation,
-                ) => {
-                  if (
-                    reservation.projectId ===
-                    projectId
-                  ) {
-                    return total;
-                  }
+/*
+ * Reserva pertencente aos outros
+ * projetos ativos.
+ */
+const reservedByOtherProjects =
+  activeReservations.reduce(
+    (
+      total,
+      reservation,
+    ) => {
+      if (
+        reservation.projectId ===
+        projectId
+      ) {
+        return total;
+      }
 
-                  return (
-                    total +
-                    Math.max(
-                      reservation.quantity -
-                        reservation.allocatedQuantity,
-                      0,
-                    )
-                  );
-                },
-                0,
-              );
+      return (
+        total +
+        Math.max(
+          reservation.reservedQuantity,
+          0,
+        )
+      );
+    },
+    0,
+  );
 
-          /*
-           * Quantidade efetivamente
-           * alocada em projetos ativos.
-           *
-           * IMPORTANTE:
-           *
-           * Não usamos reservation.quantity
-           * aqui, porque quantity representa
-           * a necessidade total.
-           */
-          const totalAllocated =
-            activeReservations.reduce(
-              (
-                total,
-                reservation,
-              ) =>
-                total +
-                Math.max(
-                  reservation
-                    .allocatedQuantity,
-                  0,
-                ),
-              0,
-            );
+/*
+ * Estoque operacional físico atual.
+ *
+ * Unidades já baixadas não fazem
+ * mais parte de Equipment.quantity.
+ */
+const operationalStock =
+  Math.max(
+    item.quantity,
+    0,
+  );
 
-          /*
-           * Alocação dos outros projetos.
-           */
-          const allocatedByOtherProjects =
-            activeReservations.reduce(
-              (
-                total,
-                reservation,
-              ) => {
-                if (
-                  reservation.projectId ===
-                  projectId
-                ) {
-                  return total;
-                }
+/*
+ * Estoque que ainda não está
+ * comprometido com nenhum projeto.
+ */
+const availableNow =
+  Math.max(
+    operationalStock -
+      totalReserved,
+    0,
+  );
 
-                return (
-                  total +
-                  Math.max(
-                    reservation
-                      .allocatedQuantity,
-                    0,
-                  )
-                );
-              },
-              0,
-            );
+/*
+ * Ao editar o projeto atual,
+ * consideramos como disponível:
+ *
+ * - o estoque ainda livre;
+ * - mais aquilo que já está reservado
+ *   para este próprio projeto.
+ *
+ * Assim outro projeto nunca toma
+ * automaticamente esta reserva.
+ */
+const availableForProject =
+  Math.min(
+    operationalStock,
+    Math.max(
+      operationalStock -
+        reservedByOtherProjects,
+      currentProjectReserved,
+    ),
+  );
 
-          /*
-           * Estoque operacional.
-           */
-          const operationalStock =
-            Math.max(
-              item.quantity,
-              0,
-            );
+/*
+ * Quantidade ainda não atendida.
+ *
+ * reservedQuantity = presente no
+ * estoque e comprometida.
+ *
+ * allocatedQuantity = já teve
+ * saída física.
+ */
+const currentProjectShortage =
+  Math.max(
+    currentProjectQuantity -
+      currentProjectReserved -
+      currentProjectAllocated,
+    0,
+  );
 
-          /*
-           * Disponível para qualquer
-           * nova demanda agora.
-           */
-          const inUse =
-            Math.min(
-              operationalStock,
-              totalPendingDemand,
-            );
-
-          const availableNow =
-            Math.max(
-              operationalStock -
-                totalPendingDemand,
-              0,
-            );
-
-          /*
-           * Ao editar a necessidade
-           * deste projeto, devolvemos
-           * virtualmente a alocação dele
-           * para o cálculo.
-           */
-          const availableForProject =
-            Math.max(
-              operationalStock -
-                pendingByOtherProjects,
-              0,
-            );
-
-          /*
-           * Déficit atual deste projeto.
-           */
-          const currentProjectShortage =
-            Math.max(
-              currentProjectQuantity -
-                currentProjectAllocated,
-              0,
-            );
+/*
+ * Quantidade do estoque físico
+ * atualmente comprometida.
+ */
+const inUse =
+  Math.min(
+    operationalStock,
+    totalReserved,
+  );
 
           return {
             id: item.id,
@@ -523,13 +676,13 @@ const equipment =
              * Agora, porém, ele representa
              * quantidade REALMENTE alocada.
              */
-            totalReserved:
-              totalAllocated,
+            totalReserved,
 
-            reservedByOtherProjects:
-              allocatedByOtherProjects,
+            reservedByOtherProjects,
 
             currentProjectQuantity,
+
+            currentProjectReserved,
 
             currentProjectAllocated,
 
@@ -539,6 +692,7 @@ const equipment =
 
             availableNow,
             inUse,
+            availableEquipmentUnits,
           };
         },
       );
@@ -659,6 +813,17 @@ export async function POST(
         body.quantity,
       );
 
+    const equipmentUnitIds =
+  optionalEquipmentUnitIds(
+    body.equipmentUnitIds,
+  );
+
+if (equipmentUnitIds.length > quantity) {
+  throw new Error(
+    "A quantidade de S/N selecionados não pode ser maior que a quantidade solicitada.",
+  );
+}
+
     const result =
       await prisma.$transaction(
         async (
@@ -756,6 +921,142 @@ if (isUnavailableMachine) {
     `"${equipment.name}" é uma máquina indisponível e não pode ser adicionada ao projeto.`,
   );
 }
+
+const selectedEquipmentUnits =
+  equipmentUnitIds.length > 0
+    ? await transaction.equipmentUnit.findMany({
+        where: {
+          id: {
+            in: equipmentUnitIds,
+          },
+        },
+
+        include: {
+          movements: {
+            orderBy: {
+              createdAt: "desc",
+            },
+            take: 1,
+          },
+
+          projectAssignment: {
+            select: {
+              projectEquipmentId: true,
+
+              projectEquipment: {
+                select: {
+                  projectId: true,
+                },
+              },
+            },
+          },
+        },
+      })
+    : [];
+
+if (
+  selectedEquipmentUnits.length !==
+  equipmentUnitIds.length
+) {
+  throw new Error(
+    "Um ou mais S/N selecionados não foram encontrados.",
+  );
+}
+
+const invalidEquipmentUnit =
+  selectedEquipmentUnits.find(
+    (unit) =>
+      unit.equipmentId !== equipmentId,
+  );
+
+if (invalidEquipmentUnit) {
+  throw new Error(
+    `O S/N "${invalidEquipmentUnit.serialNumber}" não pertence ao equipamento selecionado.`,
+  );
+}
+
+const damagedEquipmentUnit =
+  selectedEquipmentUnits.find(
+    (unit) =>
+      unit.condition !== "OPERATIONAL",
+  );
+
+if (damagedEquipmentUnit) {
+  throw new Error(
+    `O S/N "${damagedEquipmentUnit.serialNumber}" não está operacional.`,
+  );
+}
+
+const exitedEquipmentUnit =
+  selectedEquipmentUnits.find(
+    (unit) =>
+      unit.movements[0]?.type === "EXIT",
+  );
+
+if (exitedEquipmentUnit) {
+  throw new Error(
+    `O S/N "${exitedEquipmentUnit.serialNumber}" já possui uma saída ativa.`,
+  );
+}
+
+const assignedEquipmentUnit =
+  selectedEquipmentUnits.find(
+    (unit) =>
+      unit.projectAssignment !== null,
+  );
+
+if (assignedEquipmentUnit) {
+  throw new Error(
+    `O S/N "${assignedEquipmentUnit.serialNumber}" já está designado para outro projeto.`,
+  );
+}
+
+if (selectedEquipmentUnits.length > 0) {
+  const installedComponents =
+    await transaction.machineComponent.findMany({
+      where: {
+        equipmentId,
+
+        status: "INSTALLED",
+
+        serialNumber: {
+          not: null,
+        },
+      },
+
+      select: {
+        serialNumber: true,
+      },
+    });
+
+  const installedSerialNumbers = new Set(
+    installedComponents
+      .map((component) =>
+        component.serialNumber
+          ?.trim()
+          .toUpperCase(),
+      )
+      .filter(
+        (serialNumber): serialNumber is string =>
+          Boolean(serialNumber),
+      ),
+  );
+
+  const installedEquipmentUnit =
+    selectedEquipmentUnits.find((unit) =>
+      installedSerialNumbers.has(
+        unit.serialNumber
+          .trim()
+          .toUpperCase(),
+      ),
+    );
+
+  if (installedEquipmentUnit) {
+    throw new Error(
+      `O S/N "${installedEquipmentUnit.serialNumber}" está instalado em uma máquina e não pode ser designado ao projeto.`,
+    );
+  }
+}
           /*
            * Estoque zerado ou status
            * UNAVAILABLE não impedem a
@@ -838,72 +1139,90 @@ if (isUnavailableMachine) {
 
                 select: {
                   quantity: true,
+                  reservedQuantity: true,
                   allocatedQuantity:
                     true,
                 },
               },
             );
 
-          const pendingByOtherProjects =
+          /*
+          * Quantidade já reservada pelos
+          * outros projetos ativos.
+          *
+          * Somente reservas persistidas
+          * comprometem o estoque.
+          */
+          const reservedByOtherProjects =
             activeProjectEquipment.reduce(
               (
                 total,
                 item,
-              ) => {
-                const pending =
-                  Math.max(
-                    item.quantity -
-                      item.allocatedQuantity,
-                    0,
-                  );
-
-                return (
-                  total +
-                  pending
-                );
-              },
+              ) =>
+                total +
+                Math.max(
+                  item.reservedQuantity,
+                  0,
+                ),
               0,
             );
 
           /*
-           * Estoque que ainda pode,
-           * teoricamente, cobrir a nova
-           * necessidade.
-           *
-           * Isso é somente informativo.
-           */
+          * Estoque operacional que ainda
+          * não está reservado.
+          */
           const availableStock =
             Math.max(
               operationalStock -
-                pendingByOtherProjects,
+                reservedByOtherProjects,
               0,
             );
 
-          const coveredByStock =
+          /*
+          * Ao criar a solicitação, reservamos
+          * automaticamente tudo o que estiver
+          * disponível, limitado à quantidade
+          * solicitada.
+          */
+          const reservedQuantity =
             Math.min(
               quantity,
               availableStock,
             );
 
+          /*
+          * O que não pôde ser reservado
+          * permanece como déficit para compra.
+          */
           const shortage =
             Math.max(
               quantity -
-                coveredByStock,
+                reservedQuantity,
               0,
             );
 
           /*
-           * CRÍTICO:
-           *
-           * Ao adicionar o equipamento
-           * ao projeto, NÃO ocorre baixa.
-           *
-           * allocatedQuantity só deve ser
-           * alterado quando houver uma
-           * saída física real.
-           */
-          const allocatedQuantity =
-            0;
+          * S/N selecionados representam
+          * unidades físicas reservadas.
+          *
+          * Não podemos designar mais S/N
+          * do que a quantidade que realmente
+          * conseguiu ser reservada.
+          */
+          if (
+            equipmentUnitIds.length >
+            reservedQuantity
+          ) {
+            throw new Error(
+              "Não há estoque livre suficiente para reservar todos os S/N selecionados.",
+            );
+          }
+
+          /*
+          * Nenhuma baixa física ocorre nesta
+          * etapa.
+          */
+          const allocatedQuantity = 0;
 
           const projectEquipment =
             await transaction.projectEquipment.create(
@@ -912,24 +1231,48 @@ if (isUnavailableMachine) {
                   projectId,
                   equipmentId,
                   quantity,
-                  allocatedQuantity:
-                    0,
-                },
+                  reservedQuantity,
+                  allocatedQuantity: 0,
+
+  equipmentUnits:
+    equipmentUnitIds.length > 0
+      ? {
+          create:
+            equipmentUnitIds.map(
+              (equipmentUnitId) => ({
+                equipmentUnitId,
+              }),
+            ),
+        }
+      : undefined,
+},
 
                 include: {
                   equipment: {
-  select: {
-    id: true,
-    name: true,
-    category: true,
-    manufacturer: true,
-    model: true,
-    quantity: true,
-    installedQuantity: true,
-    status: true,
-    condition: true,
-  },
+                    select: {
+                      id: true,
+                      name: true,
+                      category: true,
+                      manufacturer: true,
+                      model: true,
+                      quantity: true,
+                      installedQuantity: true,
+                      status: true,
+                      condition: true,
+                    },
                   },
+
+                equipmentUnits: {
+                  include: {
+                    equipmentUnit: {
+                      select: {
+                        id: true,
+                        serialNumber: true,
+                        condition: true,
+                      },
+                    },
+                  },
+                },
                 },
               },
             );
@@ -937,7 +1280,7 @@ if (isUnavailableMachine) {
           return {
             projectEquipment,
             allocatedQuantity,
-            coveredByStock,
+            reservedQuantity,
             shortage,
             availableStock,
           };
@@ -953,7 +1296,7 @@ if (isUnavailableMachine) {
     const {
       projectEquipment,
       allocatedQuantity,
-      coveredByStock,
+      reservedQuantity,
       shortage,
       availableStock,
     } = result;
@@ -962,11 +1305,11 @@ if (isUnavailableMachine) {
 
     if (
       shortage > 0 &&
-      coveredByStock > 0
+      reservedQuantity > 0
     ) {
       message =
         `Equipamento adicionado ao projeto. ` +
-        `${coveredByStock} unidade(s) podem ser atendidas pelo estoque atual e ` +
+        `${reservedQuantity} unidade(s) podem ser atendidas pelo estoque atual e ` +
         `${shortage} unidade(s) ficaram como déficit para compra.`;
     } else if (
       shortage > 0
@@ -993,7 +1336,7 @@ if (isUnavailableMachine) {
 
           allocatedQuantity,
 
-          coveredByStock,
+          reservedQuantity,
 
           availableStock,
 
@@ -1011,22 +1354,31 @@ if (isUnavailableMachine) {
     );
 
     if (
-      error instanceof
-        Prisma.PrismaClientKnownRequestError &&
-      error.code ===
-        "P2002"
-    ) {
-      return Response.json(
-        {
-          success: false,
-          message:
-            "Este equipamento já está vinculado ao projeto.",
-        },
-        {
-          status: 409,
-        },
-      );
-    }
+  error instanceof
+    Prisma.PrismaClientKnownRequestError &&
+  error.code === "P2002"
+) {
+  const target = Array.isArray(
+    error.meta?.target,
+  )
+    ? error.meta.target.map(String)
+    : [];
+
+  const isEquipmentUnitConflict =
+    target.includes("equipmentUnitId");
+
+  return Response.json(
+    {
+      success: false,
+      message: isEquipmentUnitConflict
+        ? "Um ou mais S/N selecionados acabaram de ser designados para outro projeto. Atualize os dados e tente novamente."
+        : "Este equipamento já está vinculado ao projeto.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
 
     if (
       error instanceof

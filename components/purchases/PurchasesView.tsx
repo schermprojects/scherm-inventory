@@ -34,11 +34,17 @@ type ProjectStatus =
   | "COMPLETED"
   | "CANCELLED";
 
+type PurchaseStatus =
+  | "REQUESTED"
+  | "ACQUIRED"
+  | null;
+
 type PurchaseProject = {
   id: string;
   name: string;
   clientName: string | null;
   status: ProjectStatus;
+  purchaseStatus: PurchaseStatus;
   quantity: number;
 };
 
@@ -535,6 +541,60 @@ export function PurchasesView({
     await loadPurchases();
   }
 
+async function updatePurchaseStatus(
+  projectId: string,
+  equipmentId: string,
+  status: PurchaseStatus,
+) {
+  try {
+    const response = await fetch(
+      "/api/purchases",
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type":
+            "application/json",
+          Accept:
+            "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          equipmentId,
+          status,
+        }),
+      },
+    );
+
+    const data =
+      (await response.json()) as PurchasesResponse;
+
+    if (
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        getApiMessage(data) ??
+          "Não foi possível atualizar o status da compra.",
+      );
+    }
+
+    setFeedback({
+      type: "success",
+      message:
+        data.message ??
+        "Status da compra atualizado.",
+    });
+
+    await loadPurchases();
+  } catch (error) {
+    setFeedback({
+      type: "error",
+      message:
+        getErrorMessage(error),
+    });
+  }
+}
+
   function handlePrint() {
   window.print();
 }
@@ -546,7 +606,7 @@ export function PurchasesView({
       issuedAt={issuedAt}
     />
 
-    <div className="space-y-5 print:hidden">      
+    <div className="space-y-5 print:hidden">
       {!reportMode ? (
         <header className="print-hidden flex flex-wrap justify-end gap-2">
         <button
@@ -926,6 +986,9 @@ export function PurchasesView({
                             item,
                           )
                         }
+                        onPurchaseStatusChange={
+                          updatePurchaseStatus
+                        }
                         reportMode={
                           reportMode
                         }
@@ -956,6 +1019,9 @@ export function PurchasesView({
                       openStockEntry(
                         item,
                       )
+                    }
+                    onPurchaseStatusChange={
+                      updatePurchaseStatus
                     }
                     reportMode={
                       reportMode
@@ -1006,14 +1072,21 @@ function EquipmentRows({
   expanded,
   onToggle,
   onStockEntry,
+  onPurchaseStatusChange,
   reportMode,
 }: {
   item: PurchaseItem;
   expanded: boolean;
   onToggle: () => void;
   onStockEntry: () => void;
+  onPurchaseStatusChange: (
+    projectId: string,
+    equipmentId: string,
+    status: PurchaseStatus,
+  ) => Promise<void>;
   reportMode: boolean;
 }) {
+
   const description =
     getEquipmentDescription(item);
 
@@ -1147,6 +1220,9 @@ function EquipmentRows({
           >
             <ProjectsList
               item={item}
+              onPurchaseStatusChange={
+                onPurchaseStatusChange
+              }
             />
           </td>
         </tr>
@@ -1160,12 +1236,18 @@ function EquipmentCard({
   expanded,
   onToggle,
   onStockEntry,
+  onPurchaseStatusChange,
   reportMode,
 }: {
   item: PurchaseItem;
   expanded: boolean;
   onToggle: () => void;
   onStockEntry: () => void;
+  onPurchaseStatusChange: (
+    projectId: string,
+    equipmentId: string,
+    status: PurchaseStatus,
+  ) => Promise<void>;
   reportMode: boolean;
 }) {
   const description =
@@ -1297,6 +1379,9 @@ function EquipmentCard({
         <div className="mt-4 border-t border-zinc-200 pt-4">
           <ProjectsList
             item={item}
+            onPurchaseStatusChange={
+              onPurchaseStatusChange
+            }
           />
         </div>
       ) : null}
@@ -1306,8 +1391,14 @@ function EquipmentCard({
 
 function ProjectsList({
   item,
+  onPurchaseStatusChange,
 }: {
   item: PurchaseItem;
+  onPurchaseStatusChange: (
+    projectId: string,
+    equipmentId: string,
+    status: PurchaseStatus,
+  ) => Promise<void>;
 }) {
   if (
     item.projects.length === 0
@@ -1337,45 +1428,92 @@ function ProjectsList({
 
       <div className="grid gap-2 xl:grid-cols-2">
         {item.projects.map(
-          (project) => (
-            <Link
-              key={project.id}
-              href={`/projects/${project.id}`}
-              className="flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-3 py-3 transition hover:border-orange-200 hover:bg-orange-50"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-zinc-900">
-                  {project.name}
-                </p>
+  (project) => (
+    <div
+      key={project.id}
+      className="flex min-h-[88px] items-center justify-between gap-5 rounded-lg border border-zinc-200 bg-white px-4 py-4"
+    >
+      <div className="min-w-0 flex-1">
+        <Link
+          href={`/projects/${project.id}`}
+          className="inline-block truncate text-sm font-semibold text-zinc-900 transition hover:text-[#F57B00] hover:underline"
+        >
+          {project.name}
+        </Link>
 
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-zinc-500">
-                    {project.clientName ||
-                      "Cliente não informado"}
-                  </span>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-500">
+            {project.clientName ||
+              "Cliente não informado"}
+          </span>
 
-                  <ProjectStatusBadge
-                    status={
-                      project.status
-                    }
-                  />
-                </div>
-              </div>
+          <ProjectStatusBadge
+            status={
+              project.status
+            }
+          />
 
-              <div className="shrink-0 text-right">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400">
-                  Necessário
-                </p>
+          <select
+            value={
+              project.purchaseStatus ?? ""
+            }
+           onChange={(event) => {
+            const value =
+              event.target.value;
 
-                <p className="text-lg font-bold text-blue-700">
-                  {
-                    project.quantity
-                  }
-                </p>
-              </div>
-            </Link>
-          ),
-        )}
+            const status: PurchaseStatus =
+              value === ""
+                ? null
+                : value === "REQUESTED"
+                  ? "REQUESTED"
+                  : value === "ACQUIRED"
+                    ? "ACQUIRED"
+                    : null;
+
+            void onPurchaseStatusChange(
+              project.id,
+              item.equipmentId,
+              status,
+            );
+          }}
+            className={[
+              "h-7 min-w-[130px] rounded-full border px-2 text-[11px] font-semibold outline-none",
+              project.purchaseStatus ===
+              "ACQUIRED"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : project.purchaseStatus ===
+                    "REQUESTED"
+                  ? "border-blue-200 bg-blue-50 text-blue-700"
+                  : "border-zinc-200 bg-zinc-100 text-zinc-600",
+            ].join(" ")}
+          >
+            <option value="">
+              Não solicitado
+            </option>
+
+            <option value="REQUESTED">
+              Solicitado
+            </option>
+
+            <option value="ACQUIRED">
+              Adquirido
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div className="shrink-0 text-right">
+        <p className="text-[10px] uppercase tracking-wide text-zinc-400">
+          Necessário
+        </p>
+
+        <p className="mt-1 text-lg font-bold text-blue-700">
+          {project.quantity}
+        </p>
+      </div>
+    </div>
+  ),
+)}
       </div>
     </div>
   );

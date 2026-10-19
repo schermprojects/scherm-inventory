@@ -608,6 +608,7 @@ async function buildStockAllocation(
         projectId: true,
         equipmentId: true,
         quantity: true,
+        reservedQuantity: true,
         allocatedQuantity:
           true,
 
@@ -623,176 +624,109 @@ async function buildStockAllocation(
     }),
   ]);
 
-  const remainingStockByEquipment =
-    new Map<string, number>(
-      equipmentRecords.map(
-        (equipment) => [
-          equipment.id,
+  const totalReservedByEquipment =
+  new Map<string, number>();
 
-          Math.max(
-            equipment.quantity,
-            0,
-          ),
-        ],
-      ),
-    );
-
-/*
- * Ordem determinística de
- * atendimento:
- *
- * 1. Em andamento;
- * 2. Planejamento;
- * 3. Prioridade;
- * 4. Prazo mais próximo;
- * 5. Projeto mais antigo;
- * 6. ID como desempate.
- */
-  const orderedDemand =
-    [
-      ...activeProjectEquipment,
-    ].sort(
-      (left, right) => {
-        const statusDifference =
-          PROJECT_STATUS_WEIGHT[
-            left.project.status
-          ] -
-          PROJECT_STATUS_WEIGHT[
-            right.project.status
-          ];
-
-        if (
-          statusDifference !== 0
-        ) {
-          return statusDifference;
-        }
-
-        const priorityDifference =
-          PROJECT_PRIORITY_WEIGHT[
-            left.project.priority
-          ] -
-          PROJECT_PRIORITY_WEIGHT[
-            right.project.priority
-          ];
-
-        if (
-          priorityDifference !== 0
-        ) {
-          return priorityDifference;
-        }
-
-        const leftDueDate =
-          left.project.dueDate
-            ?.getTime() ??
-          Number.MAX_SAFE_INTEGER;
-
-        const rightDueDate =
-          right.project.dueDate
-            ?.getTime() ??
-          Number.MAX_SAFE_INTEGER;
-
-        if (
-          leftDueDate !==
-          rightDueDate
-        ) {
-          return (
-            leftDueDate -
-            rightDueDate
-          );
-        }
-
-        const createdDifference =
-          left.project.createdAt.getTime() -
-          right.project.createdAt.getTime();
-
-        if (
-          createdDifference !== 0
-        ) {
-          return createdDifference;
-        }
-
-        return left.projectId.localeCompare(
-          right.projectId,
-        );
-      },
-    );
-
-  const allocation =
-    new Map<
-      string,
-      ProjectStockAllocation
-    >();
-
-  for (
-    const item of
-    orderedDemand
-  ) {
-    /*
-     * quantity:
-     * necessidade total.
-     *
-     * allocatedQuantity:
-     * quantidade que já teve
-     * baixa física.
-     *
-     * Portanto, somente a diferença
-     * ainda disputa o estoque atual.
-     */
-    const pendingQuantity =
-      Math.max(
-        item.quantity -
-          item.allocatedQuantity,
-        0,
-      );
-
-    const availableBeforeProject =
-      Math.max(
-        remainingStockByEquipment.get(
-          item.equipmentId,
-        ) ?? 0,
-        0,
-      );
-
-    const coveredByStock =
-      Math.min(
-        pendingQuantity,
-        availableBeforeProject,
-      );
-
-    const availableAfterProject =
-      Math.max(
-        availableBeforeProject -
-          coveredByStock,
-        0,
-      );
-
-    const shortage =
-      Math.max(
-        pendingQuantity -
-          coveredByStock,
-        0,
-      );
-
-    remainingStockByEquipment.set(
+for (
+  const item of
+  activeProjectEquipment
+) {
+  const currentTotal =
+    totalReservedByEquipment.get(
       item.equipmentId,
-      availableAfterProject,
-    );
+    ) ?? 0;
 
-    allocation.set(
-      getProjectEquipmentKey(
-        item.projectId,
-        item.equipmentId,
+  totalReservedByEquipment.set(
+    item.equipmentId,
+    currentTotal +
+      Math.max(
+        item.reservedQuantity,
+        0,
       ),
-      {
-        availableBeforeProject,
-        coveredByStock,
-        availableAfterProject,
-        shortage,
-      },
-    );
-  }
+  );
+}
 
-  return allocation;
+const allocation =
+  new Map<
+    string,
+    ProjectStockAllocation
+  >();
+
+for (
+  const item of
+  activeProjectEquipment
+) {
+  const physicalStock =
+    Math.max(
+      equipmentRecords.find(
+        (equipment) =>
+          equipment.id ===
+          item.equipmentId,
+      )?.quantity ?? 0,
+      0,
+    );
+
+  const reservedQuantity =
+    Math.max(
+      item.reservedQuantity,
+      0,
+    );
+
+  const totalReserved =
+    Math.max(
+      totalReservedByEquipment.get(
+        item.equipmentId,
+      ) ?? 0,
+      0,
+    );
+
+  const reservedByOtherProjects =
+    Math.max(
+      totalReserved -
+        reservedQuantity,
+      0,
+    );
+
+  const availableBeforeProject =
+    Math.max(
+      physicalStock -
+        reservedByOtherProjects,
+      0,
+    );
+
+  const coveredByStock =
+    reservedQuantity;
+
+  const availableAfterProject =
+    Math.max(
+      physicalStock -
+        totalReserved,
+      0,
+    );
+
+  const shortage =
+    Math.max(
+      item.quantity -
+        item.allocatedQuantity -
+        reservedQuantity,
+      0,
+    );
+
+  allocation.set(
+    getProjectEquipmentKey(
+      item.projectId,
+      item.equipmentId,
+    ),
+    {
+      availableBeforeProject,
+      coveredByStock,
+      availableAfterProject,
+      shortage,
+    },
+  );
+}
+
+return allocation;
 }
 
 function serializeProject(
@@ -1752,6 +1686,129 @@ export async function POST(
     );
   }
 }
+
+const projectWillBeActive =
+  ACTIVE_PROJECT_STATUSES.includes(
+    status,
+  );
+
+const activeReservations =
+  projectWillBeActive &&
+  selectedEquipment.length > 0
+    ? await transaction.projectEquipment.findMany(
+        {
+          where: {
+            equipmentId: {
+              in: selectedEquipment.map(
+                (item) =>
+                  item.equipmentId,
+              ),
+            },
+
+            project: {
+              status: {
+                in:
+                  ACTIVE_PROJECT_STATUSES,
+              },
+            },
+          },
+
+          select: {
+            equipmentId: true,
+            reservedQuantity: true,
+          },
+        },
+      )
+    : [];
+
+const reservedByEquipment =
+  new Map<string, number>();
+
+for (
+  const reservation of
+  activeReservations
+) {
+  const currentReserved =
+    reservedByEquipment.get(
+      reservation.equipmentId,
+    ) ?? 0;
+
+  reservedByEquipment.set(
+    reservation.equipmentId,
+    currentReserved +
+      Math.max(
+        reservation.reservedQuantity,
+        0,
+      ),
+  );
+}
+
+const equipmentStock =
+  selectedEquipment.length > 0
+    ? await transaction.equipment.findMany({
+        where: {
+          id: {
+            in: selectedEquipment.map(
+              (item) =>
+                item.equipmentId,
+            ),
+          },
+        },
+
+        select: {
+          id: true,
+          quantity: true,
+        },
+      })
+    : [];
+
+const physicalStockByEquipment =
+  new Map(
+    equipmentStock.map(
+      (equipment) => [
+        equipment.id,
+        Math.max(
+          equipment.quantity,
+          0,
+        ),
+      ],
+    ),
+  );
+
+const reservedQuantityByEquipment =
+  new Map<string, number>();
+
+for (
+  const item of
+  selectedEquipment
+) {
+  const physicalStock =
+    physicalStockByEquipment.get(
+      item.equipmentId,
+    ) ?? 0;
+
+  const alreadyReserved =
+    reservedByEquipment.get(
+      item.equipmentId,
+    ) ?? 0;
+
+  const availableStock =
+    projectWillBeActive
+      ? Math.max(
+          physicalStock -
+            alreadyReserved,
+          0,
+        )
+      : 0;
+
+  reservedQuantityByEquipment.set(
+    item.equipmentId,
+    Math.min(
+      item.quantity,
+      availableStock,
+    ),
+  );
+}
           return transaction.project.create(
             {
               data: {
@@ -1808,6 +1865,11 @@ export async function POST(
                                */
                               quantity:
                                 item.quantity,
+
+                              reservedQuantity:
+                                reservedQuantityByEquipment.get(
+                                  item.equipmentId,
+                                ) ?? 0,
 
                               /*
                                * CRÍTICO:

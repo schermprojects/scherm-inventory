@@ -1,5 +1,4 @@
 import { auth } from "@/auth";
-import { calculateStock } from "@/lib/inventory/calculateStock";
 import {
   EquipmentCondition,
   EquipmentStatus,
@@ -108,6 +107,43 @@ const canDeleteEquipment =
       },
 
       include: {
+equipmentUnits: {
+  orderBy: {
+    createdAt: "asc",
+  },
+
+  include: {
+    movements: {
+      orderBy: {
+        createdAt: "desc",
+      },
+
+      take: 1,
+
+      select: {
+        type: true,
+      },
+    },
+
+    projectAssignment: {
+      select: {
+        projectEquipment: {
+          select: {
+            projectId: true,
+
+            project: {
+              select: {
+                name: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+},
+
         images: {
           orderBy: {
             position: "asc",
@@ -128,6 +164,8 @@ const canDeleteEquipment =
 
           select: {
             quantity: true,
+            reservedQuantity: true,
+            allocatedQuantity: true,
 
             project: {
               select: {
@@ -261,53 +299,135 @@ const canManageThisEquipment =
     .filter(Boolean)
     .join(" · ");
 
-  /*
- * Necessidade total de todos os
- * projetos ativos.
- *
- * ProjectEquipment.quantity representa
- * quantas unidades o projeto necessita.
- *
- * Não descontamos allocatedQuantity aqui,
- * porque queremos saber quanto do estoque
- * operacional está comprometido pela
- * demanda ativa como um todo.
- */
-const requestedQuantity =
+const operationalEquipmentUnits =
+  equipment.equipmentUnits.filter(
+    (unit) =>
+      unit.condition === "OPERATIONAL" &&
+      unit.movements[0]?.type !== "EXIT",
+  );
+
+const damagedEquipmentUnits =
+  equipment.equipmentUnits.filter(
+    (unit) =>
+      unit.condition === "DAMAGED" &&
+      unit.movements[0]?.type !== "EXIT",
+  );
+
+const serialNumbers =
+  equipment.equipmentUnits.length > 0
+    ? operationalEquipmentUnits.map(
+        (unit) => unit.serialNumber,
+      )
+    : equipment.serialNumber
+      ? [equipment.serialNumber]
+      : [];
+
+const damagedSerialNumbers =
+  damagedEquipmentUnits.map(
+    (unit) => unit.serialNumber,
+  );
+
+const assignedSerialNumbers =
+  operationalEquipmentUnits
+    .filter((unit) => {
+      const projectAssignment =
+        unit.projectAssignment;
+
+      if (!projectAssignment) {
+        return false;
+      }
+
+      return [
+        "PLANNING",
+        "IN_PROGRESS",
+      ].includes(
+        projectAssignment
+          .projectEquipment
+          .project
+          .status,
+      );
+    })
+    .map(
+      (unit) =>
+        unit.serialNumber,
+    );
+
+const identifiedUnitsCount =
+  serialNumbers.length;
+
+  const operationalStock =
+  Math.max(
+    equipment.quantity,
+    0,
+  );
+
+const installedQuantity =
+  Math.max(
+    equipment.installedQuantity,
+    0,
+  );
+
+const damagedQuantity =
+  Math.max(
+    equipment.damagedQuantity,
+    0,
+  );
+
+const physicalStock =
+  operationalStock +
+  installedQuantity +
+  damagedQuantity;
+
+const inUse =
   equipment.projects.reduce(
-    (total, item) =>
+    (
+      total,
+      projectEquipment,
+    ) =>
       total +
       Math.max(
-        item.quantity,
+        projectEquipment.reservedQuantity,
         0,
       ),
     0,
   );
 
-const {
-  physicalStock,
-  operationalStock,
-  installedQuantity,
-  inUse,
-  availableStock,
-  damagedQuantity,
-  shortage,
-} = calculateStock(
-  equipment.quantity,
-  requestedQuantity,
-  equipment.damagedQuantity,
-  equipment.installedQuantity,
-);
+const availableStock =
+  Math.max(
+    operationalStock - inUse,
+    0,
+  );
 
-/*
- * Demanda total dos projetos ativos.
- *
- * Representa quantas unidades deste
- * equipamento são necessárias somando
- * todos os projetos em PLANNING e
- * IN_PROGRESS.
- */
-const activeDemand = requestedQuantity;
+const shortage =
+  equipment.projects.reduce(
+    (
+      total,
+      projectEquipment,
+    ) =>
+      total +
+      Math.max(
+        projectEquipment.quantity -
+          projectEquipment.allocatedQuantity -
+          projectEquipment.reservedQuantity,
+        0,
+      ),
+    0,
+  );
+
+const activeDemand =
+  equipment.projects.reduce(
+    (
+      total,
+      projectEquipment,
+    ) =>
+      total +
+      Math.max(
+        projectEquipment.quantity -
+          projectEquipment.allocatedQuantity,
+        0,
+      ),
+    0,
+  );
 
   const physicalStockLabel =
     `${physicalStock} ${
@@ -852,9 +972,11 @@ if (
                 </p>
 
                 <p className="mt-2 text-xs font-medium text-zinc-400">
-                  {equipment.serialNumber
-                    ? `Número de série: ${equipment.serialNumber}`
-                    : "Sem número de série"}
+                  {identifiedUnitsCount === 0
+                    ? "Sem número de série"
+                    : identifiedUnitsCount === 1
+                      ? `Número de série: ${serialNumbers[0]}`
+                      : `${identifiedUnitsCount} unidades identificadas por S/N`}
                 </p>
               </div>
             </div>
@@ -899,13 +1021,17 @@ if (
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
   {canManageThisEquipment ? (
-  <EquipmentStockManager
-    equipmentId={equipment.id}
-    equipmentName={equipment.name}
-    operationalStock={operationalStock}
-    damagedQuantity={damagedQuantity}
-    activeDemand={activeDemand}
-  />
+<EquipmentStockManager
+  equipmentId={equipment.id}
+  equipmentName={equipment.name}
+  operationalStock={operationalStock}
+  damagedQuantity={damagedQuantity}
+  activeDemand={activeDemand}
+  serialNumbers={serialNumbers}
+  assignedSerialNumbers={
+  assignedSerialNumbers
+}
+/>
 ) : (
   <SummaryCard
     icon={Boxes}
@@ -1184,13 +1310,81 @@ if (
                 }
               />
 
-              <DetailItem
-                label="Número de série"
-                value={
-                  equipment.serialNumber ||
-                  "Não informado"
-                }
-              />
+              <div className="min-w-0">
+                <dt className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  {identifiedUnitsCount === 1
+                    ? "Número de série"
+                    : "Números de série"}
+                </dt>
+
+                <dd className="mt-1.5">
+                  {serialNumbers.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {serialNumbers.map(
+                        (serialNumber) => {
+                          const isAssigned =
+                            assignedSerialNumbers.includes(
+                              serialNumber,
+                            );
+
+                          return (
+                            <span
+                              key={serialNumber}
+                              className={[
+                                "inline-flex max-w-full rounded-md px-2 py-1 text-xs font-medium",
+
+                                isAssigned
+                                  ? "bg-blue-50 text-blue-700"
+                                  : "bg-zinc-100 text-zinc-700",
+                              ].join(" ")}
+                              title={
+                                isAssigned
+                                  ? `${serialNumber} — Designado a projeto`
+                                  : `${serialNumber} — Em estoque`
+                              }
+                            >
+                              <span className="break-all">
+                                {serialNumber}
+                              </span>
+                            </span>
+                          );
+                        },
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-sm font-medium text-zinc-800">
+                      Não informado
+                    </span>
+                  )}
+                </dd>
+              </div>
+
+              {damagedSerialNumbers.length > 0 ? (
+  <div className="min-w-0">
+    <dt className="text-xs font-semibold uppercase tracking-wide text-red-500">
+      {damagedSerialNumbers.length === 1
+        ? "S/N danificado"
+        : "S/N danificados"}
+    </dt>
+
+    <dd className="mt-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {damagedSerialNumbers.map(
+          (serialNumber) => (
+            <span
+              key={serialNumber}
+              className="inline-flex max-w-full rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
+            >
+              <span className="break-all">
+                {serialNumber}
+              </span>
+            </span>
+          ),
+        )}
+      </div>
+    </dd>
+  </div>
+) : null}
 
               <DetailItem
                 label="Estoque físico"

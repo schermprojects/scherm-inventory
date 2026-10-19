@@ -8,9 +8,9 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Scherm Inventory",
-    template: "%s | Scherm Inventory",
-  },
+  default: "Schermix",
+  template: "%s | Schermix",
+},
   description:
     "Controle interno de equipamentos e estoque de infraestrutura e HPC.",
 };

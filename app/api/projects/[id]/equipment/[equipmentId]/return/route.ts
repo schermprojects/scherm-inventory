@@ -34,6 +34,7 @@ type ReturnCondition =
 type ReturnEquipmentBody = {
   quantity?: unknown;
   condition?: unknown;
+  equipmentUnitIds?: unknown;
 };
 
 /*
@@ -81,6 +82,46 @@ function parseReturnCondition(
   throw new Error(
     "A condição da devolução é inválida.",
   );
+}
+
+function parseEquipmentUnitIds(
+  value: unknown,
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "Os números de série selecionados para devolução são inválidos.",
+    );
+  }
+
+  const equipmentUnitIds = value.map(
+    (item) => {
+      if (
+        typeof item !== "string" ||
+        !item.trim()
+      ) {
+        throw new Error(
+          "Os números de série selecionados para devolução são inválidos.",
+        );
+      }
+
+      return item.trim();
+    },
+  );
+
+  if (
+    new Set(equipmentUnitIds).size !==
+    equipmentUnitIds.length
+  ) {
+    throw new Error(
+      "Existem unidades repetidas na devolução.",
+    );
+  }
+
+  return equipmentUnitIds;
 }
 
 /**
@@ -160,6 +201,11 @@ export async function POST(
     const condition =
       parseReturnCondition(
         body.condition,
+      );
+
+    const equipmentUnitIds =
+      parseEquipmentUnitIds(
+        body.equipmentUnitIds,
       );
 
     const result =
@@ -277,6 +323,87 @@ export async function POST(
             );
           }
 
+          const equipmentUnits =
+            await transaction.equipmentUnit.findMany({
+              where: {
+                equipmentId,
+              },
+
+              select: {
+                id: true,
+                serialNumber: true,
+
+                movements: {
+                  orderBy: {
+                    createdAt: "desc",
+                  },
+
+                  take: 1,
+
+                  select: {
+                    type: true,
+                    projectId: true,
+                  },
+                },
+              },
+            });
+
+          const returnableEquipmentUnits =
+            equipmentUnits.filter(
+              (unit) =>
+                unit.movements[0]?.type === "EXIT" &&
+                unit.movements[0]?.projectId ===
+                  projectId,
+            );
+            
+          const selectedEquipmentUnits =
+            returnableEquipmentUnits.filter(
+              (unit) =>
+                equipmentUnitIds.includes(unit.id),
+            );
+
+          if (
+            selectedEquipmentUnits.length !==
+            equipmentUnitIds.length
+          ) {
+            throw new Error(
+              "INVALID_RETURN_EQUIPMENT_UNITS",
+            );
+          }
+
+          if (
+            selectedEquipmentUnits.length >
+            quantity
+          ) {
+            throw new Error(
+              "RETURN_EQUIPMENT_UNITS_EXCEED_QUANTITY",
+            );
+          }
+
+          const serializedQuantityToReturn =
+            selectedEquipmentUnits.length;
+
+          const genericQuantityToReturn =
+            quantity - serializedQuantityToReturn;
+
+          const serializedQuantityStillOut =
+            returnableEquipmentUnits.length;
+
+          const genericQuantityStillOut =
+            Math.max(
+              projectEquipment.allocatedQuantity -
+                serializedQuantityStillOut,
+              0,
+            );
+
+          if (
+            genericQuantityToReturn >
+            genericQuantityStillOut
+          ) {
+            throw new Error(
+              "RETURN_GENERIC_QUANTITY_EXCEEDS_AVAILABLE",
+            );
+          }
           /*
           * Um Equipment pode representar a unidade principal de uma
           * Machine. Precisamos identificar esse vínculo para sincronizar
@@ -390,27 +517,60 @@ export async function POST(
             );
           }
 
- /*
- * A unidade devolvida deixa de fazer
- * parte da quantidade atual do projeto
- * e também deixa de estar baixada.
- */
-const remainingProjectQuantity =
-  projectEquipment.quantity -
-  quantity;
+     if (selectedEquipmentUnits.length > 0) {
+      await transaction.equipmentUnitMovement.createMany({
+        data: selectedEquipmentUnits.map(
+          (unit) => ({
+            type: "RETURN",
+            equipmentUnitId: unit.id,
+            projectId,
+          }),
+        ),
+      });
+    } 
+    
+    if (selectedEquipmentUnits.length > 0) {
+  await transaction.equipmentUnit.updateMany({
+    where: {
+      id: {
+        in: selectedEquipmentUnits.map(
+          (unit) => unit.id,
+        ),
+      },
+    },
 
+    data: {
+      condition:
+        condition === "DAMAGED"
+          ? "DAMAGED"
+          : "OPERATIONAL",
+    },
+  });
+}
+
+/*
+ * A devolução não altera a necessidade
+ * total do projeto.
+ *
+ * quantity continua representando quanto
+ * o projeto precisa.
+ *
+ * allocatedQuantity diminui porque a unidade
+ * deixou de estar fisicamente baixada.
+ *
+ * Em uma devolução NORMAL, a unidade retorna
+ * ao estoque e volta a ficar reservada para
+ * este mesmo projeto.
+ *
+ * Em uma devolução DAMAGED, ela não pode
+ * compor a reserva operacional e o projeto
+ * passa a apresentar déficit.
+ */
 const remainingAllocatedQuantity =
   projectEquipment.allocatedQuantity -
   quantity;
 
-/*
- * Esta validação é uma proteção extra.
- * Em condições normais ela nunca deve
- * acontecer, porque allocatedQuantity
- * não deve ser maior que quantity.
- */
 if (
-  remainingProjectQuantity < 0 ||
   remainingAllocatedQuantity < 0
 ) {
   throw new Error(
@@ -418,66 +578,30 @@ if (
   );
 }
 
-let updatedProjectEquipment: {
-  id: string;
-  quantity: number;
-  allocatedQuantity: number;
-};
+const nextReservedQuantity =
+  projectEquipment.reservedQuantity;
 
-if (remainingProjectQuantity === 0) {
-  /*
-   * Todas as unidades desse equipamento
-   * foram devolvidas.
-   *
-   * Remove o vínculo atual do projeto.
-   * O histórico continua preservado nos
-   * movimentos de estoque e auditoria.
-   */
-  await transaction.projectEquipment.delete({
+const updatedProjectEquipment =
+  await transaction.projectEquipment.update({
     where: {
-      id:
-        projectEquipment.id,
+      id: projectEquipment.id,
+    },
+
+    data: {
+      allocatedQuantity:
+        remainingAllocatedQuantity,
+
+      reservedQuantity:
+        nextReservedQuantity,
+    },
+
+    select: {
+      id: true,
+      quantity: true,
+      reservedQuantity: true,
+      allocatedQuantity: true,
     },
   });
-
-  updatedProjectEquipment = {
-    id:
-      projectEquipment.id,
-
-    quantity: 0,
-
-    allocatedQuantity: 0,
-  };
-} else {
-  /*
-   * Ainda existem unidades desse
-   * equipamento no projeto.
-   *
-   * Reduz tanto a quantidade atual do
-   * projeto quanto a quantidade baixada.
-   */
-  updatedProjectEquipment =
-    await transaction.projectEquipment.update({
-      where: {
-        id:
-          projectEquipment.id,
-      },
-
-      data: {
-        quantity:
-          remainingProjectQuantity,
-
-        allocatedQuantity:
-          remainingAllocatedQuantity,
-      },
-
-      select: {
-        id: true,
-        quantity: true,
-        allocatedQuantity: true,
-      },
-    });
-}
 
           /*
            * Registra histórico da
@@ -530,6 +654,11 @@ if (remainingProjectQuantity === 0) {
 
             previousDamagedQuantity,
             currentDamagedQuantity,
+
+            returnedSerialNumbers:
+              selectedEquipmentUnits.map(
+                (unit) => unit.serialNumber,
+              ),
           };
         },
         {
@@ -567,6 +696,10 @@ if (remainingProjectQuantity === 0) {
           result.projectEquipment
             .allocatedQuantity,
 
+        reservedQuantity:
+          result.projectEquipment
+            .reservedQuantity,
+
         availableQuantity:
           result.previousAvailableQuantity,
 
@@ -584,6 +717,10 @@ if (remainingProjectQuantity === 0) {
           result.updatedProjectEquipment
             .allocatedQuantity,
 
+        reservedQuantity:
+          result.updatedProjectEquipment
+            .reservedQuantity,
+
         availableQuantity:
           result.currentAvailableQuantity,
 
@@ -595,7 +732,10 @@ if (remainingProjectQuantity === 0) {
 
         returnedQuantity:
           quantity,
-      },
+
+        returnedSerialNumbers:
+        result.returnedSerialNumbers,
+            },
     });
 
     return Response.json({

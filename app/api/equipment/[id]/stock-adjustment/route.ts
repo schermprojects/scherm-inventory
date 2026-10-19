@@ -4,6 +4,7 @@ import {
   AuditAction,
   AuditEntity,
   EquipmentMovementType,
+  EquipmentUnitMovementType,
   EquipmentRmaStatus,
   EquipmentStatus,
 } from "@/generated/prisma/enums";
@@ -25,6 +26,8 @@ type StockAdjustmentBody = {
   quantity?: unknown;
   reason?: unknown;
   notes?: unknown;
+  serialNumbersToAdd?: unknown;
+  serialNumbersToRemove?: unknown;
 };
 
 type SessionUser = {
@@ -60,6 +63,48 @@ function optionalText(
   const text = value.trim();
 
   return text || null;
+}
+
+function parseSerialNumbers(
+  value: unknown,
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "Os números de série informados são inválidos.",
+    );
+  }
+
+  if (
+    value.some(
+      (serialNumber) =>
+        typeof serialNumber !== "string",
+    )
+  ) {
+    throw new Error(
+      "Os números de série informados são inválidos.",
+    );
+  }
+
+  const serialNumbers = value
+    .map((serialNumber) =>
+      serialNumber.trim().toUpperCase(),
+    )
+    .filter(Boolean);
+
+  if (
+    new Set(serialNumbers).size !==
+    serialNumbers.length
+  ) {
+    throw new Error(
+      "Existem números de série duplicados.",
+    );
+  }
+
+  return serialNumbers;
 }
 
 export async function PATCH(
@@ -147,6 +192,16 @@ if (
         body.notes,
       );
 
+    const serialNumbersToAdd =
+      parseSerialNumbers(
+        body.serialNumbersToAdd,
+      );
+
+    const serialNumbersToRemove =
+      parseSerialNumbers(
+        body.serialNumbersToRemove,
+      );
+
     const result =
       await prisma.$transaction(
         async (transaction) => {
@@ -164,6 +219,28 @@ if (
                   damagedQuantity: true,
                   status: true,
                   rmaStatus: true,
+
+                 equipmentUnits: {
+                  select: {
+                    id: true,
+                    serialNumber: true,
+                    condition: true,
+                    projectAssignment: {
+                      select: {
+                        id: true,
+                      },
+                    },
+                    movements: {
+                      orderBy: {
+                        createdAt: "desc",
+                      },
+                      take: 1,
+                      select: {
+                        type: true,
+                      },
+                    },
+                  },
+                },
                 },
               },
             );
@@ -207,6 +284,116 @@ if (
             requestedQuantity -
             previousQuantity;
 
+          const movementQuantity =
+            Math.abs(difference);
+
+          if (
+            difference > 0 &&
+            serialNumbersToAdd.length >
+              movementQuantity
+          ) {
+            throw new Error(
+              "A quantidade de números de série informados é maior que a quantidade adicionada ao estoque.",
+            );
+          }
+
+          if (
+            difference < 0 &&
+            serialNumbersToRemove.length >
+              movementQuantity
+          ) {
+            throw new Error(
+              "A quantidade de números de série informados é maior que a quantidade removida do estoque.",
+            );
+          }
+
+          if (
+            difference > 0 &&
+            serialNumbersToRemove.length > 0
+          ) {
+            throw new Error(
+              "Não é possível remover números de série em uma entrada de estoque.",
+            );
+          }
+
+          if (
+            difference < 0 &&
+            serialNumbersToAdd.length > 0
+          ) {
+            throw new Error(
+              "Não é possível adicionar números de série em uma redução de estoque.",
+            );
+          }
+
+          const existingSerialNumbers =
+            new Set(
+              equipment.equipmentUnits.map(
+                (unit) => unit.serialNumber,
+              ),
+            );
+
+          const invalidSerialNumbersToRemove =
+            serialNumbersToRemove.filter(
+              (serialNumber) =>
+                !existingSerialNumbers.has(
+                  serialNumber,
+                ),
+            );
+
+          if (
+            invalidSerialNumbersToRemove.length > 0
+          ) {
+            throw new Error(
+              "Um ou mais números de série selecionados não pertencem a este equipamento.",
+            );
+          }
+
+          const blockedSerialNumbersToRemove =
+            equipment.equipmentUnits.filter(
+              (unit) =>
+                serialNumbersToRemove.includes(
+                  unit.serialNumber,
+                ) &&
+                (
+                  unit.condition !== "OPERATIONAL" ||
+                  unit.projectAssignment !== null ||
+                  unit.movements[0]?.type === "EXIT"
+                ),
+            );
+
+          if (blockedSerialNumbersToRemove.length > 0) {
+            throw new Error(
+              "Não é possível retirar S/N danificados, já baixados ou designados a projetos.",
+            );
+          }
+
+
+          const currentIdentifiedUnits =
+            equipment.equipmentUnits.filter(
+              (unit) =>
+                unit.movements[0]?.type !== "EXIT",
+            );
+
+          const remainingIdentifiedUnits =
+            currentIdentifiedUnits.filter(
+              (unit) =>
+                !serialNumbersToRemove.includes(
+                  unit.serialNumber,
+                ),
+            );
+
+          const physicalQuantityAfterAdjustment =
+            requestedQuantity +
+            equipment.damagedQuantity;
+
+          if (
+            remainingIdentifiedUnits.length >
+            physicalQuantityAfterAdjustment
+          ) {
+            throw new Error(
+              "A redução deixaria mais S/N ativos do que unidades físicas. Selecione os S/N que estão saindo.",
+            );
+          }
           /*
            * Toda redução manual precisa
            * possuir um motivo registrado.
@@ -219,11 +406,6 @@ if (
               "REDUCTION_REASON_REQUIRED",
             );
           }
-
-          const movementQuantity =
-            Math.abs(
-              difference,
-            );
 
           const movementType =
             difference > 0
@@ -257,6 +439,14 @@ if (
 
                   status:
                     nextStatus,
+
+                 equipmentUnits: {
+                  create: serialNumbersToAdd.map(
+                    (serialNumber) => ({
+                      serialNumber,
+                    }),
+                  ),
+                },
                 },
 
                 select: {
@@ -269,6 +459,24 @@ if (
                 },
               },
             );
+
+          if (serialNumbersToRemove.length > 0) {
+            const unitsToRemove =
+              equipment.equipmentUnits.filter(
+                (unit) =>
+                  serialNumbersToRemove.includes(
+                    unit.serialNumber,
+                  ),
+              );
+
+            await transaction.equipmentUnitMovement.createMany({
+              data: unitsToRemove.map((unit) => ({
+                equipmentUnitId: unit.id,
+                type: EquipmentUnitMovementType.EXIT,
+                projectId: null,
+              })),
+            });
+          }
 
           const movement =
             await transaction.equipmentMovement.create(
@@ -400,7 +608,13 @@ if (
 
         difference:
           result.difference,
-      },
+
+        serialNumbersAdded:
+          serialNumbersToAdd,
+
+        serialNumbersRemoved:
+          serialNumbersToRemove,
+              },
     });
 
     return Response.json({
@@ -520,6 +734,23 @@ if (
         },
       );
     }
+
+    if (
+  error instanceof
+    Prisma.PrismaClientKnownRequestError &&
+  error.code === "P2002"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Este número de série já está cadastrado.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
 
     if (
       error instanceof

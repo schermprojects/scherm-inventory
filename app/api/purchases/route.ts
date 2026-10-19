@@ -1,6 +1,7 @@
 import {
   ProjectPriority,
   ProjectStatus,
+  PurchaseStatus,
 } from "@/generated/prisma/client";
 
 import { auth } from "@/auth";
@@ -46,6 +47,8 @@ type PurchaseProject = {
   name: string;
   clientName: string | null;
   status: ProjectStatus;
+  purchaseStatus:
+  "REQUESTED" | "ACQUIRED" | null;
 
   /*
    * Necessidade total registrada
@@ -149,6 +152,36 @@ type PurchaseItem = {
   hasShortage: boolean;
 };
 
+type UpdatePurchaseStatusBody = {
+  projectId?: unknown;
+  equipmentId?: unknown;
+  status?: unknown;
+};
+
+function parsePurchaseStatus(
+  value: unknown,
+): PurchaseStatus | null {
+  if (
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value !== "string" ||
+    !Object.values(PurchaseStatus).includes(
+      value as PurchaseStatus,
+    )
+  ) {
+    throw new Error(
+      "PURCHASE_STATUS_INVALID",
+    );
+  }
+
+  return value as PurchaseStatus;
+}
+
 export async function GET() {
   const session =
     await auth();
@@ -183,7 +216,13 @@ export async function GET() {
             select: {
               quantity: true,
 
+              reservedQuantity:
+                true,
+
               allocatedQuantity:
+                true,
+
+              purchaseStatus:
                 true,
 
               project: {
@@ -231,292 +270,130 @@ export async function GET() {
            * Primeiro normalizamos todas
            * as demandas ainda pendentes.
            */
-          const pendingProjects =
-            equipment.projects
-              .map(
-                (
-                  projectEquipment,
-                ) => {
-                  const requiredQuantity =
-                    Math.max(
-                      projectEquipment.quantity,
-                      0,
-                    );
-
-                  const allocatedQuantity =
-                    Math.max(
-                      projectEquipment
-                        .allocatedQuantity,
-                      0,
-                    );
-
-                  /*
-                   * Somente aquilo que
-                   * ainda não teve baixa
-                   * física disputa o
-                   * estoque atual.
-                   */
-                  const pendingQuantity =
-                    Math.max(
-                      requiredQuantity -
-                        allocatedQuantity,
-                      0,
-                    );
-
-                  return {
-                    id:
-                      projectEquipment
-                        .project.id,
-
-                    name:
-                      projectEquipment
-                        .project.name,
-
-                    clientName:
-                      projectEquipment
-                        .project
-                        .clientName,
-
-                    status:
-                      projectEquipment
-                        .project.status,
-
-                    priority:
-                      projectEquipment
-                        .project.priority,
-
-                    dueDate:
-                      projectEquipment
-                        .project.dueDate,
-
-                    createdAt:
-                      projectEquipment
-                        .project.createdAt,
-
-                    requiredQuantity,
-
-                    allocatedQuantity,
-
-                    pendingQuantity,
-                  };
-                },
-              )
-              /*
-               * Se não existe mais nada
-               * pendente, o projeto não
-               * participa da disputa.
-               */
-              .filter(
-                (project) =>
-                  project.pendingQuantity >
-                  0,
-              );
-
-          /*
-           * Ordem determinística para
-           * distribuir o estoque.
-           *
-           * 1. Em andamento
-           * 2. Planejamento
-           * 3. Prioridade
-           * 4. Prazo mais próximo
-           * 5. Projeto mais antigo
-           * 6. ID
-           *
-           * É a mesma política utilizada
-           * na API de projetos.
-           */
-          const orderedProjects =
-            [...pendingProjects].sort(
-              (
-                first,
-                second,
-              ) => {
-                const statusDifference =
-                  PROJECT_STATUS_WEIGHT[
-                    first.status
-                  ] -
-                  PROJECT_STATUS_WEIGHT[
-                    second.status
-                  ];
-
-                if (
-                  statusDifference !==
-                  0
-                ) {
-                  return statusDifference;
-                }
-
-                const priorityDifference =
-                  PROJECT_PRIORITY_WEIGHT[
-                    first.priority
-                  ] -
-                  PROJECT_PRIORITY_WEIGHT[
-                    second.priority
-                  ];
-
-                if (
-                  priorityDifference !==
-                  0
-                ) {
-                  return priorityDifference;
-                }
-
-                const firstDueDate =
-                  first.dueDate
-                    ?.getTime() ??
-                  Number.MAX_SAFE_INTEGER;
-
-                const secondDueDate =
-                  second.dueDate
-                    ?.getTime() ??
-                  Number.MAX_SAFE_INTEGER;
-
-                if (
-                  firstDueDate !==
-                  secondDueDate
-                ) {
-                  return (
-                    firstDueDate -
-                    secondDueDate
-                  );
-                }
-
-                const createdAtDifference =
-                  first.createdAt.getTime() -
-                  second.createdAt.getTime();
-
-                if (
-                  createdAtDifference !==
-                  0
-                ) {
-                  return createdAtDifference;
-                }
-
-                return first.id.localeCompare(
-                  second.id,
-                );
-              },
-            );
-
-          /*
-           * A partir daqui o estoque é
-           * consumido virtualmente UMA
-           * única vez.
-           *
-           * Isso NÃO altera banco.
-           *
-           * É somente o cálculo de quem
-           * está coberto e quem gera compra.
-           */
-          let remainingStock =
-            physicalStock;
-
-          let totalNeeded = 0;
-          let inUse = 0;
-
           const projectsWithShortage:
-            PurchaseProject[] = [];
+  PurchaseProject[] = [];
 
-          for (
-            const project of
-            orderedProjects
-          ) {
-            totalNeeded +=
-              project.pendingQuantity;
+let totalNeeded = 0;
+let inUse = 0;
 
-            const availableBeforeProject =
-              Math.max(
-                remainingStock,
-                0,
-              );
+for (
+  const projectEquipment of
+  equipment.projects
+) {
+  const requiredQuantity =
+    Math.max(
+      projectEquipment.quantity,
+      0,
+    );
 
-            const coveredByStock =
-              Math.min(
-                project.pendingQuantity,
-                availableBeforeProject,
-              );
+  const reservedQuantity =
+    Math.max(
+      projectEquipment.reservedQuantity,
+      0,
+    );
 
-            const purchaseQuantity =
-              Math.max(
-                project.pendingQuantity -
-                  coveredByStock,
-                0,
-              );
+  const allocatedQuantity =
+    Math.max(
+      projectEquipment.allocatedQuantity,
+      0,
+    );
 
-            remainingStock =
-              Math.max(
-                availableBeforeProject -
-                  coveredByStock,
-                0,
-              );
+  const pendingQuantity =
+    Math.max(
+      requiredQuantity -
+        allocatedQuantity,
+      0,
+    );
 
-            inUse +=
-              coveredByStock;
+  const coveredByStock =
+    Math.min(
+      reservedQuantity,
+      pendingQuantity,
+    );
 
-            /*
-             * Compras só precisa exibir
-             * projetos que realmente
-             * possuem algo faltando.
-             */
-            if (
-              purchaseQuantity >
-              0
-            ) {
-              projectsWithShortage.push(
-                {
-                  id:
-                    project.id,
+  const purchaseQuantity =
+    Math.max(
+      requiredQuantity -
+        reservedQuantity -
+        allocatedQuantity,
+      0,
+    );
 
-                  name:
-                    project.name,
+  totalNeeded +=
+    pendingQuantity;
 
-                  clientName:
-                    project.clientName,
+  inUse +=
+    reservedQuantity;
 
-                  status:
-                    project.status,
+  if (
+    purchaseQuantity > 0
+  ) {
+    projectsWithShortage.push(
+      {
+        id:
+          projectEquipment.project.id,
 
-                  requiredQuantity:
-                    project.requiredQuantity,
+        name:
+          projectEquipment.project.name,
 
-                  allocatedQuantity:
-                    project.allocatedQuantity,
+        clientName:
+          projectEquipment.project
+            .clientName,
 
-                  pendingQuantity:
-                    project.pendingQuantity,
+        status:
+          projectEquipment.project.status,
 
-                  coveredByStock,
+        purchaseStatus:
+          projectEquipment.purchaseStatus,
 
-                  purchaseQuantity,
+        requiredQuantity,
 
-                  /*
-                   * Compatibilidade com
-                   * a tela atual.
-                   */
-                  quantity:
-                    purchaseQuantity,
-                },
-              );
-            }
-          }
+        allocatedQuantity,
 
-          const availableStock =
-            Math.max(
-              remainingStock,
-              0,
-            );
+        pendingQuantity,
 
-          const purchaseQuantity =
-            projectsWithShortage.reduce(
-              (
-                total,
-                project,
-              ) =>
-                total +
-                project.purchaseQuantity,
-              0,
-            );
+        coveredByStock,
+
+        purchaseQuantity,
+
+        quantity:
+          purchaseQuantity,
+      },
+    );
+  }
+}
+
+const totalReserved =
+  equipment.projects.reduce(
+    (
+      total,
+      projectEquipment,
+    ) =>
+      total +
+      Math.max(
+        projectEquipment.reservedQuantity,
+        0,
+      ),
+    0,
+  );
+
+const availableStock =
+  Math.max(
+    physicalStock -
+      totalReserved,
+    0,
+  );
+
+const purchaseQuantity =
+  projectsWithShortage.reduce(
+    (
+      total,
+      project,
+    ) =>
+      total +
+      project.purchaseQuantity,
+    0,
+  );
 
           const minimumStock =
             Math.max(
@@ -742,6 +619,203 @@ export async function GET() {
 
         message:
           "Não foi possível carregar a lista de compras.",
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
+export async function PATCH(
+  request: Request,
+) {
+  const session =
+    await auth();
+
+  if (!session?.user) {
+    return Response.json(
+      {
+        success: false,
+        message:
+          "Não autenticado.",
+      },
+      {
+        status: 401,
+      },
+    );
+  }
+
+  try {
+    const body =
+      (await request.json()) as UpdatePurchaseStatusBody;
+
+    const projectId =
+      typeof body.projectId === "string"
+        ? body.projectId.trim()
+        : "";
+
+    const equipmentId =
+      typeof body.equipmentId === "string"
+        ? body.equipmentId.trim()
+        : "";
+
+    if (!projectId || !equipmentId) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Projeto e equipamento são obrigatórios.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const status =
+      parsePurchaseStatus(
+        body.status,
+      );
+
+    const projectEquipment =
+      await prisma.projectEquipment.findUnique(
+        {
+          where: {
+            projectId_equipmentId: {
+              projectId,
+              equipmentId,
+            },
+          },
+
+          select: {
+            id: true,
+            quantity: true,
+            reservedQuantity: true,
+            allocatedQuantity: true,
+            purchaseStatus: true,
+
+            project: {
+              select: {
+                id: true,
+                status: true,
+              },
+            },
+          },
+        },
+      );
+
+    if (!projectEquipment) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Necessidade de compra não encontrada.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    if (
+  projectEquipment.purchaseStatus ===
+    PurchaseStatus.ACQUIRED &&
+  status !== PurchaseStatus.ACQUIRED
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Uma compra adquirida não pode voltar para solicitado ou não solicitado.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+    const purchaseQuantity =
+      Math.max(
+        projectEquipment.quantity -
+          projectEquipment.reservedQuantity -
+          projectEquipment.allocatedQuantity,
+        0,
+      );
+
+    if (purchaseQuantity <= 0) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Este item não possui déficit de compra.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const updated =
+      await prisma.projectEquipment.update(
+        {
+          where: {
+            id:
+              projectEquipment.id,
+          },
+
+          data: {
+            purchaseStatus:
+              status,
+          },
+
+          select: {
+            id: true,
+            projectId: true,
+            equipmentId: true,
+            purchaseStatus: true,
+          },
+        },
+      );
+
+    return Response.json({
+      success: true,
+      message:
+  status === null
+    ? "Compra marcada como não solicitada."
+    : status === PurchaseStatus.REQUESTED
+      ? "Compra marcada como solicitada."
+      : "Compra marcada como adquirida.",
+      data: updated,
+    });
+  } catch (error) {
+    console.error(
+      "Erro ao atualizar status da compra:",
+      error,
+    );
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "PURCHASE_STATUS_INVALID"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Status de compra inválido.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    return Response.json(
+      {
+        success: false,
+        message:
+          "Não foi possível atualizar o status da compra.",
       },
       {
         status: 500,

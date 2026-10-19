@@ -83,6 +83,11 @@ type ClientsResponse = {
   error?: string;
 };
 
+type AvailableEquipmentUnit = {
+  id: string;
+  serialNumber: string;
+};
+
 type ProjectEquipment = {
   id: string;
 
@@ -91,6 +96,9 @@ type ProjectEquipment = {
   allocatedQuantity: number;
   pendingAllocationQuantity: number;
   hasAllocatedQuantity: boolean;
+  availableEquipmentUnits: AvailableEquipmentUnit[];
+  returnableEquipmentUnits: AvailableEquipmentUnit[];
+  genericAvailableQuantity: number;
 
   notes: string | null;
 
@@ -443,6 +451,11 @@ const [
   returnQuantities,
   setReturnQuantities,
 ] = useState<Record<string, number>>({});
+
+const [
+  returnEquipmentUnitIds,
+  setReturnEquipmentUnitIds,
+] = useState<Record<string, string[]>>({});
 
 const [
   returningEquipmentId,
@@ -1315,6 +1328,8 @@ function openAllocatedEquipmentModal() {
     initialQuantities,
   );
 
+  setReturnEquipmentUnitIds({});
+
   setReturnError("");
   setReturnSuccess("");
   setSuccessMessage("");
@@ -1332,6 +1347,7 @@ function closeAllocatedEquipmentModal() {
   setShowAllocatedEquipmentModal(false);
   setReturnError("");
   setReturnSuccess("");
+  setReturnEquipmentUnitIds({});
 }
 
 function changeReturnQuantity(
@@ -1379,6 +1395,31 @@ function handleReturnQuantityInput(
   }));
 }
 
+function toggleReturnEquipmentUnit(
+  item: ProjectEquipment,
+  unitId: string,
+) {
+  setReturnEquipmentUnitIds(
+    (current) => {
+      const currentIds =
+        current[item.id] ?? [];
+
+      const nextIds = currentIds.includes(
+        unitId,
+      )
+        ? currentIds.filter(
+            (id) => id !== unitId,
+          )
+        : [...currentIds, unitId];
+
+      return {
+        ...current,
+        [item.id]: nextIds,
+      };
+    },
+  );
+}
+
 async function handleReturnEquipment(
   item: ProjectEquipment,
   condition: "NORMAL" | "DAMAGED",
@@ -1406,6 +1447,48 @@ async function handleReturnEquipment(
     return;
   }
 
+  const equipmentUnitIds =
+    returnEquipmentUnitIds[item.id] ?? [];
+
+  const serializedUnitsOut =
+    item.returnableEquipmentUnits;
+
+  const genericUnitsOut =
+    Math.max(
+      item.allocatedQuantity -
+        serializedUnitsOut.length,
+      0,
+    );
+
+  const minimumSerialSelection =
+    Math.max(
+      quantity - genericUnitsOut,
+      0,
+    );
+
+  if (
+    equipmentUnitIds.length <
+    minimumSerialSelection
+  ) {
+    setReturnError(
+      `Selecione pelo menos ${minimumSerialSelection} ${
+        minimumSerialSelection === 1
+          ? "número de série"
+          : "números de série"
+      } para esta devolução.`,
+    );
+    return;
+  }
+
+  if (
+    equipmentUnitIds.length > quantity
+  ) {
+    setReturnError(
+      "A quantidade de números de série selecionados não pode ser maior que a quantidade devolvida.",
+    );
+    return;
+  }
+
   try {
     setReturningEquipmentId(
       item.id,
@@ -1427,6 +1510,7 @@ async function handleReturnEquipment(
         body: JSON.stringify({
           quantity,
           condition,
+          equipmentUnitIds,
         }),
       },
     );
@@ -2125,7 +2209,7 @@ return (
     ) : null}
   </div>
 ) : null}
-                        
+
                         {item.hasShortage ? (
   <div className="mt-3">
     <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
@@ -2780,7 +2864,7 @@ return (
         </div>
       ) : null}
 
-      {canEdit && showCompleteModal ? (
+     {canEdit && showCompleteModal ? (
   <div
     className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
     role="presentation"
@@ -2799,9 +2883,9 @@ return (
       aria-modal="true"
       aria-labelledby="complete-project-title"
       aria-describedby="complete-project-description"
-      className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
     >
-      <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
             <CheckCircle2 size={22} />
@@ -2833,7 +2917,7 @@ return (
         </button>
       </header>
 
-      <div className="px-5 py-5">
+      <div className="overflow-y-auto px-5 py-5">
         <p
           id="complete-project-description"
           className="text-sm leading-6 text-zinc-600"
@@ -2852,7 +2936,7 @@ return (
           automaticamente.
         </div>
 
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
           Caso o projeto seja reaberto,
           os equipamentos já entregues
           não retornarão automaticamente
@@ -2894,7 +2978,7 @@ return (
         ) : null}
       </div>
 
-      <footer className="flex flex-col-reverse gap-3 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:flex-row sm:justify-end">
+      <footer className="flex shrink-0 flex-col-reverse gap-3 border-t border-zinc-200 bg-zinc-50 px-5 py-4 sm:flex-row sm:justify-end">
         <button
           type="button"
           onClick={closeCompleteModal}
@@ -3094,7 +3178,7 @@ return (
       aria-modal="true"
       aria-labelledby="reopen-project-title"
       aria-describedby="reopen-project-description"
-      className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+      className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl"
     >
       <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
         <div className="flex items-start gap-3">
@@ -3317,6 +3401,28 @@ return (
                     null &&
                   !isReturning;
 
+                const selectedReturnUnitIds =
+                  returnEquipmentUnitIds[
+                    item.id
+                  ] ?? [];
+
+                const serializedUnitsOut =
+                  item.returnableEquipmentUnits;
+
+                const genericUnitsOut =
+                  Math.max(
+                    item.allocatedQuantity -
+                      serializedUnitsOut.length,
+                    0,
+                  );
+
+                const minimumSerialSelection =
+                  Math.max(
+                    returnQuantity -
+                      genericUnitsOut,
+                    0,
+                  );
+
                 return (
                   <article
                     key={item.id}
@@ -3470,6 +3576,80 @@ return (
                                 : "unidades"}
                             </p>
                           </div>
+
+                          {serializedUnitsOut.length > 0 ? (
+                            <div className="min-w-0 flex-1">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Números de série devolvidos
+                              </p>
+
+                              <div className="flex flex-wrap gap-2">
+                                {serializedUnitsOut.map(
+                                  (unit) => {
+                                    const isSelected =
+                                      selectedReturnUnitIds.includes(
+                                        unit.id,
+                                      );
+
+                                    const selectionLimitReached =
+                                      !isSelected &&
+                                      selectedReturnUnitIds.length >=
+                                        returnQuantity;
+
+                                    return (
+                                      <label
+                                        key={unit.id}
+                                        className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                                          isSelected
+                                            ? "border-orange-300 bg-orange-50 text-orange-800"
+                                            : "border-zinc-200 bg-white text-zinc-700 hover:border-orange-200"
+                                        } ${
+                                          selectionLimitReached ||
+                                          isReturning ||
+                                          anotherItemReturning
+                                            ? "cursor-not-allowed opacity-50"
+                                            : ""
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          disabled={
+                                            selectionLimitReached ||
+                                            isReturning ||
+                                            anotherItemReturning
+                                          }
+                                          onChange={() => {
+                                            toggleReturnEquipmentUnit(
+                                              item,
+                                              unit.id,
+                                            );
+                                          }}
+                                          className="h-4 w-4 accent-[#F57B00]"
+                                        />
+
+                                        {unit.serialNumber}
+                                      </label>
+                                    );
+                                  },
+                                )}
+                              </div>
+
+                              <p className="mt-2 text-xs text-zinc-500">
+                                {minimumSerialSelection > 0
+                                  ? `Selecione pelo menos ${minimumSerialSelection} ${
+                                      minimumSerialSelection === 1
+                                        ? "número de série"
+                                        : "números de série"
+                                    } para devolver ${returnQuantity} ${
+                                      returnQuantity === 1
+                                        ? "unidade"
+                                        : "unidades"
+                                    }.`
+                                  : "A seleção de S/N é opcional para esta quantidade, pois existem unidades genéricas baixadas."}
+                              </p>
+                            </div>
+                          ) : null}
 
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <button

@@ -173,6 +173,11 @@ export function EquipmentStockEntryModal({
   const [notes, setNotes] =
     useState("");
 
+  const [
+  serialNumbers,
+  setSerialNumbers,
+] = useState<string[]>([]);
+
   const [projectId, setProjectId] =
     useState("");
 
@@ -315,6 +320,7 @@ const canSubmit =
     setInvoiceNumber("");
     setNotes("");
     setProjectId("");
+    setSerialNumbers([""]);
     setProjects([]);
     setSaving(false);
     setError(null);
@@ -376,12 +382,39 @@ const canSubmit =
     onClose();
   }
 
-  function handleQuantityChange(
-    value: string,
+function handleQuantityChange(
+  value: string,
+) {
+  setQuantity(value);
+  setError(null);
+
+  const parsedValue =
+    Number(value);
+
+  if (
+    Number.isInteger(
+      parsedValue,
+    ) &&
+    parsedValue > 0 &&
+    parsedValue <=
+      MAX_STOCK_ENTRY
   ) {
-    setQuantity(value);
-    setError(null);
+    setSerialNumbers(
+      (current) =>
+        Array.from(
+          {
+            length:
+              parsedValue,
+          },
+          (_, index) =>
+            current[index] ??
+            "",
+        ),
+    );
+  } else {
+    setSerialNumbers([]);
   }
+}
 
 function handleProjectChange(
   value: string,
@@ -426,6 +459,30 @@ function handleProjectChange(
   return;
 }
 
+const normalizedSerialNumbers =
+  serialNumbers.map(
+    (serialNumber) =>
+      serialNumber.trim(),
+  );
+
+const filledSerialNumbers =
+  normalizedSerialNumbers.filter(
+    Boolean,
+  );
+
+if (
+  new Set(
+    filledSerialNumbers,
+  ).size !==
+  filledSerialNumbers.length
+) {
+  setError(
+    "O mesmo número de série foi informado mais de uma vez.",
+  );
+
+  return;
+}
+
     setSaving(true);
 
     try {
@@ -442,18 +499,26 @@ function handleProjectChange(
               "application/json",
           },
           body: JSON.stringify({
-            quantity:
-              normalizedQuantity,
+  quantity:
+    normalizedQuantity,
 
-            projectId,
+  projectId,
 
-            invoiceNumber:
-              invoiceNumber.trim() ||
-              null,
+  invoiceNumber:
+    invoiceNumber.trim() ||
+    null,
 
-            notes:
-              notes.trim() || null,
-          }),
+  notes:
+    notes.trim() || null,
+
+  serialNumbers:
+    serialNumbers
+      .map(
+        (serialNumber) =>
+          serialNumber.trim(),
+      )
+      .filter(Boolean),
+}),
         },
       );
 
@@ -626,6 +691,74 @@ function handleProjectChange(
             />
 
           </label>
+
+          {validQuantity ? (
+              <div className="space-y-2">
+                <div>
+                  <span className="text-sm font-medium text-zinc-700">
+                    Números de série
+                  </span>
+
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                    Informe os números de série das unidades que possuírem S/N. Os demais campos podem permanecer em branco.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {serialNumbers.map(
+                    (
+                      serialNumber,
+                      index,
+                    ) => (
+                      <label
+                        key={index}
+                        className="block space-y-1"
+                      >
+                        <span className="text-xs font-medium text-zinc-600">
+                          S/N {index + 1}
+                        </span>
+
+                        <input
+                          type="text"
+                          value={
+                            serialNumber
+                          }
+                          onChange={(
+                            event,
+                          ) => {
+                            const value =
+                              event.target
+                                .value;
+
+                            setSerialNumbers(
+                              (current) =>
+                                current.map(
+                                  (
+                                    item,
+                                    currentIndex,
+                                  ) =>
+                                    currentIndex ===
+                                    index
+                                      ? value
+                                      : item,
+                                ),
+                            );
+
+                            setError(null);
+                          }}
+                          placeholder={`S/N ${index + 1}`}
+                          maxLength={191}
+                          className={
+                            fieldClassName
+                          }
+                          disabled={saving}
+                        />
+                      </label>
+                    ),
+                  )}
+                </div>
+              </div>
+            ) : null}
 
           <label className="block space-y-1.5">
             <span className="text-sm font-medium text-zinc-700">

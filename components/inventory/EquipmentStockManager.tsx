@@ -19,10 +19,11 @@ import {
 type EquipmentStockManagerProps = {
   equipmentId: string;
   equipmentName: string;
-
   operationalStock: number;
   damagedQuantity: number;
   activeDemand: number;
+  serialNumbers: string[];
+  assignedSerialNumbers: string[];
 };
 
 type StockAdjustmentResponse = {
@@ -42,6 +43,8 @@ export function EquipmentStockManager({
   operationalStock,
   damagedQuantity,
   activeDemand,
+  serialNumbers,
+  assignedSerialNumbers,
 }: EquipmentStockManagerProps) {
   const router = useRouter();
   const { data: session } = useSession();
@@ -111,6 +114,16 @@ const [
   setReductionNotes,
 ] = useState("");
 
+const [
+  serialNumbersToAdd,
+  setSerialNumbersToAdd,
+] = useState<string[]>([]);
+
+const [
+  serialNumbersToRemove,
+  setSerialNumbersToRemove,
+] = useState<string[]>([]);
+
   /*
    * Se o Server Component for atualizado
    * pelo router.refresh(), sincronizamos
@@ -139,6 +152,49 @@ const [
     operationalStock,
     saving,
   ]);
+
+  useEffect(() => {
+  const difference =
+    draftQuantity -
+    currentQuantity;
+
+  if (difference > 0) {
+    setSerialNumbersToRemove([]);
+
+    setSerialNumbersToAdd(
+      (current) =>
+        Array.from(
+          {
+            length: difference,
+          },
+          (_, index) =>
+            current[index] ?? "",
+        ),
+    );
+
+    return;
+  }
+
+  if (difference < 0) {
+    setSerialNumbersToAdd([]);
+
+    setSerialNumbersToRemove(
+      (current) =>
+        current.slice(
+          0,
+          Math.abs(difference),
+        ),
+    );
+
+    return;
+  }
+
+  setSerialNumbersToAdd([]);
+  setSerialNumbersToRemove([]);
+}, [
+  currentQuantity,
+  draftQuantity,
+]);
 
   useEffect(() => {
     if (!confirming) {
@@ -203,6 +259,16 @@ const [
   draftQuantity <
   currentQuantity;
 
+  const stockDifference =
+  draftQuantity -
+  currentQuantity;
+
+const adjustmentQuantity =
+  Math.abs(stockDifference);
+
+const isIncrease =
+  stockDifference > 0;
+
 const projectedAvailableStock =
   Math.max(
     draftQuantity -
@@ -219,7 +285,7 @@ const projectedShortage =
 
 const createsShortage =
   isReduction &&
-  projectedShortage > 0;  
+  projectedShortage > 0;
 
   function startEditing() {
     setDraftQuantity(
@@ -228,6 +294,8 @@ const createsShortage =
 
     setError(null);
     setSuccess(null);
+    setSerialNumbersToAdd([]);
+    setSerialNumbersToRemove([]);
     setEditing(true);
   }
 
@@ -242,7 +310,8 @@ function cancelEditing() {
 
   setReductionReason("");
   setReductionNotes("");
-
+  setSerialNumbersToAdd([]);
+  setSerialNumbersToRemove([]);
   setEditing(false);
   setConfirming(false);
   setError(null);
@@ -338,6 +407,18 @@ function requestUpdate() {
   notes:
     reductionNotes.trim() ||
     null,
+
+  serialNumbersToAdd:
+    serialNumbersToAdd
+      .map((serialNumber) =>
+        serialNumber
+          .trim()
+          .toUpperCase(),
+      )
+      .filter(Boolean),
+
+  serialNumbersToRemove:
+    serialNumbersToRemove,
 }),
           },
         );
@@ -501,6 +582,153 @@ function requestUpdate() {
     </>
   ) : null}
 </div>
+
+{isIncrease ? (
+  <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+    <div>
+      <p className="text-xs font-semibold text-blue-900">
+        Número de série das novas unidades
+      </p>
+
+      <p className="mt-1 text-[11px] leading-4 text-blue-700">
+        Opcional. Informe o S/N somente das unidades
+        que possuem identificação individual.
+      </p>
+    </div>
+
+    {serialNumbersToAdd.map(
+      (serialNumber, index) => (
+        <div key={index}>
+          <label
+            htmlFor={`stock-serial-add-${index}`}
+            className="mb-1 block text-[11px] font-medium text-blue-900"
+          >
+            Unidade {index + 1}
+          </label>
+
+          <input
+            id={`stock-serial-add-${index}`}
+            type="text"
+            value={serialNumber}
+            onChange={(event) => {
+              const value =
+                event.target.value;
+
+              setSerialNumbersToAdd(
+                (current) =>
+                  current.map(
+                    (item, itemIndex) =>
+                      itemIndex === index
+                        ? value
+                        : item,
+                  ),
+              );
+
+              setError(null);
+            }}
+            disabled={saving}
+            placeholder="S/N opcional"
+            className="h-9 w-full rounded-lg border border-blue-200 bg-white px-2.5 text-xs text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
+          />
+        </div>
+      ),
+    )}
+  </div>
+) : null}
+
+{isReduction &&
+serialNumbers.length > 0 ? (
+  <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+    <div>
+      <p className="text-xs font-semibold text-zinc-800">
+        Unidades identificadas que serão removidas
+      </p>
+
+      <p className="mt-1 text-[11px] leading-4 text-zinc-500">
+        Selecione somente os S/N das unidades
+        identificadas que estão saindo. As demais
+        unidades removidas serão consideradas sem S/N.
+      </p>
+    </div>
+
+    <div className="space-y-2">
+      {serialNumbers.map(
+        (serialNumber) => {
+          const checked =
+            serialNumbersToRemove.includes(
+              serialNumber,
+            );
+
+          const isAssigned =
+            assignedSerialNumbers.includes(
+              serialNumber,
+            );
+
+          const selectionLimitReached =
+            !checked &&
+            serialNumbersToRemove.length >=
+              adjustmentQuantity;
+
+          const isDisabled =
+            saving ||
+            isAssigned ||
+            selectionLimitReached;
+
+          return (
+            <label
+              key={serialNumber}
+              className={[
+                "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs",
+
+                isAssigned
+                  ? "cursor-not-allowed border-blue-200 bg-blue-50 text-blue-700 opacity-75"
+                  : "cursor-pointer border-zinc-200 bg-white text-zinc-700",
+              ].join(" ")}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={isDisabled}
+                onChange={(event) => {
+                  setSerialNumbersToRemove(
+                    (current) =>
+                      event.target.checked
+                        ? [
+                            ...current,
+                            serialNumber,
+                          ]
+                        : current.filter(
+                            (item) =>
+                              item !==
+                              serialNumber,
+                          ),
+                  );
+
+                  setError(null);
+                }}
+              />
+
+              <span className="font-medium">
+                {serialNumber}
+              </span>
+              {isAssigned ? (
+                <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                  Designado a projeto
+                </span>
+              ) : null}
+            </label>
+          );
+        },
+      )}
+    </div>
+
+    <p className="text-[11px] leading-4 text-zinc-500">
+      {serialNumbersToRemove.length} de{" "}
+      {adjustmentQuantity} unidade(s) removida(s)
+      identificada(s) por S/N.
+    </p>
+  </div>
+) : null}
 
 {isReduction ? (
   <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">

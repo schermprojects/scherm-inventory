@@ -8,6 +8,7 @@ import {
   AuditEntity,
   EquipmentMovementType,
   EquipmentRmaStatus,
+  EquipmentUnitMovementType,
   ProjectStatus,
 } from "@/generated/prisma/enums";
 import { logAudit } from "@/lib/audit";
@@ -34,6 +35,7 @@ type StockEntryBody = {
   projectId?: unknown;
   invoiceNumber?: unknown;
   notes?: unknown;
+  serialNumbers?: unknown;
 };
 
 function parsePositiveInteger(
@@ -82,6 +84,48 @@ function requiredText(
   }
 
   return normalizedValue;
+}
+
+function optionalSerialNumbers(
+  value: unknown,
+): string[] {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      'O campo "Números de série" deve ser uma lista.',
+    );
+  }
+
+  const serialNumbers =
+    value.map((item) => {
+      if (
+        typeof item !== "string" ||
+        !item.trim()
+      ) {
+        throw new Error(
+          "Foi informado um número de série inválido.",
+        );
+      }
+
+      return item.trim();
+    });
+
+  if (
+    new Set(serialNumbers).size !==
+    serialNumbers.length
+  ) {
+    throw new Error(
+      "O mesmo número de série foi informado mais de uma vez.",
+    );
+  }
+
+  return serialNumbers;
 }
 
 function optionalText(
@@ -208,6 +252,20 @@ if (
         "Quantidade recebida",
       );
 
+    const serialNumbers =
+  optionalSerialNumbers(
+    body.serialNumbers,
+  );
+
+if (
+  serialNumbers.length >
+  entryQuantity
+) {
+  throw new Error(
+    "A quantidade de números de série não pode ser maior que a quantidade recebida.",
+  );
+}
+
     /*
      * Projeto agora é obrigatório.
      *
@@ -299,8 +357,8 @@ if (
                 select: {
                   id: true,
                   quantity: true,
-                  allocatedQuantity:
-                    true,
+                  reservedQuantity: true,
+                  allocatedQuantity: true,
 
                   project: {
                     select: {
@@ -348,10 +406,13 @@ if (
               0,
             );
 
-          /*
-           * Quantidade que já teve baixa
-           * física anteriormente.
-           */
+          const currentReservedQuantity =
+            Math.max(
+              projectEquipment
+                .reservedQuantity,
+              0,
+            );
+
           const currentAllocatedQuantity =
             Math.max(
               projectEquipment
@@ -359,18 +420,10 @@ if (
               0,
             );
 
-          /*
-           * Parte da necessidade que ainda
-           * não teve baixa física.
-           *
-           * IMPORTANTE:
-           *
-           * Esta entrada NÃO modifica
-           * allocatedQuantity.
-           */
           const pendingQuantity =
             Math.max(
               requiredQuantity -
+                currentReservedQuantity -
                 currentAllocatedQuantity,
               0,
             );
@@ -396,6 +449,10 @@ if (
               entryQuantity,
               pendingQuantity,
             );
+
+          const nextReservedQuantity =
+            currentReservedQuantity +
+            allocationQuantity;
 
           /*
            * Caso a nota/entrega tenha mais
@@ -429,6 +486,12 @@ if (
 
             requiredQuantity,
 
+            previousReservedQuantity:
+              currentReservedQuantity,
+
+            currentReservedQuantity:
+              nextReservedQuantity,
+
             previousAllocatedQuantity:
               currentAllocatedQuantity,
 
@@ -448,6 +511,126 @@ if (
                 0,
               ),
           };
+
+          await transaction.projectEquipment.update(
+            {
+              where: {
+                projectId_equipmentId: {
+                  projectId,
+                  equipmentId: id,
+                },
+              },
+
+              data: {
+                reservedQuantity:
+                  nextReservedQuantity,
+              },
+            },
+          );
+
+          const createdEquipmentUnits: {
+  id: string;
+  serialNumber: string;
+  assignedToProject: boolean;
+}[] = [];
+
+if (serialNumbers.length > 0) {
+  /*
+   * Impede entrada de S/N já cadastrados.
+   */
+  const existingUnits =
+    await transaction.equipmentUnit.findMany({
+      where: {
+        serialNumber: {
+          in: serialNumbers,
+        },
+      },
+
+      select: {
+        serialNumber: true,
+      },
+    });
+
+  if (existingUnits.length > 0) {
+    throw new Error(
+      `O(s) número(s) de série ${existingUnits
+        .map((unit) => unit.serialNumber)
+        .join(", ")} já está(ão) cadastrado(s).`,
+    );
+  }
+
+  /*
+   * Somente a parte da entrada que atende
+   * à necessidade do projeto deve ficar
+   * designada a ele.
+   *
+   * Exemplo:
+   * entrada = 5
+   * déficit = 3
+   *
+   * 3 S/N -> projeto
+   * 2 S/N -> estoque livre
+   */
+  for (
+    let index = 0;
+    index < serialNumbers.length;
+    index += 1
+  ) {
+    const serialNumber =
+      serialNumbers[index];
+
+    const shouldAssignToProject =
+      index < allocationQuantity;
+
+    const equipmentUnit =
+      await transaction.equipmentUnit.create({
+        data: {
+          equipmentId:
+            existingEquipment.id,
+
+          serialNumber,
+
+          movements: {
+            create: {
+              type:
+                EquipmentUnitMovementType.ENTRY,
+
+              projectId:
+                selectedProject.id,
+            },
+          },
+        },
+
+        select: {
+          id: true,
+          serialNumber: true,
+        },
+      });
+
+    if (shouldAssignToProject) {
+      await transaction.projectEquipmentUnit.create({
+        data: {
+          projectEquipmentId:
+            projectEquipment.id,
+
+          equipmentUnitId:
+            equipmentUnit.id,
+        },
+      });
+    }
+
+    createdEquipmentUnits.push({
+      id:
+        equipmentUnit.id,
+
+      serialNumber:
+        equipmentUnit.serialNumber,
+
+      assignedToProject:
+        shouldAssignToProject,
+    });
+  }
+}
 
           const previousQuantity =
             Math.max(
@@ -583,6 +766,9 @@ if (
 
             previousQuantity,
             currentQuantity,
+
+            equipmentUnits:
+              createdEquipmentUnits,
           };
         },
         {
@@ -707,6 +893,14 @@ if (
             result.project
               .requiredQuantity,
 
+          previousReservedQuantity:
+            result.project
+              .previousReservedQuantity,
+
+          currentReservedQuantity:
+            result.project
+              .currentReservedQuantity,
+
           previousAllocatedQuantity:
             result.project
               .previousAllocatedQuantity,
@@ -754,6 +948,14 @@ if (
             result.project
               .requiredQuantity,
 
+          previousReservedQuantity:
+            result.project
+              .previousReservedQuantity,
+
+          currentReservedQuantity:
+            result.project
+              .currentReservedQuantity,
+
           previousAllocatedQuantity:
             result.project
               .previousAllocatedQuantity,
@@ -778,6 +980,8 @@ if (
             result.project
               .freeStockQuantity,
         },
+        equipmentUnits:
+          result.equipmentUnits,
       },
     });
   } catch (error) {

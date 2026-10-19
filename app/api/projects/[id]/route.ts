@@ -624,6 +624,109 @@ async function serializeProject(
       (item) => item.equipmentId,
     );
 
+  const equipmentUnits =
+    equipmentIds.length > 0
+      ? await prisma.equipmentUnit.findMany({
+          where: {
+            equipmentId: {
+              in: equipmentIds,
+            },
+          },
+
+          select: {
+            id: true,
+            equipmentId: true,
+            serialNumber: true,
+            condition: true,
+
+            movements: {
+              orderBy: {
+                createdAt: "desc",
+              },
+              take: 1,
+
+              select: {
+                type: true,
+                projectId: true,
+              },
+            },
+          },
+
+          orderBy: {
+            serialNumber: "asc",
+          },
+        })
+      : [];
+
+  const installedSerializedComponents =
+  equipmentIds.length > 0
+    ? await prisma.machineComponent.findMany({
+        where: {
+          equipmentId: {
+            in: equipmentIds,
+          },
+          status: "INSTALLED",
+          serialNumber: {
+            not: null,
+          },
+        },
+
+        select: {
+          equipmentId: true,
+          serialNumber: true,
+        },
+      })
+    : [];
+
+const installedEquipmentUnitKeys =
+  new Set(
+    installedSerializedComponents
+      .filter(
+        (
+          component,
+        ): component is typeof component & {
+          equipmentId: string;
+          serialNumber: string;
+        } =>
+          Boolean(
+            component.equipmentId &&
+              component.serialNumber?.trim(),
+          ),
+      )
+      .map(
+        (component) =>
+          `${component.equipmentId}:${component.serialNumber
+            .trim()
+            .toUpperCase()}`,
+      ),
+  );
+
+const availableEquipmentUnits =
+  equipmentUnits.filter((unit) => {
+    const unitKey =
+      `${unit.equipmentId}:${unit.serialNumber
+        .trim()
+        .toUpperCase()}`;
+
+    const isInstalled =
+      installedEquipmentUnitKeys.has(unitKey);
+
+    return (
+      unit.condition === "OPERATIONAL" &&
+      unit.movements[0]?.type !== "EXIT" &&
+      !isInstalled
+    );
+  });
+
+    const returnableEquipmentUnits =
+  equipmentUnits.filter(
+    (unit) =>
+      unit.movements[0]?.type ===
+        "EXIT" &&
+      unit.movements[0]?.projectId ===
+        project.id,
+  );
+
   /*
    * Carregamos todas as necessidades
    * pendentes dos projetos ativos que
@@ -655,6 +758,7 @@ async function serializeProject(
               projectId: true,
               equipmentId: true,
               quantity: true,
+              reservedQuantity: true,
               allocatedQuantity: true,
 
               project: {
@@ -691,180 +795,133 @@ async function serializeProject(
       ),
     );
 
-  /*
- * Ordem única para disputa de estoque:
+/*
+ * Reserva total persistida por equipamento
+ * em todos os projetos ativos.
  *
- * 1. Em andamento
- * 2. Planejamento
- * 3. Prioridade
- * 4. Prazo mais próximo
- * 5. Projeto mais antigo
- * 6. ID como desempate final
- *
- * Isso garante que a mesma unidade
- * nunca seja contada em dois projetos.
+ * Não existe mais redistribuição por:
+ * - status;
+ * - prioridade;
+ * - prazo;
+ * - antiguidade.
  */
-  const sortedActiveProjectEquipment =
-    [...activeProjectEquipment].sort(
-      (left, right) => {
-        const statusDifference =
-          PROJECT_STATUS_WEIGHT[
-            left.project.status
-          ] -
-          PROJECT_STATUS_WEIGHT[
-            right.project.status
-          ];
+const totalReservedByEquipment =
+  new Map<string, number>();
 
-        if (statusDifference !== 0) {
-          return statusDifference;
-        }
-
-        const priorityDifference =
-          PROJECT_PRIORITY_WEIGHT[
-            left.project.priority
-          ] -
-          PROJECT_PRIORITY_WEIGHT[
-            right.project.priority
-          ];
-
-        if (
-          priorityDifference !==
-          0
-        ) {
-          return priorityDifference;
-        }
-
-        const leftDueDate =
-          left.project.dueDate
-            ?.getTime() ??
-          Number.MAX_SAFE_INTEGER;
-
-        const rightDueDate =
-          right.project.dueDate
-            ?.getTime() ??
-          Number.MAX_SAFE_INTEGER;
-
-        if (
-          leftDueDate !==
-          rightDueDate
-        ) {
-          return (
-            leftDueDate -
-            rightDueDate
-          );
-        }
-
-        const createdAtDifference =
-          left.project.createdAt.getTime() -
-          right.project.createdAt.getTime();
-
-        if (
-          createdAtDifference !==
-          0
-        ) {
-          return createdAtDifference;
-        }
-
-        return left.projectId.localeCompare(
-          right.projectId,
-        );
-      },
-    );
-
-  /*
-   * Controlamos quanto ainda resta
-   * disponível de cada equipamento
-   * durante a distribuição.
-   */
-  const remainingStockByEquipment =
-    new Map(
-      operationalStockByEquipment,
-    );
-
-  const stockAllocationByProject =
-    new Map<
-      string,
-      ProjectStockAllocation
-    >();
-
-  /*
-   * Distribui o estoque uma única vez.
-   *
-   * Exemplo:
-   *
-   * estoque = 5
-   * projeto A = 5
-   * projeto B = 5
-   *
-   * Resultado:
-   *
-   * A recebe 5
-   * B recebe 0
-   *
-   * déficit total = 5
-   *
-   * Nunca:
-   *
-   * A déficit 5
-   * B déficit 5
-   */
-  for (
-    const item of
-    sortedActiveProjectEquipment
-  ) {
-    const pendingQuantity =
-      Math.max(
-        item.quantity -
-          item.allocatedQuantity,
-        0,
-      );
-
-    const availableBeforeProject =
-      Math.max(
-        remainingStockByEquipment.get(
-          item.equipmentId,
-        ) ?? 0,
-        0,
-      );
-
-    const coveredByStock =
-      Math.min(
-        pendingQuantity,
-        availableBeforeProject,
-      );
-
-    const availableAfterProject =
-      Math.max(
-        availableBeforeProject -
-          coveredByStock,
-        0,
-      );
-
-    const shortage =
-      Math.max(
-        pendingQuantity -
-          coveredByStock,
-        0,
-      );
-
-    remainingStockByEquipment.set(
+for (
+  const item of
+  activeProjectEquipment
+) {
+  const currentTotal =
+    totalReservedByEquipment.get(
       item.equipmentId,
-      availableAfterProject,
+    ) ?? 0;
+
+  totalReservedByEquipment.set(
+    item.equipmentId,
+    currentTotal +
+      Math.max(
+        item.reservedQuantity,
+        0,
+      ),
+  );
+}
+
+const stockAllocationByProject =
+  new Map<
+    string,
+    ProjectStockAllocation
+  >();
+
+/*
+ * Cada projeto utiliza somente a reserva
+ * que já está persistida para ele.
+ */
+for (
+  const item of
+  activeProjectEquipment
+) {
+  const physicalStock =
+    Math.max(
+      operationalStockByEquipment.get(
+        item.equipmentId,
+      ) ?? 0,
+      0,
     );
 
-    stockAllocationByProject.set(
-      getProjectEquipmentKey(
-        item.projectId,
-        item.equipmentId,
-      ),
-      {
-        availableBeforeProject,
-        coveredByStock,
-        availableAfterProject,
-        shortage,
-      },
+  const reservedQuantity =
+    Math.max(
+      item.reservedQuantity,
+      0,
     );
-  }
+
+  const totalReserved =
+    Math.max(
+      totalReservedByEquipment.get(
+        item.equipmentId,
+      ) ?? 0,
+      0,
+    );
+
+  const reservedByOtherProjects =
+    Math.max(
+      totalReserved -
+        reservedQuantity,
+      0,
+    );
+
+  /*
+   * Estoque que este projeto pode considerar:
+   * sua própria reserva + estoque ainda livre.
+   */
+  const availableBeforeProject =
+    Math.max(
+      physicalStock -
+        reservedByOtherProjects,
+      0,
+    );
+
+  /*
+   * Cobertura real deste projeto.
+   */
+  const coveredByStock =
+    reservedQuantity;
+
+  /*
+   * Estoque que permanece livre depois de
+   * considerar todas as reservas existentes.
+   */
+  const availableAfterProject =
+    Math.max(
+      physicalStock -
+        totalReserved,
+      0,
+    );
+
+  /*
+   * Necessidade ainda sem reserva ou baixa.
+   */
+  const shortage =
+    Math.max(
+      item.quantity -
+        item.allocatedQuantity -
+        reservedQuantity,
+      0,
+    );
+
+  stockAllocationByProject.set(
+    getProjectEquipmentKey(
+      item.projectId,
+      item.equipmentId,
+    ),
+    {
+      availableBeforeProject,
+      coveredByStock,
+      availableAfterProject,
+      shortage,
+    },
+  );
+}
 
   let neededUnits = 0;
   let availableUnits = 0;
@@ -1018,8 +1075,49 @@ async function serializeProject(
             1;
         }
 
+        const availableUnitsForEquipment =
+          availableEquipmentUnits.filter(
+            (unit) =>
+              unit.equipmentId ===
+              item.equipmentId,
+          );
+
+          const returnableUnitsForEquipment =
+          returnableEquipmentUnits.filter(
+            (unit) =>
+              unit.equipmentId ===
+              item.equipmentId,
+          );
+
+        const genericAvailableQuantity =
+          Math.max(
+            physicalStock -
+              availableUnitsForEquipment.length,
+            0,
+          );
+
         return {
           ...item,
+
+         availableEquipmentUnits:
+          availableUnitsForEquipment.map(
+            (unit) => ({
+              id: unit.id,
+              serialNumber:
+                unit.serialNumber,
+            }),
+          ),
+
+          returnableEquipmentUnits:
+            returnableUnitsForEquipment.map(
+              (unit) => ({
+                id: unit.id,
+                serialNumber:
+                  unit.serialNumber,
+              }),
+            ),
+
+          genericAvailableQuantity,
 
           needed:
             neededForProject,
@@ -1052,6 +1150,8 @@ async function serializeProject(
       },
     );
 
+    
+
   return {
     ...project,
 
@@ -1083,6 +1183,8 @@ async function serializeProject(
 
 function serializeProjectForAudit(
   project: ProjectWithRelations,
+  allocatedSerialNumbersByEquipmentId:
+    Map<string, string[]> = new Map(),
 ): Prisma.InputJsonValue {
   return {
     id: project.id,
@@ -1151,6 +1253,11 @@ function serializeProjectForAudit(
           
           allocatedQuantity:
             item.allocatedQuantity,
+
+          allocatedSerialNumbers:
+            allocatedSerialNumbersByEquipmentId.get(
+              item.equipmentId,
+            ) ?? [],
 
           notes:
             item.notes,
@@ -1403,10 +1510,11 @@ export async function PUT(
         ? parseProjectEquipment(body)
         : [];
 
-    const {
-      existingProject,
-      project,
-    } = await prisma.$transaction(
+      const {
+        existingProject,
+        project,
+        allocatedSerialNumbersByEquipmentId,
+      } = await prisma.$transaction(
       async (transaction) => {
         const existingProject =
           await transaction.project.findUnique({
@@ -1643,6 +1751,81 @@ if (shouldUpdateEquipment) {
       continue;
     }
 
+    const targetPendingQuantity =
+  Math.max(
+    selectedItem.quantity -
+      currentItem.allocatedQuantity,
+    0,
+  );
+
+const projectWillBeActive =
+  ACTIVE_PROJECT_STATUSES.includes(
+    status,
+  );
+
+const otherActiveReservations =
+  projectWillBeActive
+    ? await transaction.projectEquipment.findMany(
+        {
+          where: {
+            equipmentId:
+              selectedItem.equipmentId,
+
+            projectId: {
+              not: id,
+            },
+
+            project: {
+              status: {
+                in:
+                  ACTIVE_PROJECT_STATUSES,
+              },
+            },
+          },
+
+          select: {
+            reservedQuantity: true,
+          },
+        },
+      )
+    : [];
+
+const reservedByOtherProjects =
+  otherActiveReservations.reduce(
+    (
+      total,
+      reservation,
+    ) =>
+      total +
+      Math.max(
+        reservation.reservedQuantity,
+        0,
+      ),
+    0,
+  );
+
+const availableForCurrentProject =
+  projectWillBeActive
+    ? Math.max(
+        currentItem.equipment.quantity -
+          reservedByOtherProjects,
+        0,
+      )
+    : 0;
+
+const nextReservedQuantity =
+  isCompletingProject
+    ? Math.max(
+        currentItem.reservedQuantity,
+        0,
+      )
+    : projectWillBeActive
+      ? Math.min(
+          targetPendingQuantity,
+          availableForCurrentProject,
+        )
+      : 0;
+
     await transaction.projectEquipment.update(
       {
         where: {
@@ -1652,6 +1835,9 @@ if (shouldUpdateEquipment) {
         data: {
           quantity:
             selectedItem.quantity,
+
+          reservedQuantity:
+            nextReservedQuantity,
 
           notes:
             selectedItem.notes,
@@ -1673,28 +1859,114 @@ if (shouldUpdateEquipment) {
     );
 
   if (newEquipment.length > 0) {
-    await transaction.projectEquipment.createMany(
+  const projectWillBeActive =
+    ACTIVE_PROJECT_STATUSES.includes(
+      status,
+    );
+
+  for (
+    const item of
+    newEquipment
+  ) {
+    const equipment =
+      await transaction.equipment.findUnique({
+        where: {
+          id: item.equipmentId,
+        },
+
+        select: {
+          quantity: true,
+        },
+      });
+
+    if (!equipment) {
+      throw new Error(
+        "EQUIPMENT_NOT_FOUND",
+      );
+    }
+
+    const otherActiveReservations =
+      projectWillBeActive
+        ? await transaction.projectEquipment.findMany(
+            {
+              where: {
+                equipmentId:
+                  item.equipmentId,
+
+                projectId: {
+                  not: id,
+                },
+
+                project: {
+                  status: {
+                    in:
+                      ACTIVE_PROJECT_STATUSES,
+                  },
+                },
+              },
+
+              select: {
+                reservedQuantity:
+                  true,
+              },
+            },
+          )
+        : [];
+
+    const reservedByOtherProjects =
+      otherActiveReservations.reduce(
+        (
+          total,
+          reservation,
+        ) =>
+          total +
+          Math.max(
+            reservation.reservedQuantity,
+            0,
+          ),
+        0,
+      );
+
+    const availableStock =
+      projectWillBeActive
+        ? Math.max(
+            equipment.quantity -
+              reservedByOtherProjects,
+            0,
+          )
+        : 0;
+
+    const reservedQuantity =
+      projectWillBeActive
+        ? Math.min(
+            item.quantity,
+            availableStock,
+          )
+        : 0;
+
+    await transaction.projectEquipment.create(
       {
-        data: newEquipment.map(
-          (item) => ({
-            projectId: id,
+        data: {
+          projectId: id,
 
-            equipmentId:
-              item.equipmentId,
+          equipmentId:
+            item.equipmentId,
 
-            quantity:
-              item.quantity,
+          quantity:
+            item.quantity,
 
-            allocatedQuantity:
-              0,
+          reservedQuantity,
 
-            notes:
-              item.notes,
-          }),
-        ),
+          allocatedQuantity:
+            0,
+
+          notes:
+            item.notes,
+        },
       },
     );
   }
+}
 
   /*
    * 4. Remove apenas equipamentos
@@ -1731,8 +2003,11 @@ if (shouldUpdateEquipment) {
   }
 }
 
-       let nextStockDeductedAt =
-  existingProject.stockDeductedAt;
+      let nextStockDeductedAt =
+        existingProject.stockDeductedAt;
+
+      const allocatedSerialNumbersByEquipmentId =
+        new Map<string, string[]>();
 
 if (isCompletingProject) {
           const finalProjectEquipment =
@@ -1743,26 +2018,241 @@ if (isCompletingProject) {
                 },
 
                 include: {
-                  equipment: {
-                    select: {
-                      id: true,
-                      name: true,
-                      quantity: true,
-                      rmaStatus: true,
-                      machines: {
-                        select: {
-                          id: true,
-                        },
-                      },
-                    },
-                  },
-                },
+  equipment: {
+    select: {
+      id: true,
+      name: true,
+      quantity: true,
+      rmaStatus: true,
+      machines: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  },
+
+  equipmentUnits: {
+    select: {
+      equipmentUnit: {
+        select: {
+          id: true,
+          equipmentId: true,
+          serialNumber: true,
+          condition: true,
+
+          movements: {
+            orderBy: {
+              createdAt: "desc",
+            },
+            take: 1,
+
+            select: {
+              type: true,
+              projectId: true,
+            },
+          },
+        },
+      },
+    },
+  },
+},
 
                 orderBy: {
                   createdAt: "asc",
                 },
               },
             );
+
+            const selectedEquipmentUnits =
+              finalProjectEquipment.flatMap(
+                (item) =>
+                  item.equipmentUnits.map(
+                    (assignment) =>
+                      assignment.equipmentUnit,
+                  ),
+              );
+
+              const mismatchedAssignedEquipmentUnit =
+                finalProjectEquipment.find(
+                  (item) =>
+                    item.equipmentUnits.some(
+                      (assignment) =>
+                        assignment.equipmentUnit
+                          .equipmentId !==
+                        item.equipmentId,
+                    ),
+                );
+
+              if (mismatchedAssignedEquipmentUnit) {
+                throw new Error(
+                  "EQUIPMENT_UNIT_DOES_NOT_BELONG_TO_PROJECT",
+                );
+              }
+
+const finalEquipmentIds =
+  finalProjectEquipment.map(
+    (item) => item.equipmentId,
+  );
+
+const installedSerializedComponents =
+  finalEquipmentIds.length > 0
+    ? await transaction.machineComponent.findMany({
+        where: {
+          equipmentId: {
+            in: finalEquipmentIds,
+          },
+          status: "INSTALLED",
+          serialNumber: {
+            not: null,
+          },
+        },
+
+        select: {
+          equipmentId: true,
+          serialNumber: true,
+        },
+      })
+    : [];
+
+const installedEquipmentUnitKeys =
+  new Set(
+    installedSerializedComponents
+      .filter(
+        (
+          component,
+        ): component is typeof component & {
+          equipmentId: string;
+          serialNumber: string;
+        } =>
+          Boolean(
+            component.equipmentId &&
+              component.serialNumber?.trim(),
+          ),
+      )
+      .map(
+        (component) =>
+          `${component.equipmentId}:${component.serialNumber
+            .trim()
+            .toUpperCase()}`,
+      ),
+  );
+
+            const unavailableEquipmentUnit =
+              selectedEquipmentUnits.find((unit) => {
+                const unitKey =
+                  `${unit.equipmentId}:${unit.serialNumber
+                    .trim()
+                    .toUpperCase()}`;
+
+                return (
+                  unit.condition !== "OPERATIONAL" ||
+                  unit.movements[0]?.type === "EXIT" ||
+                  installedEquipmentUnitKeys.has(unitKey)
+                );
+              });
+
+              if (unavailableEquipmentUnit) {
+                throw new Error(
+                  "EQUIPMENT_UNIT_NOT_AVAILABLE",
+                );
+              }
+
+            for (const item of finalProjectEquipment) {
+              const quantityToDeduct =
+                Math.max(
+                  item.reservedQuantity,
+                  0,
+                );
+
+              const selectedUnitsForEquipment =
+                selectedEquipmentUnits.filter(
+                  (unit) =>
+                    unit.equipmentId ===
+                    item.equipmentId,
+                );
+              
+              allocatedSerialNumbersByEquipmentId.set(
+                item.equipmentId,
+                selectedUnitsForEquipment.map(
+                  (unit) => unit.serialNumber,
+                ),
+              );
+
+              if (
+                selectedUnitsForEquipment.length >
+                quantityToDeduct
+              ) {
+                throw new Error(
+                  "TOO_MANY_EQUIPMENT_UNITS_SELECTED",
+                );
+              }
+            }
+
+            const projectEquipmentIds =
+              new Set(
+                finalProjectEquipment.map(
+                  (item) => item.equipmentId,
+                ),
+              );
+
+            const invalidEquipmentUnit =
+              selectedEquipmentUnits.find(
+                (unit) =>
+                  !projectEquipmentIds.has(
+                    unit.equipmentId,
+                  ),
+              );
+
+            if (invalidEquipmentUnit) {
+              throw new Error(
+                "EQUIPMENT_UNIT_DOES_NOT_BELONG_TO_PROJECT",
+              );
+            }
+
+            const allEquipmentUnits =
+              finalEquipmentIds.length > 0
+                ? await transaction.equipmentUnit.findMany({
+                    where: {
+                      equipmentId: {
+                        in: finalEquipmentIds,
+                      },
+                    },
+
+                    select: {
+                      id: true,
+                      equipmentId: true,
+                      serialNumber: true,
+                      condition: true,
+
+                      movements: {
+                        orderBy: {
+                          createdAt: "desc",
+                        },
+
+                        take: 1,
+
+                        select: {
+                          type: true,
+                        },
+                      },
+                    },
+                  })
+                : [];
+
+            const availableEquipmentUnits =
+              allEquipmentUnits.filter((unit) => {
+                const unitKey =
+                  `${unit.equipmentId}:${unit.serialNumber
+                    .trim()
+                    .toUpperCase()}`;
+
+                return (
+                  unit.condition === "OPERATIONAL" &&
+                  unit.movements[0]?.type !== "EXIT" &&
+                  !installedEquipmentUnitKeys.has(unitKey)
+                );
+              });
 
           /*
            * Primeiro valida todos os itens.
@@ -1788,8 +2278,7 @@ if (isCompletingProject) {
             }
             const quantityToDeduct =
               Math.max(
-                item.quantity -
-                  item.allocatedQuantity,
+                item.reservedQuantity,
                 0,
               );
 
@@ -1797,6 +2286,43 @@ if (isCompletingProject) {
               quantityToDeduct === 0
             ) {
               continue;
+            }
+
+            const availableSerializedUnitCount =
+              availableEquipmentUnits.filter(
+                (unit) =>
+                  unit.equipmentId ===
+                  item.equipmentId,
+              ).length;
+
+            const genericAvailableQuantity =
+              Math.max(
+                item.equipment.quantity -
+                  availableSerializedUnitCount,
+                0,
+              );
+
+            const selectedSerializedUnitCount =
+              selectedEquipmentUnits.filter(
+                (unit) =>
+                  unit.equipmentId ===
+                  item.equipmentId,
+              ).length;
+
+            const genericQuantityToDeduct =
+              Math.max(
+                quantityToDeduct -
+                  selectedSerializedUnitCount,
+                0,
+              );
+
+            if (
+              genericQuantityToDeduct >
+              genericAvailableQuantity
+            ) {
+              throw new Error(
+                "NOT_ENOUGH_GENERIC_EQUIPMENT_UNITS",
+              );
             }
 
             if (
@@ -1819,21 +2345,48 @@ if (isCompletingProject) {
             const item of
             finalProjectEquipment
           ) {
-            const quantityToDeduct =
-              Math.max(
-                item.quantity -
-                  item.allocatedQuantity,
-                0,
-              );
+              const pendingQuantity =
+                Math.max(
+                  item.quantity -
+                    item.allocatedQuantity,
+                  0,
+                );
 
-            if (
-              quantityToDeduct === 0
-            ) {
-              continue;
-            }
+              const reservedQuantity =
+                Math.max(
+                  item.reservedQuantity,
+                  0,
+                );
 
-            const previousQuantity =
-              item.equipment.quantity;
+              if (
+                pendingQuantity === 0
+              ) {
+                continue;
+              }
+
+
+
+              if (
+                reservedQuantity <
+                pendingQuantity
+              ) {
+                throw new Error(
+                  "PROJECT_EQUIPMENT_HAS_SHORTAGE",
+                );
+              }
+
+              const quantityToDeduct =
+                reservedQuantity;
+
+              const selectedUnitsForEquipment =
+                selectedEquipmentUnits.filter(
+                  (unit) =>
+                    unit.equipmentId ===
+                    item.equipmentId,
+                );
+
+              const previousQuantity =
+                item.equipment.quantity;
 
             const currentQuantity =
               previousQuantity -
@@ -1906,6 +2459,8 @@ if (isCompletingProject) {
                   allocatedQuantity:
                     item.allocatedQuantity +
                     quantityToDeduct,
+
+                  reservedQuantity: 0,
                 },
               },
             );
@@ -1936,11 +2491,38 @@ if (isCompletingProject) {
                 },
               },
             );
-          }
+
+            if (
+              selectedUnitsForEquipment.length > 0
+            ) {
+              await transaction.equipmentUnitMovement.createMany({
+                data: selectedUnitsForEquipment.map(
+                  (unit) => ({
+                    type: "EXIT",
+                    equipmentUnitId: unit.id,
+                    projectId: id,
+                  }),
+                ),
+              });
+
+              await transaction.projectEquipmentUnit.deleteMany({
+                where: {
+                  projectEquipmentId: item.id,
+                  equipmentUnitId: {
+                    in: selectedUnitsForEquipment.map(
+                      (unit) => unit.id,
+                    ),
+                  },
+                },
+              });
+            }
+        }
 
           nextStockDeductedAt =
             new Date();
         }
+
+        
 
         const project =
           await transaction.project.update({
@@ -1998,6 +2580,7 @@ if (isCompletingProject) {
         return {
           existingProject,
           project,
+          allocatedSerialNumbersByEquipmentId,
         };
       },
       {
@@ -2006,6 +2589,8 @@ if (isCompletingProject) {
             .Serializable,
       },
     );
+
+    
 
     await logAudit({
       action:
@@ -2033,6 +2618,7 @@ if (isCompletingProject) {
       newData:
         serializeProjectForAudit(
           project,
+          allocatedSerialNumbersByEquipmentId,
         ),
     });
 
@@ -2139,6 +2725,57 @@ if (isCompletingProject) {
         },
       );
     }
+
+    if (
+  error instanceof Error &&
+  error.message ===
+    "NOT_ENOUGH_GENERIC_EQUIPMENT_UNITS"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Selecione os números de série obrigatórios para concluir a baixa deste equipamento.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+if (
+  error instanceof Error &&
+  error.message ===
+    "TOO_MANY_EQUIPMENT_UNITS_SELECTED"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Há mais S/N selecionados do que unidades que serão baixadas. Revise os números de série antes de concluir o projeto.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
+
+if (
+  error instanceof Error &&
+  error.message ===
+    "PROJECT_EQUIPMENT_HAS_SHORTAGE"
+) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Não é possível concluir o projeto enquanto houver equipamentos com déficit. Regularize as reservas ou entradas de estoque antes de concluir.",
+    },
+    {
+      status: 409,
+    },
+  );
+}
 
     if (
       error instanceof
