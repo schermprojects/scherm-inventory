@@ -57,6 +57,11 @@ type EquipmentFormProps = {
   mode?: "create" | "edit";
   equipmentId?: string;
   initialValues?: Partial<EquipmentFormData>;
+  initialSerialNumbers?: {
+    serialNumber: string;
+    hasHistory: boolean;
+    isInStock?: boolean;
+  }[];
   stockInfo?: EquipmentStockInfo;
 };
 
@@ -194,6 +199,7 @@ export function EquipmentForm({
   mode = "create",
   equipmentId,
   initialValues,
+  initialSerialNumbers,
   stockInfo,
 }: EquipmentFormProps) {
   const router = useRouter();
@@ -221,6 +227,38 @@ const [formData, setFormData] =
     status: initialValues?.status ?? "Disponível",
     notes: initialValues?.notes ?? "",
   }));
+
+const [serialNumbers, setSerialNumbers] =
+  useState<string[]>(() => {
+    if (
+      Array.isArray(initialSerialNumbers) &&
+      initialSerialNumbers.length > 0
+    ) {
+      return initialSerialNumbers.map(
+        (unit) => unit.serialNumber,
+      );
+    }
+
+    if (initialValues?.serialNumber) {
+      return [initialValues.serialNumber];
+    }
+
+    return [""];
+  });
+
+  const protectedSerialNumbers = useMemo(
+  () =>
+    new Set(
+      (initialSerialNumbers ?? [])
+        .filter((unit) => unit.hasHistory)
+        .map((unit) =>
+          unit.serialNumber
+            .trim()
+            .toUpperCase(),
+        ),
+    ),
+  [initialSerialNumbers],
+);
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [images, setImages] = useState<ImagePreview[]>([]);
@@ -311,14 +349,24 @@ const [formData, setFormData] =
       }
 
       try {
-        const parsedDraft = JSON.parse(
-          savedDraft,
-        ) as Partial<EquipmentFormData>;
+const parsedDraft = JSON.parse(
+  savedDraft,
+) as {
+  formData?: Partial<EquipmentFormData>;
+  serialNumbers?: string[];
+};
 
-        setFormData({
-          ...initialFormData,
-          ...parsedDraft,
-        });
+setFormData({
+  ...initialFormData,
+  ...parsedDraft.formData,
+});
+
+setSerialNumbers(
+  Array.isArray(parsedDraft.serialNumbers) &&
+    parsedDraft.serialNumbers.length > 0
+    ? parsedDraft.serialNumbers
+    : [""],
+);
 
         setFeedback({
           type: "success",
@@ -407,6 +455,63 @@ const projectedAvailableStock =
     setFeedback(null);
   }
 
+  function handleSerialNumberChange(
+  index: number,
+  value: string,
+) {
+  setSerialNumbers((current) =>
+    current.map((serialNumber, currentIndex) =>
+      currentIndex === index
+        ? value
+        : serialNumber,
+    ),
+  );
+
+  setFeedback(null);
+}
+
+function addSerialNumber() {
+  setSerialNumbers((current) => [
+    ...current,
+    "",
+  ]);
+
+  setFeedback(null);
+}
+
+function removeSerialNumber(index: number) {
+  const serialNumber =
+    serialNumbers[index]
+      ?.trim()
+      .toUpperCase();
+
+  if (
+    serialNumber &&
+    protectedSerialNumbers.has(serialNumber)
+  ) {
+    setFeedback({
+      type: "error",
+      message:
+        "Este S/N possui histórico e não pode ser removido.",
+    });
+
+    return;
+  }
+
+  setSerialNumbers((current) => {
+    if (current.length === 1) {
+      return [""];
+    }
+
+    return current.filter(
+      (_, currentIndex) =>
+        currentIndex !== index,
+    );
+  });
+
+  setFeedback(null);
+}
+
 function validateForm(): boolean {
   const nextErrors: FormErrors = {};
 
@@ -436,6 +541,75 @@ function validateForm(): boolean {
 ) {
   nextErrors.damagedQuantity =
     "Informe uma quantidade danificada inteira igual ou maior que zero.";
+}
+const normalizedSerialNumbers =
+  serialNumbers
+    .map((serialNumber) =>
+      serialNumber.trim().toUpperCase(),
+    )
+    .filter(Boolean);
+
+if (
+  new Set(normalizedSerialNumbers).size !==
+  normalizedSerialNumbers.length
+) {
+  nextErrors.serialNumber =
+    "Existem números de série duplicados.";
+}
+
+const normalizedInitialSerialNumbers =
+  (initialSerialNumbers ?? [])
+    .map((unit) =>
+      unit.serialNumber.trim().toUpperCase(),
+    )
+    .filter(Boolean);
+
+const retainedSerialNumbersCount =
+  (initialSerialNumbers ?? []).filter(
+    (unit) =>
+      unit.isInStock !== false &&
+      normalizedSerialNumbers.includes(
+        unit.serialNumber.trim().toUpperCase(),
+      ),
+  ).length;
+
+const newSerialNumbersCount =
+  normalizedSerialNumbers.filter(
+    (serialNumber) =>
+      !normalizedInitialSerialNumbers.includes(
+        serialNumber,
+      ),
+  ).length;
+
+if (
+  Number.isInteger(quantity) &&
+  Number.isInteger(damagedQuantity)
+) {
+  const physicalQuantity =
+    quantity + damagedQuantity;
+
+  const availableIdentificationSlots =
+    Math.max(
+      physicalQuantity -
+        retainedSerialNumbersCount,
+      0,
+    );
+
+  if (
+    retainedSerialNumbersCount >
+    physicalQuantity
+  ) {
+    nextErrors.serialNumber =
+      "O estoque físico não pode ser menor que a quantidade de unidades identificadas por S/N.";
+  }
+
+  if (
+    newSerialNumbersCount >
+    availableIdentificationSlots
+  ) {
+    nextErrors.serialNumber =
+      "A quantidade de novos números de série excede a quantidade física disponível para identificação.";
+  }
 }
 
   if (
@@ -589,8 +763,11 @@ function validateForm(): boolean {
         body: JSON.stringify({
           name: formData.name.trim(),
 
-          serialNumber:
-            formData.serialNumber.trim() || null,
+          serialNumbers: serialNumbers
+            .map((serialNumber) =>
+              serialNumber.trim(),
+            )
+            .filter(Boolean),
 
           category: formData.category,
 
@@ -717,7 +894,10 @@ function validateForm(): boolean {
   function saveDraft() {
     localStorage.setItem(
       DRAFT_STORAGE_KEY,
-      JSON.stringify(formData),
+      JSON.stringify({
+        formData,
+        serialNumbers,
+      }),
     );
 
     setFeedback({
@@ -745,6 +925,7 @@ function validateForm(): boolean {
     });
 
     setFormData(initialFormData);
+    setSerialNumbers([""]);
     setImages([]);
     setErrors({});
     setFeedback(null);
@@ -1088,22 +1269,6 @@ function validateForm(): boolean {
               className={inputClass(false)}
             />
           </FormField>
-
-          <FormField
-            label="Número de série"
-            error={errors.serialNumber}
-          >
-            <input
-              name="serialNumber"
-              value={formData.serialNumber}
-              onChange={handleChange}
-              placeholder="Opcional"
-              className={inputClass(
-                Boolean(errors.serialNumber),
-              )}
-            />
-          </FormField>
-
 <FormField
   label="Estoque operacional"
   required
@@ -1174,6 +1339,122 @@ function validateForm(): boolean {
     no estoque, mas não estão
     disponíveis para utilização.
   </p>
+</FormField>
+
+<FormField
+  label="Números de série"
+  error={errors.serialNumber}
+  className="md:col-span-2"
+>
+  <div className="space-y-2">
+    {serialNumbers.map(
+  (serialNumber, index) => {
+    const normalizedSerial =
+      serialNumber.trim().toUpperCase();
+
+    const isProtected =
+      protectedSerialNumbers.has(normalizedSerial);
+
+    const existingUnit =
+      (initialSerialNumbers ?? []).find(
+        (unit) =>
+          unit.serialNumber.trim().toUpperCase() ===
+          normalizedSerial,
+      );
+
+    const isHistoricalExit =
+      existingUnit?.isInStock === false;
+
+    return (
+        <div
+          key={index}
+          className="flex gap-2"
+        >
+          <input
+            value={serialNumber}
+            onChange={(event) =>
+              handleSerialNumberChange(
+                index,
+                event.target.value,
+              )
+            }
+            disabled={isProtected}
+            placeholder={`S/N ${index + 1} (opcional)`}
+            className={`${inputClass(
+              Boolean(errors.serialNumber),
+            )} ${
+              isProtected
+                ? "cursor-not-allowed !bg-zinc-100 !text-zinc-500"
+                : ""
+            }`}
+          />
+
+          {existingUnit && (
+            <span
+              className={`self-center whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold ${
+                isHistoricalExit
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-emerald-100 text-emerald-800"
+              }`}
+            >
+              {isHistoricalExit
+                ? "Histórico · Saída"
+                : "Em estoque"}
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={() =>
+              removeSerialNumber(index)
+            }
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+            aria-label={`Remover número de série ${index + 1}`}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      );
+    },
+  )}
+
+    <button
+      type="button"
+      onClick={addSerialNumber}
+      className="text-sm font-semibold text-[#D96D00] transition hover:text-[#F57B00]"
+    >
+      + Adicionar número de série
+    </button>
+
+    <p className="text-xs text-zinc-500">
+      {serialNumbers.filter((serialNumber) => {
+  const normalizedSerial =
+    serialNumber.trim().toUpperCase();
+
+  if (!normalizedSerial) {
+    return false;
+  }
+
+  const isHistoricalExit =
+    (initialSerialNumbers ?? []).some(
+      (unit) =>
+        unit.serialNumber
+          .trim()
+          .toUpperCase() === normalizedSerial &&
+        unit.isInStock === false,
+    );
+
+  return !isHistoricalExit;
+}).length}{" "}
+      de{" "}
+      {Math.max(
+        Number(formData.quantity) +
+          Number(formData.damagedQuantity),
+        0,
+      )}{" "}
+      unidades físicas identificadas.
+    </p>
+  </div>
 </FormField>
 
           <FormField 

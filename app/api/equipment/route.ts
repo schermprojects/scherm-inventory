@@ -9,7 +9,6 @@ import {
 
 import { auth } from "@/auth";
 import { logAudit } from "@/lib/audit";
-import { calculateStock } from "@/lib/inventory/calculateStock";
 import {
   getStockAlertLevel,
   LOW_STOCK_THRESHOLD,
@@ -37,6 +36,7 @@ type EquipmentBody = {
   manufacturer?: unknown;
   model?: unknown;
   serialNumber?: unknown;
+  serialNumbers?: unknown;
   quantity?: unknown;
   damagedQuantity?: unknown;
   invoiceNumber?: unknown;
@@ -72,6 +72,49 @@ function optionalText(
   const text = value.trim();
 
   return text || null;
+}
+
+function parseSerialNumbers(
+  serialNumbers: unknown,
+  legacySerialNumber: unknown,
+): string[] {
+  let values: unknown[];
+
+  if (Array.isArray(serialNumbers)) {
+    values = serialNumbers;
+  } else {
+    const legacyValue =
+      optionalText(legacySerialNumber);
+
+    values = legacyValue
+      ? [legacyValue]
+      : [];
+  }
+
+  const normalizedSerialNumbers =
+    values
+      .filter(
+        (value): value is string =>
+          typeof value === "string",
+      )
+      .map((value) =>
+        value.trim().toUpperCase(),
+      )
+      .filter(Boolean);
+
+  const uniqueSerialNumbers =
+    new Set(normalizedSerialNumbers);
+
+  if (
+    uniqueSerialNumbers.size !==
+    normalizedSerialNumbers.length
+  ) {
+    throw new Error(
+      "Existem números de série duplicados no cadastro.",
+    );
+  }
+
+  return [...uniqueSerialNumbers];
 }
 
 function parseNonNegativeInteger(
@@ -187,6 +230,43 @@ export async function GET() {
             take: 1,
           },
 
+equipmentUnits: {
+  orderBy: {
+    createdAt: "asc",
+  },
+
+  include: {
+    movements: {
+      orderBy: {
+        createdAt: "desc",
+      },
+
+      take: 1,
+
+      select: {
+        type: true,
+      },
+    },
+
+    projectAssignment: {
+      select: {
+        projectEquipment: {
+          select: {
+            projectId: true,
+
+            project: {
+              select: {
+                name: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+},
+
           projects: {
             where: {
               project: {
@@ -198,6 +278,7 @@ export async function GET() {
 
             select: {
               quantity: true,
+              reservedQuantity: true,
               allocatedQuantity: true,
               projectId: true,
 
@@ -224,7 +305,30 @@ export async function GET() {
 
     const equipment =
       equipmentRecords.map((item) => {
-        const requested =
+        const operationalStock =
+  Math.max(
+    item.quantity,
+    0,
+  );
+
+const installedQuantity =
+  Math.max(
+    item.installedQuantity,
+    0,
+  );
+
+const damagedQuantity =
+  Math.max(
+    item.damagedQuantity,
+    0,
+  );
+
+const physicalStock =
+  operationalStock +
+  installedQuantity +
+  damagedQuantity;
+
+const totalReserved =
   item.projects.reduce(
     (
       total,
@@ -232,25 +336,37 @@ export async function GET() {
     ) =>
       total +
       Math.max(
-        projectEquipment.quantity,
+        projectEquipment.reservedQuantity,
         0,
       ),
     0,
   );
 
-const {
-  physicalStock,
-  operationalStock,
-  installedQuantity,
-  inUse,
-  availableStock,
-  shortage,
-} = calculateStock(
-  item.quantity,
-  requested,
-  item.damagedQuantity,
-  item.installedQuantity,
-);
+const inUse =
+  totalReserved;
+
+const availableStock =
+  Math.max(
+    operationalStock -
+      totalReserved,
+    0,
+  );
+
+const shortage =
+  item.projects.reduce(
+    (
+      total,
+      projectEquipment,
+    ) =>
+      total +
+      Math.max(
+        projectEquipment.quantity -
+          projectEquipment.allocatedQuantity -
+          projectEquipment.reservedQuantity,
+        0,
+      ),
+    0,
+  );
         const stockAlertLevel =
           getStockAlertLevel(
             availableStock,
@@ -275,48 +391,108 @@ const {
             ),
           ).size;
 
+        const assignedSerialNumbers =
+          item.equipmentUnits
+            .filter((unit) => {
+              const projectAssignment =
+                unit.projectAssignment;
+
+              if (!projectAssignment) {
+                return false;
+              }
+
+              if (
+                unit.condition !==
+                "OPERATIONAL"
+              ) {
+                return false;
+              }
+
+              if (
+                unit.movements[0]?.type ===
+                "EXIT"
+              ) {
+                return false;
+              }
+
+              return ACTIVE_PROJECT_STATUSES.includes(
+                projectAssignment
+                  .projectEquipment
+                  .project
+                  .status,
+              );
+            })
+            .map(
+              (unit) =>
+                unit.serialNumber,
+            ); 
+
         return {
-  id: item.id,
-  name: item.name,
-  category: item.category,
-  manufacturer: item.manufacturer,
-  model: item.model,
-  serialNumber: item.serialNumber,
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          manufacturer: item.manufacturer,
+          model: item.model,
+          serialNumber: item.serialNumber,
 
-  quantity: operationalStock,
-  physicalStock,
+          serialNumbers:
+            item.equipmentUnits
+              .filter(
+                (unit) =>
+                  unit.condition === "OPERATIONAL" &&
+                  unit.movements[0]?.type !== "EXIT",
+              )
+              .map(
+                (unit) => unit.serialNumber,
+              ),
 
-  installedQuantity,
+          assignedSerialNumbers,
 
-  damagedQuantity:
-    item.damagedQuantity,
+          damagedSerialNumbers:
+            item.equipmentUnits
+              .filter(
+                (unit) =>
+                  unit.condition === "DAMAGED" &&
+                  unit.movements[0]?.type !== "EXIT",
+              )
+              .map(
+                (unit) => unit.serialNumber,
+              ),
 
-hasDamagedUnits:
-  item.damagedQuantity > 0,
+            quantity: operationalStock,
+            physicalStock,
 
-minimumStock:
-  LOW_STOCK_THRESHOLD,
+            installedQuantity,
 
-          inUse,
-          availableStock,
-          shortage,
-          projectsUsing,
+            damagedQuantity:
+              item.damagedQuantity,
 
-          isOutOfStock,
-          isBelowMinimum,
-          hasShortage,
+            hasDamagedUnits:
+              item.damagedQuantity > 0,
 
-          invoiceNumber:
-            item.invoiceNumber,
+            minimumStock:
+              LOW_STOCK_THRESHOLD,
 
-          status: item.status,
-          condition: item.condition,
-          rmaStatus: item.rmaStatus,
-          notes: item.notes,
+              inUse,
+              availableStock,
+              shortage,
+              projectsUsing,
 
-          images: item.images,
+              isOutOfStock,
+              isBelowMinimum,
+              hasShortage,
 
-          activeProjects:
+              invoiceNumber:
+                item.invoiceNumber,
+
+              status: item.status,
+              condition: item.condition,
+              rmaStatus: item.rmaStatus,
+              notes: item.notes,
+
+              images: item.images,
+
+              activeProjects:
   item.projects.map(
     (projectEquipment) => {
       const pendingQuantity =
@@ -518,6 +694,24 @@ const damagedQuantity =
     ? requestedDamagedQuantity
     : 0;
 
+const serialNumbers =
+  parseSerialNumbers(
+    body.serialNumbers,
+    body.serialNumber,
+  );
+
+const initialPhysicalQuantity =
+  quantity + damagedQuantity;
+
+if (
+  serialNumbers.length >
+  initialPhysicalQuantity
+) {
+  throw new Error(
+    "A quantidade de números de série não pode ser maior que a quantidade física cadastrada.",
+  );
+}
+
 /*
  * Estoque inicial, nota fiscal, status
  * e condição operacional são controlados
@@ -561,10 +755,23 @@ const condition =
             body.model,
           ),
 
-          serialNumber:
-            optionalText(
-              body.serialNumber,
-            )?.toUpperCase() ?? null,
+          /*
+          * Novos números de série são armazenados por
+          * unidade física. O campo legado serialNumber
+          * permanece nulo nos novos cadastros.
+          */
+          serialNumber: null,
+
+          equipmentUnits:
+            serialNumbers.length > 0
+              ? {
+                  create: serialNumbers.map(
+                    (serialNumber) => ({
+                      serialNumber,
+                    }),
+                  ),
+                }
+              : undefined,
 
           quantity,
 
@@ -597,15 +804,21 @@ const condition =
           ),
         },
 
-        include: {
-          images: {
-            orderBy: {
-              position: "asc",
+          include: {
+            images: {
+              orderBy: {
+                position: "asc",
+              },
+              take: 1,
             },
-            take: 1,
+
+            equipmentUnits: {
+              orderBy: {
+                createdAt: "asc",
+              },
+            },
           },
-        },
-      });
+          });
 
     await logAudit({
       action: AuditAction.CREATE,
@@ -621,8 +834,10 @@ const condition =
         manufacturer:
           equipment.manufacturer,
         model: equipment.model,
-        serialNumber:
-          equipment.serialNumber,
+        serialNumbers:
+          equipment.equipmentUnits.map(
+            (unit) => unit.serialNumber,
+          ),
         quantity:
           equipment.quantity,
         installedQuantity:

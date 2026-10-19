@@ -299,8 +299,8 @@ if (
                 select: {
                   id: true,
                   quantity: true,
-                  allocatedQuantity:
-                    true,
+                  reservedQuantity: true,
+                  allocatedQuantity: true,
 
                   project: {
                     select: {
@@ -348,10 +348,13 @@ if (
               0,
             );
 
-          /*
-           * Quantidade que já teve baixa
-           * física anteriormente.
-           */
+          const currentReservedQuantity =
+            Math.max(
+              projectEquipment
+                .reservedQuantity,
+              0,
+            );
+
           const currentAllocatedQuantity =
             Math.max(
               projectEquipment
@@ -359,18 +362,10 @@ if (
               0,
             );
 
-          /*
-           * Parte da necessidade que ainda
-           * não teve baixa física.
-           *
-           * IMPORTANTE:
-           *
-           * Esta entrada NÃO modifica
-           * allocatedQuantity.
-           */
           const pendingQuantity =
             Math.max(
               requiredQuantity -
+                currentReservedQuantity -
                 currentAllocatedQuantity,
               0,
             );
@@ -396,6 +391,10 @@ if (
               entryQuantity,
               pendingQuantity,
             );
+
+          const nextReservedQuantity =
+            currentReservedQuantity +
+            allocationQuantity;
 
           /*
            * Caso a nota/entrega tenha mais
@@ -429,6 +428,12 @@ if (
 
             requiredQuantity,
 
+            previousReservedQuantity:
+              currentReservedQuantity,
+
+            currentReservedQuantity:
+              nextReservedQuantity,
+
             previousAllocatedQuantity:
               currentAllocatedQuantity,
 
@@ -448,6 +453,22 @@ if (
                 0,
               ),
           };
+
+          await transaction.projectEquipment.update(
+            {
+              where: {
+                projectId_equipmentId: {
+                  projectId,
+                  equipmentId: id,
+                },
+              },
+
+              data: {
+                reservedQuantity:
+                  nextReservedQuantity,
+              },
+            },
+          );
 
           const previousQuantity =
             Math.max(
@@ -707,6 +728,14 @@ if (
             result.project
               .requiredQuantity,
 
+          previousReservedQuantity:
+            result.project
+              .previousReservedQuantity,
+
+          currentReservedQuantity:
+            result.project
+              .currentReservedQuantity,
+
           previousAllocatedQuantity:
             result.project
               .previousAllocatedQuantity,
@@ -753,6 +782,14 @@ if (
           requiredQuantity:
             result.project
               .requiredQuantity,
+
+          previousReservedQuantity:
+            result.project
+              .previousReservedQuantity,
+
+          currentReservedQuantity:
+            result.project
+              .currentReservedQuantity,
 
           previousAllocatedQuantity:
             result.project

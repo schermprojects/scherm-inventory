@@ -48,6 +48,7 @@ type PendingProject = {
   createdAt: Date;
 
   requiredQuantity: number;
+  reservedQuantity: number;
   allocatedQuantity: number;
 
   /**
@@ -158,11 +159,12 @@ export async function GET(
               },
             },
 
-            select: {
-              quantity: true,
-              allocatedQuantity: true,
+           select: {
+            quantity: true,
+            reservedQuantity: true,
+            allocatedQuantity: true,
 
-              project: {
+            project: {
                 select: {
                   id: true,
                   name: true,
@@ -223,9 +225,29 @@ export async function GET(
               0,
             );
 
+          const reservedQuantity =
+            Math.max(
+              item.reservedQuantity,
+              0,
+            );
+
           const pendingQuantity =
             Math.max(
               requiredQuantity -
+                allocatedQuantity,
+              0,
+            );
+
+          const coveredByStock =
+            Math.min(
+              reservedQuantity,
+              pendingQuantity,
+            );
+
+          const missingQuantity =
+            Math.max(
+              requiredQuantity -
+                reservedQuantity -
                 allocatedQuantity,
               0,
             );
@@ -259,13 +281,13 @@ export async function GET(
               item.project.createdAt,
 
             requiredQuantity,
+            reservedQuantity,
             allocatedQuantity,
 
             pendingQuantity,
 
-            coveredByStock: 0,
-            missingQuantity:
-              pendingQuantity,
+            coveredByStock,
+            missingQuantity,
           };
         })
         .filter(
@@ -289,43 +311,8 @@ export async function GET(
      * 4. Prazo;
      * 5. Data de criação.
      */
-    let remainingOperationalStock =
-      Math.max(
-        equipment.quantity,
-        0,
-      );
-
     const projects =
-      pendingProjects.map(
-        (project) => {
-          const coveredByStock =
-            Math.min(
-              project.pendingQuantity,
-              remainingOperationalStock,
-            );
-
-          remainingOperationalStock =
-            Math.max(
-              remainingOperationalStock -
-                coveredByStock,
-              0,
-            );
-
-          const missingQuantity =
-            Math.max(
-              project.pendingQuantity -
-                coveredByStock,
-              0,
-            );
-
-          return {
-            ...project,
-
-            coveredByStock,
-            missingQuantity,
-          };
-        },
-      );
+  pendingProjects;
 
     /**
      * O modal de entrada precisa mostrar
@@ -382,7 +369,16 @@ export async function GET(
             ),
 
           availableAfterDemand:
-            remainingOperationalStock,
+            Math.max(
+              equipment.quantity -
+                projects.reduce(
+                  (total, project) =>
+                    total +
+                    project.reservedQuantity,
+                  0,
+                ),
+              0,
+            ),
         },
 
         projects:

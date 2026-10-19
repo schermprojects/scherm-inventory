@@ -55,6 +55,32 @@ export default async function EditEquipmentPage({
       },
 
       include: {
+        equipmentUnits: {
+          orderBy: {
+            createdAt: "asc",
+          },
+          include: {
+            movements: {
+              orderBy: {
+                createdAt: "desc",
+              },
+              take: 1,
+              select: {
+                type: true,
+              },
+            },
+            _count: {
+              select: {
+                movements: true,
+              },
+            },
+            projectAssignment: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
         projects: {
           where: {
             project: {
@@ -196,6 +222,29 @@ export default async function EditEquipmentPage({
         }
         initialValues={
           initialValues
+        }
+        initialSerialNumbers={
+          equipment.equipmentUnits.length > 0
+            ? equipment.equipmentUnits.map(
+                (unit) => ({
+                  serialNumber: unit.serialNumber,
+                  hasHistory:
+                    unit._count.movements > 0 ||
+                    Boolean(unit.projectAssignment),
+                  isInStock:
+                    unit.movements[0]?.type !== "EXIT",
+                }),
+              )
+            : equipment.serialNumber
+              ? [
+                  {
+                    serialNumber:
+                      equipment.serialNumber,
+                    hasHistory: false,
+                    isInStock: true,
+                  },
+                ]
+              : []
         }
         stockInfo={{
           physicalStock,

@@ -87,6 +87,9 @@ type ApiEquipment = {
   minimumStock: number;
 
   serialNumber: string | null;
+  serialNumbers: string[];
+  assignedSerialNumbers: string[];
+  damagedSerialNumbers: string[];
   category: string;
 
   status: ApiEquipmentStatus;
@@ -122,6 +125,9 @@ type Equipment = {
   minimumStock: number;
 
   serialNumber: string | null;
+  serialNumbers: string[];
+  assignedSerialNumbers: string[];
+  damagedSerialNumbers: string[];
   category: string;
 
   status: EquipmentStatus;
@@ -224,6 +230,15 @@ function mapApiEquipment(
 
     serialNumber:
       item.serialNumber,
+
+    serialNumbers:
+      item.serialNumbers ?? [],
+    
+    assignedSerialNumbers:
+      item.assignedSerialNumbers ?? [],
+    
+    damagedSerialNumbers:
+      item.damagedSerialNumbers ?? [],
 
     category:
       item.category,
@@ -583,6 +598,8 @@ export function InventoryView() {
               equipment.manufacturer,
               equipment.model,
               equipment.serialNumber,
+              ...equipment.serialNumbers,
+              ...equipment.damagedSerialNumbers,
               equipment.category,
               equipment.invoiceNumber,
             ];
@@ -757,7 +774,7 @@ export function InventoryView() {
   "Déficit",
   "Danificados",
   "Estoque mínimo",
-  "Número de série",
+  "Números de série",
   "Categoria",
   "Status",
   "Condição",
@@ -790,8 +807,9 @@ export function InventoryView() {
 
           equipment.minimumStock,
 
-          equipment.serialNumber ??
-            "",
+          equipment.serialNumbers.length > 0
+            ? equipment.serialNumbers.join(", ")
+            : equipment.serialNumber ?? "",
 
           equipment.category,
 
@@ -1621,6 +1639,98 @@ function FilterTag({
   );
 }
 
+function SerialNumberPreview({
+  serialNumbers,
+  assignedSerialNumbers = [],
+  damagedSerialNumbers = [],
+}: {
+  serialNumbers: string[];
+  assignedSerialNumbers?: string[];
+  damagedSerialNumbers?: string[];
+}) {
+  const assignedSerialNumberSet =
+    new Set(assignedSerialNumbers);
+
+  const allSerialNumbers = [
+    ...serialNumbers.map((serialNumber) => ({
+      serialNumber,
+      assigned:
+        assignedSerialNumberSet.has(
+          serialNumber,
+        ),
+      damaged: false,
+    })),
+
+    ...damagedSerialNumbers.map(
+      (serialNumber) => ({
+        serialNumber,
+        assigned: false,
+        damaged: true,
+      }),
+    ),
+  ];
+
+  if (allSerialNumbers.length === 0) {
+    return (
+      <span className="text-xs text-zinc-400">
+        Sem número de série
+      </span>
+    );
+  }
+
+  const visibleSerialNumbers =
+    allSerialNumbers.slice(0, 2);
+
+  const remaining =
+    allSerialNumbers.length -
+    visibleSerialNumbers.length;
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {visibleSerialNumbers.map(
+        ({
+          serialNumber,
+          assigned,
+          damaged,
+        }) => (
+          <span
+            key={serialNumber}
+            className={[
+              "inline-flex max-w-full rounded-md px-2 py-1 text-[11px] font-medium",
+
+              damaged
+                ? "bg-red-50 text-red-700"
+                : assigned
+                  ? "bg-blue-50 text-blue-700"
+                  : "bg-zinc-100 text-zinc-700",
+            ].join(" ")}
+            title={
+              damaged
+                ? `${serialNumber} — Danificado`
+                : assigned
+                  ? `${serialNumber} — Designado a projeto`
+                  : `${serialNumber} — Em estoque`
+            }
+          >
+            <span className="truncate">
+              {serialNumber}
+            </span>
+          </span>
+        ),
+      )}
+
+      {remaining > 0 ? (
+        <span
+          className="inline-flex rounded-md bg-orange-50 px-2 py-1 text-[11px] font-semibold text-[#D96D00]"
+          title={`${remaining} número(s) de série adicional(is)`}
+        >
+          +{remaining}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /*
  * No desktop, a linha inteira funciona como link para os detalhes.
  * Por isso não mantemos uma coluna exclusiva de ações e priorizamos
@@ -1796,10 +1906,17 @@ function EquipmentTable({
                         "—"}
                     </p>
 
-                    <p className="mt-1 text-xs text-zinc-500">
-                      {item.serialNumber ||
-                        "Sem número de série"}
-                    </p>
+                    <div className="mt-1.5">
+                      <SerialNumberPreview
+                        serialNumbers={item.serialNumbers}
+                        assignedSerialNumbers={
+                          item.assignedSerialNumbers
+                        }
+                        damagedSerialNumbers={
+                          item.damagedSerialNumbers
+                        }
+                      />
+                    </div>
                   </td>
 
                   <td className="px-4 py-3">
@@ -2086,13 +2203,23 @@ function EquipmentCards({
                   }`}
                 />
 
-                <CardDetail
-                  label="Número de série"
-                  value={
-                    item.serialNumber ||
-                    "Não informado"
-                  }
-                />
+                <div className="min-w-0">
+                  <dt className="text-xs font-medium text-zinc-400">
+                    Números de série
+                  </dt>
+
+                  <dd className="mt-1.5">
+                    <SerialNumberPreview
+                      serialNumbers={item.serialNumbers}
+                      assignedSerialNumbers={
+                        item.assignedSerialNumbers
+                      }
+                      damagedSerialNumbers={
+                        item.damagedSerialNumbers
+                      }
+                    />
+                  </dd>
+                </div>
 
                 <CardDetail
                   label="Nota fiscal"

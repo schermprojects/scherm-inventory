@@ -27,6 +27,7 @@ type EquipmentRequestBody = {
   manufacturer?: unknown;
   model?: unknown;
   serialNumber?: unknown;
+  serialNumbers?: unknown;
   quantity?: unknown;
   damagedQuantity?: unknown;
   category?: unknown;
@@ -94,6 +95,47 @@ function optionalUppercaseText(
   return normalizedValue
     ? normalizedValue.toUpperCase()
     : null;
+}
+
+function parseSerialNumbers(
+  value: unknown,
+): string[] {
+  if (!Array.isArray(value)) {
+    throw new ValidationError(
+      "Os números de série informados são inválidos.",
+      "serialNumbers",
+    );
+  }
+
+  if (
+    value.some(
+      (serialNumber) =>
+        typeof serialNumber !== "string",
+    )
+  ) {
+    throw new ValidationError(
+      "Os números de série informados são inválidos.",
+      "serialNumbers",
+    );
+  }
+
+  const serialNumbers = value
+    .map((serialNumber) =>
+      serialNumber.trim().toUpperCase(),
+    )
+    .filter(Boolean);
+
+  if (
+    new Set(serialNumbers).size !==
+    serialNumbers.length
+  ) {
+    throw new ValidationError(
+      "Existem números de série duplicados.",
+      "serialNumbers",
+    );
+  }
+
+  return serialNumbers;
 }
 
 function requiredNonNegativeInteger(
@@ -230,6 +272,9 @@ function serializeEquipmentForAudit(
     manufacturer: string | null;
     model: string | null;
     serialNumber: string | null;
+    equipmentUnits: {
+      serialNumber: string;
+    }[];
     quantity: number;
     damagedQuantity: number;
     category: string;
@@ -247,8 +292,14 @@ function serializeEquipmentForAudit(
     manufacturer:
       equipment.manufacturer,
     model: equipment.model,
-    serialNumber:
-      equipment.serialNumber,
+    serialNumbers:
+  equipment.equipmentUnits.length > 0
+    ? equipment.equipmentUnits.map(
+        (unit) => unit.serialNumber,
+      )
+    : equipment.serialNumber
+      ? [equipment.serialNumber]
+      : [],
     quantity: equipment.quantity,
     damagedQuantity:
       equipment.damagedQuantity,
@@ -436,24 +487,52 @@ export async function PATCH(
           id,
         },
 
-        select: {
-          id: true,
-          name: true,
-          manufacturer: true,
-          model: true,
-          serialNumber: true,
-          quantity: true,
-          damagedQuantity: true,
-          category: true,
-          status: true,
-          condition: true,
-          rmaStatus: true,
-          invoiceNumber: true,
-          notes: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
+select: {
+  id: true,
+  name: true,
+  manufacturer: true,
+  model: true,
+  serialNumber: true,
+  quantity: true,
+  damagedQuantity: true,
+  category: true,
+  status: true,
+  condition: true,
+  rmaStatus: true,
+  invoiceNumber: true,
+  notes: true,
+  createdAt: true,
+  updatedAt: true,
+equipmentUnits: {
+  select: {
+    id: true,
+    serialNumber: true,
+    movements: {
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 1,
+      select: {
+        type: true,
+      },
+    },
+    projectAssignment: {
+      select: {
+        id: true,
+      },
+    },
+    _count: {
+      select: {
+        movements: true,
+      },
+    },
+  },
+  orderBy: {
+    createdAt: "asc",
+  },
+},
+},
+});
 
     if (!existingEquipment) {
       return Response.json(
@@ -504,6 +583,86 @@ export async function PATCH(
       "damagedQuantity",
       );
 
+    const serialNumbers =
+      parseSerialNumbers(
+        body.serialNumbers,
+      );
+
+const existingUnits = existingEquipment.equipmentUnits.map((unit) => ({
+  id: unit.id,
+  serialNumber: unit.serialNumber,
+  movementCount: unit._count.movements,
+  hasProjectAssignment: Boolean(unit.projectAssignment),
+  isInStock: unit.movements[0]?.type !== "EXIT",
+}));
+
+const existingSerialNumbers = existingUnits
+  .map((unit) => unit.serialNumber)
+  .filter((value): value is string => Boolean(value));
+
+const serialNumbersToCreate = serialNumbers.filter(
+  (serialNumber) => !existingSerialNumbers.includes(serialNumber)
+);
+
+const serialNumbersToDelete = existingUnits.filter(
+  (unit) =>
+    unit.serialNumber &&
+    !serialNumbers.includes(unit.serialNumber)
+);
+
+const blockedSerialNumbers = serialNumbersToDelete.filter(
+  (unit) =>
+    unit.movementCount > 0 ||
+    unit.hasProjectAssignment
+);
+
+if (blockedSerialNumbers.length > 0) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Não é possível alterar ou remover S/N que possuem movimentações ou histórico.",
+      serialNumbers: blockedSerialNumbers.map(
+        (unit) => unit.serialNumber,
+      ),
+    },
+    { status: 409 },
+  );
+}
+
+const physicalQuantity = quantity + damagedQuantity;
+
+const retainedSerialNumbersCount = existingUnits.filter(
+  (unit) =>
+    unit.isInStock &&
+    serialNumbers.includes(unit.serialNumber),
+).length;
+
+if (retainedSerialNumbersCount > physicalQuantity) {
+  return Response.json(
+    {
+      success: false,
+      message:
+        "Não é possível reduzir o estoque físico abaixo da quantidade de unidades identificadas por S/N.",
+    },
+    { status: 409 },
+  );
+}
+
+const availableIdentificationSlots = Math.max(
+  0,
+  physicalQuantity - retainedSerialNumbersCount,
+);
+
+if (serialNumbersToCreate.length > availableIdentificationSlots) {
+  return Response.json(
+    {
+      error: `Quantidade de S/N informados excede a quantidade física disponível (${physicalQuantity}).`,
+    },
+    { status: 400 }
+  );
+}
+
     const equipment =
       await prisma.equipment.update({
         where: {
@@ -532,11 +691,6 @@ export async function PATCH(
             body.model,
           ),
 
-          serialNumber:
-            optionalUppercaseText(
-              body.serialNumber,
-            ),
-
           quantity,
           damagedQuantity,
 
@@ -557,9 +711,33 @@ export async function PATCH(
           notes: optionalText(
             body.notes,
           ),
+
+          equipmentUnits: {
+            deleteMany:
+              serialNumbersToDelete.length > 0
+                ? {
+                    serialNumber: {
+                      in: serialNumbersToDelete.map(
+                        (unit) => unit.serialNumber
+                      ),
+                    },
+                  }
+                : undefined,
+
+            create: serialNumbersToCreate.map(
+              (serialNumber) => ({
+                serialNumber,
+              }),
+            ),
+          },
         },
 
         include: {
+          equipmentUnits: {
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
           images: {
             orderBy: {
               position: "asc",
@@ -727,7 +905,14 @@ export async function DELETE(
           notes: true,
           createdAt: true,
           updatedAt: true,
-
+          equipmentUnits: {
+            select: {
+              serialNumber: true,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          },  
           images: {
             select: {
               pathname: true,
@@ -804,6 +989,14 @@ export async function DELETE(
           notes: true,
           createdAt: true,
           updatedAt: true,
+          equipmentUnits: {
+            select: {
+              serialNumber: true,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
         },
       });
 
