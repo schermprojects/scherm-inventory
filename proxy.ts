@@ -80,6 +80,34 @@ export default auth((request) => {
   const user = request.auth
     ?.user as AuthenticatedUser | undefined;
 
+  const maintenanceMode = true;
+
+  if (maintenanceMode) {
+    if (pathname === "/maintenance") {
+      return NextResponse.next();
+    }
+
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Sistema temporariamente indisponível para manutenção.",
+        },
+        {
+          status: 503,
+        },
+      );
+    }
+
+    return NextResponse.redirect(
+      new URL(
+        "/maintenance",
+        request.url,
+      ),
+    );
+  }
+
   if (
     isProtectedRoute(pathname) &&
     !user?.id
@@ -140,6 +168,6 @@ export default auth((request) => {
 
 export const config = {
   matcher: [
-    "/((?!api/auth|api|_next/static|_next/image|favicon.ico|.*\\..*).*)",
+    "/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\..*).*)",
   ],
 };
