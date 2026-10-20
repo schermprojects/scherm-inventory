@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { signOut } from "next-auth/react";
 
+const MAINTENANCE_NOTICE_ACK_KEY =
+  "schermix-maintenance-2026-10-20-ack";
+
 type AdminAccountProps = {
   name: string;
   email: string;
@@ -75,11 +78,15 @@ export function AdminAccount({
             <button
               type="button"
               role="menuitem"
-              onClick={() =>
-                signOut({
+              onClick={() => {
+                sessionStorage.removeItem(
+                  MAINTENANCE_NOTICE_ACK_KEY,
+                );
+
+                void signOut({
                   callbackUrl: "/login",
-                })
-              }
+                });
+              }}
               className="w-full px-4 py-3 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
             >
               Sair do sistema

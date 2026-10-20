@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { AuthSessionProvider } from "@/components/auth/AuthSessionProvider";
+import { MaintenanceNotice } from "@/components/shared/MaintenanceNotice";
 import { ToastProvider } from "@/components/ui/Toast";
 
 import "./globals.css";
@@ -24,6 +25,7 @@ export default function RootLayout({
       <body>
         <AuthSessionProvider>
           <ToastProvider>
+            <MaintenanceNotice />
             {children}
           </ToastProvider>
         </AuthSessionProvider>

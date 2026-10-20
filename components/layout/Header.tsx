@@ -38,6 +38,9 @@ const roleLabels: Record<
   VIEWER: "Consulta",
 };
 
+const MAINTENANCE_NOTICE_ACK_KEY =
+  "schermix-maintenance-2026-10-20-ack";
+
 function getInitials(name?: string | null): string {
   if (!name) {
     return "AD";
@@ -76,13 +79,17 @@ const showNewEquipmentButton =
   canCreateEquipment &&
   pathname === "/inventory";
 
-  async function handleSignOut() {
-    setIsAccountMenuOpen(false);
+async function handleSignOut() {
+  setIsAccountMenuOpen(false);
 
-    await signOut({
-      callbackUrl: "/login",
-    });
-  }
+  sessionStorage.removeItem(
+    MAINTENANCE_NOTICE_ACK_KEY,
+  );
+
+  await signOut({
+    callbackUrl: "/login",
+  });
+}
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-zinc-200 bg-white px-3 sm:px-4 lg:h-20 lg:px-6">
