@@ -80,42 +80,6 @@ export default auth((request) => {
   const user = request.auth
     ?.user as AuthenticatedUser | undefined;
 
-const maintenanceMode = true;
-
-const maintenanceBypassUserIds = new Set([
-  "cms2ls2pe0000d0wfuqm7q43x",
-]);
-
-const hasMaintenanceBypass =
-  user?.id &&
-  maintenanceBypassUserIds.has(user.id);
-
-if (maintenanceMode && !hasMaintenanceBypass) {
-    if (pathname === "/maintenance") {
-      return NextResponse.next();
-    }
-
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "Sistema temporariamente indisponível para manutenção.",
-        },
-        {
-          status: 503,
-        },
-      );
-    }
-
-    return NextResponse.redirect(
-      new URL(
-        "/maintenance",
-        request.url,
-      ),
-    );
-  }
-
   if (
     isProtectedRoute(pathname) &&
     !user?.id
@@ -176,6 +140,6 @@ if (maintenanceMode && !hasMaintenanceBypass) {
 
 export const config = {
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\..*).*)",
+    "/((?!api/auth|api|_next/static|_next/image|favicon.ico|.*\\..*).*)",
   ],
 };
