@@ -80,9 +80,17 @@ export default auth((request) => {
   const user = request.auth
     ?.user as AuthenticatedUser | undefined;
 
-  const maintenanceMode = true;
+const maintenanceMode = true;
 
-  if (maintenanceMode) {
+const maintenanceBypassUserIds = new Set([
+  "cms2ls2pe0000d0wfuqm7q43x",
+]);
+
+const hasMaintenanceBypass =
+  user?.id &&
+  maintenanceBypassUserIds.has(user.id);
+
+if (maintenanceMode && !hasMaintenanceBypass) {
     if (pathname === "/maintenance") {
       return NextResponse.next();
     }
