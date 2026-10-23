@@ -1651,24 +1651,33 @@ function SerialNumberPreview({
   const assignedSerialNumberSet =
     new Set(assignedSerialNumbers);
 
-  const allSerialNumbers = [
-    ...serialNumbers.map((serialNumber) => ({
-      serialNumber,
-      assigned:
-        assignedSerialNumberSet.has(
+const damagedSerialNumberSet =
+  new Set(
+    damagedSerialNumbers,
+  );
+
+const allSerialNumbers = [
+  ...serialNumbers
+    .filter(
+      (serialNumber) =>
+        !damagedSerialNumberSet.has(
           serialNumber,
         ),
+    )
+    .map((serialNumber) => ({
+      serialNumber,
       damaged: false,
+      assigned: false,
     })),
 
-    ...damagedSerialNumbers.map(
-      (serialNumber) => ({
-        serialNumber,
-        assigned: false,
-        damaged: true,
-      }),
-    ),
-  ];
+  ...damagedSerialNumbers.map(
+    (serialNumber) => ({
+      serialNumber,
+      damaged: true,
+      assigned: false,
+    }),
+  ),
+];
 
   if (allSerialNumbers.length === 0) {
     return (

@@ -241,7 +241,28 @@ rmaReplacementEquipment: {
     manufacturer: true,
     model: true,
   },
-}, 
+},
+ rmas: {
+  orderBy: {
+    openedAt: "desc",
+  },
+
+  include: {
+    equipmentUnit: {
+      select: {
+        id: true,
+        serialNumber: true,
+      },
+    },
+
+    replacementEquipmentUnit: {
+      select: {
+        id: true,
+        serialNumber: true,
+      },
+    },
+  },
+},
       },
     });
 
@@ -278,13 +299,23 @@ const canManageThisEquipment =
   !isInstalledMachineComponent &&
   !isHistoricalRmaReplacement;
 
-  /*
-  * RMA aparece enquanto houver dano físico ou quando
-  * o equipamento já possuir histórico de RMA.
-  */
-  const shouldShowRma =
+const activeRma =
+  equipment.rmas.find((rma) =>
+    [
+      "PENDING",
+      "SENT",
+      "APPROVED",
+    ].includes(rma.status),
+  ) ?? null;
+
+/*
+ * RMA aparece enquanto houver dano físico,
+ * processo ativo ou histórico registrado.
+ */
+const shouldShowRma =
   equipment.damagedQuantity > 0 ||
-  equipment.rmaStatus !== "NONE";
+  equipment.rmaStatus !== "NONE" ||
+  equipment.rmas.length > 0;
 
   const machineInstalledComponents =
   linkedMachine?.components ?? [];
@@ -311,6 +342,18 @@ const damagedEquipmentUnits =
     (unit) =>
       unit.condition === "DAMAGED" &&
       unit.movements[0]?.type !== "EXIT",
+  );
+
+const replacedEquipmentUnits =
+  equipment.equipmentUnits.filter(
+    (unit) =>
+      unit.condition === "REPLACED",
+  );
+
+const replacedSerialNumbers =
+  replacedEquipmentUnits.map(
+    (unit) =>
+      unit.serialNumber,
   );
 
 const serialNumbers =
@@ -1360,31 +1403,58 @@ if (
               </div>
 
               {damagedSerialNumbers.length > 0 ? (
-  <div className="min-w-0">
-    <dt className="text-xs font-semibold uppercase tracking-wide text-red-500">
-      {damagedSerialNumbers.length === 1
-        ? "S/N danificado"
-        : "S/N danificados"}
-    </dt>
+                <div className="min-w-0">
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-red-500">
+                    {damagedSerialNumbers.length === 1
+                      ? "S/N danificado"
+                      : "S/N danificados"}
+                  </dt>
 
-    <dd className="mt-1.5">
-      <div className="flex flex-wrap gap-1.5">
-        {damagedSerialNumbers.map(
-          (serialNumber) => (
-            <span
-              key={serialNumber}
-              className="inline-flex max-w-full rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
-            >
-              <span className="break-all">
-                {serialNumber}
-              </span>
-            </span>
-          ),
-        )}
-      </div>
-    </dd>
-  </div>
-) : null}
+                  <dd className="mt-1.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {damagedSerialNumbers.map(
+                        (serialNumber) => (
+                          <span
+                            key={serialNumber}
+                            className="inline-flex max-w-full rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
+                          >
+                            <span className="break-all">
+                              {serialNumber}
+                            </span>
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  </dd>
+                </div>
+              ) : null}
+
+              {replacedSerialNumbers.length > 0 ? (
+                <div className="min-w-0">
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-purple-500">
+                    {replacedSerialNumbers.length === 1
+                      ? "S/N substituído — histórico"
+                      : "S/N substituídos — histórico"}
+                  </dt>
+
+                  <dd className="mt-1.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {replacedSerialNumbers.map(
+                        (serialNumber) => (
+                          <span
+                            key={serialNumber}
+                            className="inline-flex max-w-full rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700"
+                          >
+                            <span className="break-all">
+                              {serialNumber}
+                            </span>
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  </dd>
+                </div>
+              ) : null}
 
               <DetailItem
                 label="Estoque físico"
@@ -1506,28 +1576,36 @@ if (
                 damagedQuantity={
                   equipment.damagedQuantity
                 }
-                rmaStatus={
-                  equipment.rmaStatus
-                }
-                rmaReference={
-                  equipment.rmaReference
-                }
-                rmaNotes={
-                  equipment.rmaNotes
-                }
-                rmaResolutionNotes={
-                  equipment.rmaResolutionNotes
-                }
-                rmaOpenedAt={
-                  equipment.rmaOpenedAt
-                    ? equipment.rmaOpenedAt.toISOString()
-                    : null
-                }
-                rmaClosedAt={
-                  equipment.rmaClosedAt
-                    ? equipment.rmaClosedAt.toISOString()
-                    : null
-                }
+                damagedUnits={damagedEquipmentUnits.map(
+                  (unit) => ({
+                    id: unit.id,
+                    serialNumber: unit.serialNumber,
+                  }),
+                )}
+
+                  rmaHistory={equipment.rmas.map(
+                    (rma) => ({
+                      id: rma.id,
+                      equipmentUnitId:
+                        rma.equipmentUnitId,
+                      status: rma.status,
+                      reference: rma.reference,
+                      notes: rma.notes,
+                      resolutionNotes:
+                        rma.resolutionNotes,
+                      openedAt:
+                        rma.openedAt.toISOString(),
+                      closedAt:
+                        rma.closedAt?.toISOString() ??
+                        null,
+                      serialNumber:
+                        rma.equipmentUnit
+                          ?.serialNumber ?? null,
+                      replacementSerialNumber:
+                        rma.replacementEquipmentUnit
+                          ?.serialNumber ?? null,
+                    }),
+                  )}
                 canManage={
                   canManageThisEquipment
                 }

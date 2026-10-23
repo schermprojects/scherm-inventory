@@ -152,6 +152,16 @@ const projectInclude = {
           },
         },
       },
+      equipmentUnits: {
+        include: {
+          equipmentUnit: {
+            select: {
+              id: true,
+              serialNumber: true,
+            },
+          },
+        },
+      },
     },
 
     orderBy: {

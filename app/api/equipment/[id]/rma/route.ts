@@ -22,9 +22,11 @@ type RouteContext = {
 type RequestBody = {
   reference?: unknown;
   notes?: unknown;
+  equipmentUnitId?: unknown;
 };
 
 type PatchRequestBody = {
+  rmaId?: unknown;
   action?: unknown;
   resolutionNotes?: unknown;
   replacementSerialNumber?: unknown;
@@ -112,6 +114,22 @@ function requiredNotes(
   }
 
   return notes;
+}
+
+function requiredId(
+  value: unknown,
+  label: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
+    throw new ValidationError(
+      `O campo "${label}" é obrigatório.`,
+    );
+  }
+
+  return value.trim();
 }
 
 function requiredResolutionNotes(
@@ -224,6 +242,11 @@ export async function POST(
         body.notes,
       );
 
+    const equipmentUnitId =
+      optionalText(
+        body.equipmentUnitId,
+      );
+
     const equipment =
       await prisma.equipment.findUnique({
         where: {
@@ -269,27 +292,6 @@ export async function POST(
     }
 
     /*
- * Um equipamento substituído por RMA é preservado
- * somente como registro histórico. O processo original
- * é terminal e não pode receber um novo RMA.
- */
-if (
-  equipment.rmaStatus ===
-  EquipmentRmaStatus.REPLACED
-) {
-  return NextResponse.json(
-    {
-      success: false,
-      message:
-        "Este equipamento foi substituído por RMA e está preservado somente para histórico.",
-    },
-    {
-      status: 409,
-    },
-  );
-}
-
-    /*
      * damagedQuantity representa a quantidade física
      * atualmente existente no estoque danificado.
      *
@@ -311,80 +313,131 @@ if (
       );
     }
 
-    if (
-      equipment.rmaStatus !==
-      EquipmentRmaStatus.NONE
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "Este equipamento já possui um processo de RMA.",
-        },
-        {
-          status: 409,
-        },
-      );
-    }
-
     const now = new Date();
 
-    /*
-     * Abrir um RMA não movimenta estoque.
-     *
-     * A peça continua no bucket damagedQuantity
-     * até existir um retorno físico ou uma substituição.
-     */
-    const updateResult =
-      await prisma.equipment.updateMany({
-        where: {
-          id,
-
-          damagedQuantity: {
-            gte: 1,
+  const createdRma =
+  await prisma.$transaction(
+    async (tx) => {
+      const damagedSerializedUnits =
+        await tx.equipmentUnit.findMany({
+          where: {
+            equipmentId: id,
+            condition: "DAMAGED",
           },
 
-          rmaStatus:
-            EquipmentRmaStatus.NONE,
-        },
+          select: {
+            id: true,
+          },
+        });
 
+      const activeRmaCount =
+        await tx.equipmentRma.count({
+          where: {
+            equipmentId: id,
+
+            closedAt: null,
+
+            status: {
+              in: [
+                EquipmentRmaStatus.PENDING,
+                EquipmentRmaStatus.SENT,
+                EquipmentRmaStatus.APPROVED,
+              ],
+            },
+          },
+        });
+
+      if (
+        activeRmaCount >=
+        equipment.damagedQuantity
+      ) {
+        throw new ValidationError(
+          "Todas as unidades danificadas deste equipamento já possuem RMA ativo.",
+        );
+      }
+
+      const genericDamagedQuantity =
+        Math.max(
+          equipment.damagedQuantity -
+            damagedSerializedUnits.length,
+          0,
+        );
+
+      if (equipmentUnitId) {
+        const selectedUnit =
+          damagedSerializedUnits.find(
+            (unit) =>
+              unit.id === equipmentUnitId,
+          );
+
+        if (!selectedUnit) {
+          throw new ValidationError(
+            "A unidade selecionada não está danificada ou não pertence a este equipamento.",
+          );
+        }
+
+        const activeUnitRma =
+          await tx.equipmentRma.findFirst({
+            where: {
+              equipmentUnitId,
+
+              closedAt: null,
+
+              status: {
+                in: [
+                  EquipmentRmaStatus.PENDING,
+                  EquipmentRmaStatus.SENT,
+                  EquipmentRmaStatus.APPROVED,
+                ],
+              },
+            },
+
+            select: {
+              id: true,
+            },
+          });
+
+        if (activeUnitRma) {
+          throw new ValidationError(
+            "Esta unidade já possui um processo de RMA em andamento.",
+          );
+        }
+      } else if (
+        genericDamagedQuantity <= 0
+      ) {
+        throw new ValidationError(
+          "Selecione a unidade danificada que será enviada para RMA.",
+        );
+      }
+
+      return tx.equipmentRma.create({
         data: {
-          rmaStatus:
+          equipmentId: id,
+
+          equipmentUnitId,
+
+          status:
             EquipmentRmaStatus.PENDING,
 
-          rmaReference:
-            reference,
+          reference,
 
-          rmaNotes:
-            notes,
+          notes,
 
-          rmaResolutionNotes:
-            null,
-
-          rmaOpenedAt:
+          openedAt:
             now,
+        },
 
-          rmaClosedAt:
-            null,
+        select: {
+          id: true,
+          status: true,
+          equipmentUnitId: true,
+          reference: true,
+          notes: true,
+          openedAt: true,
         },
       });
-
-    /*
-     * O updateMany protege contra duas requisições
-     * concorrentes tentando abrir o mesmo RMA.
-     */
-    if (updateResult.count !== 1) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "O RMA não pôde ser aberto porque o estado do equipamento foi alterado.",
-        },
-        {
-          status: 409,
-        },
-      );
-    }
+    },
+  );
 
     const updatedEquipment =
       await prisma.equipment.findUniqueOrThrow({
@@ -431,37 +484,25 @@ if (
           `RMA do equipamento "${updatedEquipment.name}" aberto.`,
 
         oldData: {
-          rmaStatus:
-            equipment.rmaStatus,
-
-          rmaReference:
-            equipment.rmaReference,
-
-          rmaNotes:
-            equipment.rmaNotes,
-
-          rmaOpenedAt:
-            equipment.rmaOpenedAt,
-
-          rmaClosedAt:
-            equipment.rmaClosedAt,
+          damagedQuantity:
+            equipment.damagedQuantity,
         },
 
         newData: {
+          rmaId:
+            createdRma.id,
+
           rmaStatus:
-            updatedEquipment.rmaStatus,
+            createdRma.status,
 
-          rmaReference:
-            updatedEquipment.rmaReference,
+          equipmentUnitId:
+            createdRma.equipmentUnitId,
 
-          rmaNotes:
-            updatedEquipment.rmaNotes,
+          reference:
+            createdRma.reference,
 
-          rmaOpenedAt:
-            updatedEquipment.rmaOpenedAt,
-
-          rmaClosedAt:
-            updatedEquipment.rmaClosedAt,
+          openedAt:
+            createdRma.openedAt,
         },
       });
     } catch (auditError) {
@@ -482,8 +523,21 @@ if (
       message:
         "RMA aberto com sucesso.",
 
-      data:
-        updatedEquipment,
+      data: {
+        rma:
+          createdRma,
+
+        equipment: {
+          id:
+            updatedEquipment.id,
+
+          name:
+            updatedEquipment.name,
+
+          damagedQuantity:
+            updatedEquipment.damagedQuantity,
+        },
+      },
     });
   } catch (error) {
     console.error(
@@ -581,6 +635,12 @@ export async function PATCH(
     const body =
       (await request.json()) as PatchRequestBody;
 
+    const rmaId =
+    requiredId(
+      body.rmaId,
+      "RMA",
+    );
+
     const action =
       parseRmaAction(
         body.action,
@@ -630,485 +690,397 @@ export async function PATCH(
       );
     }
 
-    /*
-    * Um equipamento substituído por RMA é preservado
-    * somente como registro histórico. O processo original
-    * é terminal e não pode receber um novo RMA.
-    */
-    if (
-      equipment.rmaStatus ===
-      EquipmentRmaStatus.REPLACED
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "Este equipamento foi substituído por RMA e está preservado somente para histórico.",
+    const activeRma =
+  await prisma.equipmentRma.findFirst({
+    where: {
+      id: rmaId,
+      equipmentId: id,
+      closedAt: null,
+
+      status: {
+        in: [
+          EquipmentRmaStatus.PENDING,
+          EquipmentRmaStatus.SENT,
+          EquipmentRmaStatus.APPROVED,
+        ],
+      },
+    },
+
+    select: {
+      id: true,
+      status: true,
+      equipmentUnitId: true,
+
+      equipmentUnit: {
+        select: {
+          serialNumber: true,
         },
-        {
-          status: 409,
-        },
-      );
-    }
-
-    if (action === "SEND") {
-      if (
-        equipment.rmaStatus !==
-        EquipmentRmaStatus.PENDING
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "Somente um RMA pendente pode ser marcado como enviado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      /*
-       * O envio altera apenas o estado administrativo do RMA.
-       * A peça permanece no estoque danificado até existir
-       * uma movimentação física posterior.
-       */
-      const updateResult =
-        await prisma.equipment.updateMany({
-          where: {
-            id,
-
-            rmaStatus:
-              EquipmentRmaStatus.PENDING,
-          },
-
-          data: {
-            rmaStatus:
-              EquipmentRmaStatus.SENT,
-          },
-        });
-
-      /*
-       * A condição no updateMany protege a transição
-       * contra requisições concorrentes.
-       */
-      if (
-        updateResult.count !== 1
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "O RMA não pôde ser marcado como enviado porque seu estado foi alterado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      const updatedEquipment =
-        await prisma.equipment.findUniqueOrThrow({
-          where: {
-            id,
-          },
-
-          select: {
-            id: true,
-            name: true,
-            serialNumber: true,
-
-            quantity: true,
-            installedQuantity: true,
-            damagedQuantity: true,
-
-            status: true,
-            condition: true,
-
-            rmaStatus: true,
-            rmaReference: true,
-            rmaNotes: true,
-            rmaResolutionNotes: true,
-            rmaOpenedAt: true,
-            rmaClosedAt: true,
-          },
-        });
-
-      try {
-        await logAudit({
-          action:
-            AuditAction.UPDATE,
-
-          entity:
-            AuditEntity.EQUIPMENT,
-
-          entityId:
-            updatedEquipment.id,
-
-          userId:
-            session.user.id ??
-            null,
-
-          description:
-            `RMA do equipamento "${updatedEquipment.name}" marcado como enviado.`,
-
-          oldData: {
-            rmaStatus:
-              equipment.rmaStatus,
-          },
-
-          newData: {
-            rmaStatus:
-              updatedEquipment.rmaStatus,
-          },
-        });
-      } catch (auditError) {
-        /*
-         * A transição já foi persistida neste ponto.
-         * Falha de auditoria não deve transformar
-         * uma operação bem-sucedida em erro.
-         */
-        console.error(
-          "RMA enviado, mas ocorreu erro ao registrar auditoria:",
-          auditError,
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-
-        message:
-          "RMA marcado como enviado com sucesso.",
-
-        data:
-          updatedEquipment,
-      });
-    }
-
-    if (action === "APPROVE") {
-      if (
-        equipment.rmaStatus !==
-        EquipmentRmaStatus.SENT
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "Somente um RMA enviado pode ser aprovado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      const resolutionNotes =
-        optionalText(
-          body.resolutionNotes,
-        );
-
-      /*
-       * Aprovar o RMA representa apenas a decisão
-       * administrativa do fabricante.
-       *
-       * O processo permanece aberto porque ainda falta
-       * registrar o retorno físico da peça.
-       */
-      const updateResult =
-        await prisma.equipment.updateMany({
-          where: {
-            id,
-
-            rmaStatus:
-              EquipmentRmaStatus.SENT,
-          },
-
-          data: {
-            rmaStatus:
-              EquipmentRmaStatus.APPROVED,
-
-            rmaResolutionNotes:
-              resolutionNotes,
-
-            rmaClosedAt:
-              null,
-          },
-        });
-
-      /*
-       * A condição no updateMany garante que somente
-       * uma requisição consiga decidir o RMA enviado.
-       */
-      if (
-        updateResult.count !== 1
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "O RMA não pôde ser aprovado porque seu estado foi alterado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      const updatedEquipment =
-        await prisma.equipment.findUniqueOrThrow({
-          where: {
-            id,
-          },
-
-          select: {
-            id: true,
-            name: true,
-            serialNumber: true,
-
-            quantity: true,
-            installedQuantity: true,
-            damagedQuantity: true,
-
-            status: true,
-            condition: true,
-
-            rmaStatus: true,
-            rmaReference: true,
-            rmaNotes: true,
-            rmaResolutionNotes: true,
-            rmaOpenedAt: true,
-            rmaClosedAt: true,
-          },
-        });
-
-      try {
-        await logAudit({
-          action:
-            AuditAction.UPDATE,
-
-          entity:
-            AuditEntity.EQUIPMENT,
-
-          entityId:
-            updatedEquipment.id,
-
-          userId:
-            session.user.id ??
-            null,
-
-          description:
-            `RMA do equipamento "${updatedEquipment.name}" aprovado.`,
-
-          oldData: {
-            rmaStatus:
-              equipment.rmaStatus,
-
-            rmaResolutionNotes:
-              equipment.rmaResolutionNotes,
-
-            rmaClosedAt:
-              equipment.rmaClosedAt,
-          },
-
-          newData: {
-            rmaStatus:
-              updatedEquipment.rmaStatus,
-
-            rmaResolutionNotes:
-              updatedEquipment.rmaResolutionNotes,
-
-            rmaClosedAt:
-              updatedEquipment.rmaClosedAt,
-          },
-        });
-      } catch (auditError) {
-        /*
-         * A aprovação já foi persistida neste ponto.
-         * Falha de auditoria não deve alterar o resultado
-         * apresentado ao usuário.
-         */
-        console.error(
-          "RMA aprovado, mas ocorreu erro ao registrar auditoria:",
-          auditError,
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-
-        message:
-          "RMA aprovado com sucesso.",
-
-        data:
-          updatedEquipment,
-      });
-    }
-
-    if (action === "REJECT") {
-      if (
-        equipment.rmaStatus !==
-        EquipmentRmaStatus.SENT
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "Somente um RMA enviado pode ser rejeitado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      const resolutionNotes =
-        requiredResolutionNotes(
-          body.resolutionNotes,
-        );
-
-      const now =
-        new Date();
-
-      /*
-       * A rejeição encerra o processo administrativo,
-       * mas não devolve a peça ao estoque operacional.
-       *
-       * A unidade continua fisicamente danificada até
-       * existir outra destinação registrada no sistema.
-       */
-      const updateResult =
-        await prisma.equipment.updateMany({
-          where: {
-            id,
-
-            rmaStatus:
-              EquipmentRmaStatus.SENT,
-          },
-
-          data: {
-            rmaStatus:
-              EquipmentRmaStatus.REJECTED,
-
-            rmaResolutionNotes:
-              resolutionNotes,
-
-            rmaClosedAt:
-              now,
-          },
-        });
-
-      /*
-       * A condição no updateMany garante que somente
-       * uma decisão seja aplicada ao mesmo RMA enviado.
-       */
-      if (
-        updateResult.count !== 1
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "O RMA não pôde ser rejeitado porque seu estado foi alterado.",
-          },
-          {
-            status: 409,
-          },
-        );
-      }
-
-      const updatedEquipment =
-        await prisma.equipment.findUniqueOrThrow({
-          where: {
-            id,
-          },
-
-          select: {
-            id: true,
-            name: true,
-            serialNumber: true,
-
-            quantity: true,
-            installedQuantity: true,
-            damagedQuantity: true,
-
-            status: true,
-            condition: true,
-
-            rmaStatus: true,
-            rmaReference: true,
-            rmaNotes: true,
-            rmaResolutionNotes: true,
-            rmaOpenedAt: true,
-            rmaClosedAt: true,
-          },
-        });
-
-      try {
-        await logAudit({
-          action:
-            AuditAction.UPDATE,
-
-          entity:
-            AuditEntity.EQUIPMENT,
-
-          entityId:
-            updatedEquipment.id,
-
-          userId:
-            session.user.id ??
-            null,
-
-          description:
-            `RMA do equipamento "${updatedEquipment.name}" rejeitado.`,
-
-          oldData: {
-            rmaStatus:
-              equipment.rmaStatus,
-
-            rmaResolutionNotes:
-              equipment.rmaResolutionNotes,
-
-            rmaClosedAt:
-              equipment.rmaClosedAt,
-          },
-
-          newData: {
-            rmaStatus:
-              updatedEquipment.rmaStatus,
-
-            rmaResolutionNotes:
-              updatedEquipment.rmaResolutionNotes,
-
-            rmaClosedAt:
-              updatedEquipment.rmaClosedAt,
-          },
-        });
-      } catch (auditError) {
-        /*
-         * A rejeição já foi persistida neste ponto.
-         * Falha de auditoria não deve transformar
-         * a operação concluída em erro para o usuário.
-         */
-        console.error(
-          "RMA rejeitado, mas ocorreu erro ao registrar auditoria:",
-          auditError,
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-
-        message:
-          "RMA rejeitado com sucesso.",
-
-        data:
-          updatedEquipment,
-      });
-    }
-
-    if (action === "RETURN") {
+      },
+    },
+  });
+
+  if (!activeRma) {
+  return NextResponse.json(
+    {
+      success: false,
+      message:
+        "O processo de RMA informado não está ativo.",
+    },
+    {
+      status: 404,
+    },
+  );
+}
+
+if (action === "SEND") {
   if (
-    equipment.rmaStatus !==
+    activeRma.status !==
+    EquipmentRmaStatus.PENDING
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "Somente um RMA pendente pode ser marcado como enviado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  const rmaUpdate =
+    await prisma.equipmentRma.updateMany({
+      where: {
+        id: activeRma.id,
+
+        status:
+          EquipmentRmaStatus.PENDING,
+
+        closedAt: null,
+      },
+
+      data: {
+        status:
+          EquipmentRmaStatus.SENT,
+      },
+    });
+
+  if (rmaUpdate.count !== 1) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "O RMA não pôde ser marcado como enviado porque seu estado foi alterado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  try {
+    await logAudit({
+      action:
+        AuditAction.UPDATE,
+
+      entity:
+        AuditEntity.EQUIPMENT,
+
+      entityId:
+        equipment.id,
+
+      userId:
+        session.user.id ??
+        null,
+
+      description:
+        `RMA do equipamento "${equipment.name}" marcado como enviado.`,
+
+      oldData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.PENDING,
+      },
+
+      newData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.SENT,
+      },
+    });
+  } catch (auditError) {
+    console.error(
+      "RMA enviado, mas ocorreu erro ao registrar auditoria:",
+      auditError,
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      "RMA marcado como enviado com sucesso.",
+
+    data: {
+      rmaId:
+        activeRma.id,
+
+      status:
+        EquipmentRmaStatus.SENT,
+    },
+  });
+}
+
+if (action === "APPROVE") {
+  if (
+    activeRma.status !==
+    EquipmentRmaStatus.SENT
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "Somente um RMA enviado pode ser aprovado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  const resolutionNotes =
+    optionalText(
+      body.resolutionNotes,
+    );
+
+  const rmaUpdate =
+    await prisma.equipmentRma.updateMany({
+      where: {
+        id: activeRma.id,
+
+        status:
+          EquipmentRmaStatus.SENT,
+
+        closedAt: null,
+      },
+
+      data: {
+        status:
+          EquipmentRmaStatus.APPROVED,
+
+        resolutionNotes,
+
+        closedAt: null,
+      },
+    });
+
+  if (rmaUpdate.count !== 1) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "O RMA não pôde ser aprovado porque seu estado foi alterado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  try {
+    await logAudit({
+      action:
+        AuditAction.UPDATE,
+
+      entity:
+        AuditEntity.EQUIPMENT,
+
+      entityId:
+        equipment.id,
+
+      userId:
+        session.user.id ??
+        null,
+
+      description:
+        `RMA do equipamento "${equipment.name}" aprovado.`,
+
+      oldData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.SENT,
+      },
+
+      newData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.APPROVED,
+
+        resolutionNotes,
+      },
+    });
+  } catch (auditError) {
+    console.error(
+      "RMA aprovado, mas ocorreu erro ao registrar auditoria:",
+      auditError,
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      "RMA aprovado com sucesso.",
+
+    data: {
+      rmaId:
+        activeRma.id,
+
+      status:
+        EquipmentRmaStatus.APPROVED,
+    },
+  });
+}
+
+if (action === "REJECT") {
+  if (
+    activeRma.status !==
+    EquipmentRmaStatus.SENT
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "Somente um RMA enviado pode ser rejeitado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  const resolutionNotes =
+    requiredResolutionNotes(
+      body.resolutionNotes,
+    );
+
+  const now =
+    new Date();
+
+  const rmaUpdate =
+    await prisma.equipmentRma.updateMany({
+      where: {
+        id:
+          activeRma.id,
+
+        status:
+          EquipmentRmaStatus.SENT,
+
+        closedAt:
+          null,
+      },
+
+      data: {
+        status:
+          EquipmentRmaStatus.REJECTED,
+
+        resolutionNotes,
+
+        closedAt:
+          now,
+      },
+    });
+
+  if (rmaUpdate.count !== 1) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          "O RMA não pôde ser rejeitado porque seu estado foi alterado.",
+      },
+      {
+        status: 409,
+      },
+    );
+  }
+
+  try {
+    await logAudit({
+      action:
+        AuditAction.UPDATE,
+
+      entity:
+        AuditEntity.EQUIPMENT,
+
+      entityId:
+        equipment.id,
+
+      userId:
+        session.user.id ??
+        null,
+
+      description:
+        `RMA do equipamento "${equipment.name}" rejeitado.`,
+
+      oldData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.SENT,
+      },
+
+      newData: {
+        rmaId:
+          activeRma.id,
+
+        rmaStatus:
+          EquipmentRmaStatus.REJECTED,
+
+        resolutionNotes,
+
+        closedAt:
+          now,
+      },
+    });
+  } catch (auditError) {
+    console.error(
+      "RMA rejeitado, mas ocorreu erro ao registrar auditoria:",
+      auditError,
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      "RMA rejeitado com sucesso.",
+
+    data: {
+      rmaId:
+        activeRma.id,
+
+      status:
+        EquipmentRmaStatus.REJECTED,
+
+      closedAt:
+        now,
+    },
+  });
+}
+
+if (action === "RETURN") {
+  if (
+    activeRma.status !==
     EquipmentRmaStatus.APPROVED
   ) {
     return NextResponse.json(
@@ -1146,28 +1118,13 @@ export async function PATCH(
   const now =
     new Date();
 
-  /*
-   * O retorno reparado é o ponto em que o RMA
-   * volta a alterar o estoque físico.
-   *
-   * Uma unidade sai do estoque danificado e volta
-   * ao estoque operacional como equipamento reparado.
-   */
   const updatedEquipment =
     await prisma.$transaction(
       async (tx) => {
-        /*
-         * O updateMany protege simultaneamente o estado
-         * do RMA e a existência física da unidade danificada,
-         * evitando dois retornos concorrentes.
-         */
         const updateResult =
           await tx.equipment.updateMany({
             where: {
               id,
-
-              rmaStatus:
-                EquipmentRmaStatus.APPROVED,
 
               damagedQuantity: {
                 gte: 1,
@@ -1183,20 +1140,8 @@ export async function PATCH(
                 decrement: 1,
               },
 
-              condition:
-                EquipmentCondition.REPAIRED,
-
               status:
                 EquipmentStatus.AVAILABLE,
-
-              rmaStatus:
-                EquipmentRmaStatus.RETURNED,
-
-              rmaResolutionNotes:
-                resolutionNotes,
-
-              rmaClosedAt:
-                now,
             },
           });
 
@@ -1204,7 +1149,109 @@ export async function PATCH(
           updateResult.count !== 1
         ) {
           throw new ValidationError(
-            "O retorno não pôde ser registrado porque o estado do equipamento foi alterado.",
+            "O retorno não pôde ser registrado porque o estoque físico foi alterado.",
+          );
+        }
+
+        if (
+          activeRma.equipmentUnitId
+        ) {
+          const unitUpdate =
+            await tx.equipmentUnit.updateMany({
+              where: {
+                id:
+                  activeRma.equipmentUnitId,
+
+                equipmentId:
+                  id,
+
+                condition:
+                  "DAMAGED",
+              },
+
+              data: {
+                condition:
+                  "OPERATIONAL",
+              },
+            });
+
+          if (
+            unitUpdate.count !== 1
+          ) {
+            throw new ValidationError(
+              "A unidade física do RMA não pôde retornar ao estoque operacional.",
+            );
+          }
+
+          await tx.equipmentUnitMovement.create({
+            data: {
+              type:
+                "RETURN",
+
+              equipmentUnitId:
+                activeRma.equipmentUnitId,
+
+              projectId:
+                null,
+            },
+          });
+        }
+
+        await tx.equipmentMovement.create({
+          data: {
+            type:
+              "RETURN",
+
+            quantity:
+              1,
+
+            previousQuantity:
+              equipment.quantity,
+
+            currentQuantity:
+              equipment.quantity + 1,
+
+            equipmentId:
+              id,
+
+            createdById:
+              session.user.id ??
+              null,
+
+            notes:
+              "Retorno reparado de unidade em RMA.",
+          },
+        });
+
+        const rmaUpdate =
+          await tx.equipmentRma.updateMany({
+            where: {
+              id:
+                activeRma.id,
+
+              status:
+                EquipmentRmaStatus.APPROVED,
+
+              closedAt:
+                null,
+            },
+
+            data: {
+              status:
+                EquipmentRmaStatus.RETURNED,
+
+              resolutionNotes,
+
+              closedAt:
+                now,
+            },
+          });
+
+        if (
+          rmaUpdate.count !== 1
+        ) {
+          throw new ValidationError(
+            "O histórico do RMA não pôde ser atualizado.",
           );
         }
 
@@ -1224,13 +1271,6 @@ export async function PATCH(
 
             status: true,
             condition: true,
-
-            rmaStatus: true,
-            rmaReference: true,
-            rmaNotes: true,
-            rmaResolutionNotes: true,
-            rmaOpenedAt: true,
-            rmaClosedAt: true,
           },
         });
       },
@@ -1252,60 +1292,42 @@ export async function PATCH(
         null,
 
       description:
-        `Equipamento "${updatedEquipment.name}" retornou reparado do RMA.`,
+        `RMA do equipamento "${updatedEquipment.name}" retornou reparado.`,
 
       oldData: {
+        rmaId:
+          activeRma.id,
+
         quantity:
           equipment.quantity,
 
         damagedQuantity:
           equipment.damagedQuantity,
 
-        condition:
-          equipment.condition,
-
-        status:
-          equipment.status,
-
         rmaStatus:
-          equipment.rmaStatus,
-
-        rmaResolutionNotes:
-          equipment.rmaResolutionNotes,
-
-        rmaClosedAt:
-          equipment.rmaClosedAt,
+          EquipmentRmaStatus.APPROVED,
       },
 
       newData: {
+        rmaId:
+          activeRma.id,
+
         quantity:
           updatedEquipment.quantity,
 
         damagedQuantity:
           updatedEquipment.damagedQuantity,
 
-        condition:
-          updatedEquipment.condition,
-
-        status:
-          updatedEquipment.status,
-
         rmaStatus:
-          updatedEquipment.rmaStatus,
+          EquipmentRmaStatus.RETURNED,
 
-        rmaResolutionNotes:
-          updatedEquipment.rmaResolutionNotes,
+        resolutionNotes,
 
-        rmaClosedAt:
-          updatedEquipment.rmaClosedAt,
+        closedAt:
+          now,
       },
     });
   } catch (auditError) {
-    /*
-     * O retorno físico já foi concluído neste ponto.
-     * Falha de auditoria não deve transformar a
-     * movimentação concluída em erro para o usuário.
-     */
     console.error(
       "Retorno do RMA concluído, mas ocorreu erro ao registrar auditoria:",
       auditError,
@@ -1318,14 +1340,22 @@ export async function PATCH(
     message:
       "Retorno reparado registrado com sucesso.",
 
-    data:
-      updatedEquipment,
+    data: {
+      equipment:
+        updatedEquipment,
+
+      rmaId:
+        activeRma.id,
+
+      status:
+        EquipmentRmaStatus.RETURNED,
+    },
   });
 }
 
 if (action === "REPLACE") {
   if (
-    equipment.rmaStatus !==
+    activeRma.status !==
     EquipmentRmaStatus.APPROVED
   ) {
     return NextResponse.json(
@@ -1365,32 +1395,8 @@ if (action === "REPLACE") {
       body.resolutionNotes,
     );
 
-  /*
-   * Uma substituição de RMA representa duas peças físicas
-   * diferentes e, portanto, dois registros de Equipment.
-   *
-   * O serial da peça defeituosa nunca é sobrescrito:
-   * ela permanece como histórico e a substituta recebe
-   * uma nova identidade no inventário.
-   */
-  if (
-    equipment.serialNumber ===
-    replacementSerialNumber
-  ) {
-    return NextResponse.json(
-      {
-        success: false,
-        message:
-          "A peça substituta deve possuir um número de série diferente da peça original.",
-      },
-      {
-        status: 409,
-      },
-    );
-  }
-
-  const existingEquipment =
-    await prisma.equipment.findFirst({
+  const existingEquipmentUnit =
+    await prisma.equipmentUnit.findUnique({
       where: {
         serialNumber:
           replacementSerialNumber,
@@ -1401,12 +1407,12 @@ if (action === "REPLACE") {
       },
     });
 
-  if (existingEquipment) {
+  if (existingEquipmentUnit) {
     return NextResponse.json(
       {
         success: false,
         message:
-          "Já existe um equipamento com o número de série informado.",
+          "Já existe uma unidade com o número de série informado.",
       },
       {
         status: 409,
@@ -1420,92 +1426,54 @@ if (action === "REPLACE") {
   const result =
     await prisma.$transaction(
       async (tx) => {
-        /*
-         * A nova peça inicia uma vida própria no inventário.
-         * Somente os metadados do tipo de equipamento são
-         * herdados; histórico, RMA e serial não são copiados.
-         */
-        const replacementEquipment =
-          await tx.equipment.create({
+        const replacementEquipmentUnit =
+          await tx.equipmentUnit.create({
             data: {
-              name:
-                equipment.name,
-
-              category:
-                equipment.category,
-
-              manufacturer:
-                equipment.manufacturer,
-
-              model:
-                equipment.model,
+              equipmentId:
+                id,
 
               serialNumber:
                 replacementSerialNumber,
 
-              quantity: 1,
-              installedQuantity: 0,
-              damagedQuantity: 0,
-
-              minimumStock:
-                equipment.minimumStock,
-
-              status:
-                EquipmentStatus.AVAILABLE,
-
               condition:
-                EquipmentCondition.NEW,
-
-              rmaStatus:
-                EquipmentRmaStatus.NONE,
-
-              notes:
-                resolutionNotes
-                  ? `Peça recebida como substituição de RMA. ${resolutionNotes}`
-                  : "Peça recebida como substituição de RMA.",
+                "OPERATIONAL",
             },
           });
 
-        /*
-         * A condição do updateMany protege simultaneamente
-         * o estado do RMA e a unidade danificada contra
-         * duas substituições concorrentes.
-         */
+        await tx.equipmentUnitMovement.create({
+          data: {
+            type:
+              "ENTRY",
+
+            equipmentUnitId:
+              replacementEquipmentUnit.id,
+
+            projectId:
+              null,
+          },
+        });
+
         const updateResult =
           await tx.equipment.updateMany({
             where: {
               id,
 
-              rmaStatus:
-                EquipmentRmaStatus.APPROVED,
-
               damagedQuantity: {
                 gte: 1,
               },
-
-              rmaReplacementEquipmentId:
-                null,
             },
 
             data: {
+              quantity: {
+                increment: 1,
+              },
+
               damagedQuantity: {
                 decrement: 1,
               },
 
               status:
-                EquipmentStatus.UNAVAILABLE,
-
-              rmaStatus:
-                EquipmentRmaStatus.REPLACED,
-
-              rmaResolutionNotes:
-                resolutionNotes,
-
-              rmaClosedAt:
-                now,
-
-              rmaReplacementEquipmentId:
-                replacementEquipment.id,
+                EquipmentStatus.AVAILABLE,
             },
           });
 
@@ -1513,11 +1481,103 @@ if (action === "REPLACE") {
           updateResult.count !== 1
         ) {
           throw new ValidationError(
-            "A substituição não pôde ser registrada porque o estado do equipamento foi alterado.",
+            "A substituição não pôde ser registrada porque o estoque físico foi alterado.",
           );
         }
 
-        const originalEquipment =
+        if (
+          activeRma.equipmentUnitId
+        ) {
+          const originalUnitUpdate =
+            await tx.equipmentUnit.updateMany({
+              where: {
+                id:
+                  activeRma.equipmentUnitId,
+
+                equipmentId:
+                  id,
+
+                condition:
+                  "DAMAGED",
+              },
+
+              data: {
+                condition:
+                  "REPLACED",
+              },
+            });
+
+          if (
+            originalUnitUpdate.count !== 1
+          ) {
+            throw new ValidationError(
+              "A unidade original do RMA não pôde ser marcada como substituída.",
+            );
+          }
+        }
+
+        await tx.equipmentMovement.create({
+          data: {
+            type:
+              "ENTRY",
+
+            quantity:
+              1,
+
+            previousQuantity:
+              equipment.quantity,
+
+            currentQuantity:
+              equipment.quantity + 1,
+
+            equipmentId:
+              id,
+
+            createdById:
+              session.user.id ??
+              null,
+
+            notes:
+              `Entrada de unidade substituta recebida por RMA: ${replacementSerialNumber}.`,
+          },
+        });
+
+        const rmaUpdate =
+          await tx.equipmentRma.updateMany({
+            where: {
+              id:
+                activeRma.id,
+
+              status:
+                EquipmentRmaStatus.APPROVED,
+
+              closedAt:
+                null,
+            },
+
+            data: {
+              status:
+                EquipmentRmaStatus.REPLACED,
+
+              resolutionNotes,
+
+              closedAt:
+                now,
+
+              replacementEquipmentUnitId:
+                replacementEquipmentUnit.id,
+            },
+          });
+
+        if (
+          rmaUpdate.count !== 1
+        ) {
+          throw new ValidationError(
+            "O histórico do RMA não pôde ser atualizado.",
+          );
+        }
+
+        const updatedEquipment =
           await tx.equipment.findUniqueOrThrow({
             where: {
               id,
@@ -1534,22 +1594,12 @@ if (action === "REPLACE") {
 
               status: true,
               condition: true,
-
-              rmaStatus: true,
-              rmaReference: true,
-              rmaNotes: true,
-              rmaResolutionNotes: true,
-              rmaOpenedAt: true,
-              rmaClosedAt: true,
-
-              rmaReplacementEquipmentId:
-                true,
             },
           });
 
         return {
-          originalEquipment,
-          replacementEquipment,
+          updatedEquipment,
+          replacementEquipmentUnit,
         };
       },
     );
@@ -1563,77 +1613,58 @@ if (action === "REPLACE") {
         AuditEntity.EQUIPMENT,
 
       entityId:
-        result.originalEquipment.id,
+        result.updatedEquipment.id,
 
       userId:
         session.user.id ??
         null,
 
       description:
-        `Equipamento "${equipment.name}" foi substituído pelo fabricante através do RMA.`,
+        `RMA do equipamento "${equipment.name}" foi resolvido com substituição de unidade.`,
 
       oldData: {
+        rmaId:
+          activeRma.id,
+
         damagedQuantity:
           equipment.damagedQuantity,
 
-        status:
-          equipment.status,
-
-        condition:
-          equipment.condition,
-
         rmaStatus:
-          equipment.rmaStatus,
+          EquipmentRmaStatus.APPROVED,
 
-        rmaResolutionNotes:
-          equipment.rmaResolutionNotes,
-
-        rmaClosedAt:
-          equipment.rmaClosedAt,
-
-        rmaReplacementEquipmentId:
+        originalEquipmentUnitId:
+          activeRma.equipmentUnitId,
+        
+        originalSerialNumber:
+          activeRma.equipmentUnit
+            ?.serialNumber ??
           null,
       },
 
       newData: {
+        rmaId:
+          activeRma.id,
+
         damagedQuantity:
-          result.originalEquipment
+          result.updatedEquipment
             .damagedQuantity,
 
-        status:
-          result.originalEquipment
-            .status,
-
-        condition:
-          result.originalEquipment
-            .condition,
-
         rmaStatus:
-          result.originalEquipment
-            .rmaStatus,
+          EquipmentRmaStatus.REPLACED,
 
-        rmaResolutionNotes:
-          result.originalEquipment
-            .rmaResolutionNotes,
-
-        rmaClosedAt:
-          result.originalEquipment
-            .rmaClosedAt,
-
-        rmaReplacementEquipmentId:
-          result.replacementEquipment.id,
+        replacementEquipmentUnitId:
+          result.replacementEquipmentUnit.id,
 
         replacementSerialNumber:
-          result.replacementEquipment
-            .serialNumber,
+          result.replacementEquipmentUnit.serialNumber,
+
+        resolutionNotes,
+
+        closedAt:
+          now.toISOString(),
       },
     });
   } catch (auditError) {
-    /*
-     * A substituição física já foi concluída neste ponto.
-     * Falha de auditoria não deve desfazer nem transformar
-     * a operação concluída em erro para o usuário.
-     */
     console.error(
       "Substituição do RMA concluída, mas ocorreu erro ao registrar auditoria:",
       auditError,
@@ -1648,10 +1679,16 @@ if (action === "REPLACE") {
 
     data: {
       equipment:
-        result.originalEquipment,
+        result.updatedEquipment,
 
-      replacementEquipment:
-        result.replacementEquipment,
+      replacementEquipmentUnit:
+        result.replacementEquipmentUnit,
+
+      rmaId:
+        activeRma.id,
+
+      status:
+        EquipmentRmaStatus.REPLACED,
     },
   });
 }

@@ -31,13 +31,24 @@ type EquipmentRmaManagerProps = {
   equipmentId: string;
   equipmentName: string;
   damagedQuantity: number;
+  damagedUnits: {
+    id: string;
+    serialNumber: string;
+  }[];
 
-  rmaStatus: RmaStatus;
-  rmaReference: string | null;
-  rmaNotes: string | null;
-  rmaResolutionNotes: string | null;
-  rmaOpenedAt: string | null;
-  rmaClosedAt: string | null;
+rmaHistory: {
+  id: string;
+  equipmentUnitId: string | null;
+  status: RmaStatus;
+  reference: string | null;
+  notes: string;
+  resolutionNotes: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  serialNumber: string | null;
+  replacementSerialNumber:
+    string | null;
+}[];
 
   canManage: boolean;
 };
@@ -91,12 +102,8 @@ export function EquipmentRmaManager({
   equipmentId,
   equipmentName,
   damagedQuantity,
-  rmaStatus,
-  rmaReference,
-  rmaNotes,
-  rmaResolutionNotes,
-  rmaOpenedAt,
-  rmaClosedAt,
+  damagedUnits,
+  rmaHistory,
   canManage,
 }: EquipmentRmaManagerProps) {
   const router = useRouter();
@@ -135,21 +142,78 @@ export function EquipmentRmaManager({
     setResolutionNotes,
   ] = useState("");
 
+  const [
+  selectedEquipmentUnitId,
+  setSelectedEquipmentUnitId,
+] = useState("");
+
   const [loading, setLoading] =
     useState(false);
 
   const [error, setError] =
     useState<string | null>(null);
 
+  const [
+    selectedRmaId,
+    setSelectedRmaId,
+  ] = useState<string | null>(null);
+
   /*
    * Uma peça danificada pode iniciar RMA.
    * Depois que o processo existe, seus dados continuam
    * visíveis mesmo quando a peça deixar de estar danificada.
    */
-  const canOpenRma =
-    canManage &&
-    damagedQuantity > 0 &&
-    rmaStatus === "NONE";
+const activeRmas =
+  rmaHistory.filter(
+    (rma) =>
+      !rma.closedAt &&
+      (
+        rma.status === "PENDING" ||
+        rma.status === "SENT" ||
+        rma.status === "APPROVED"
+      ),
+  );
+
+const closedRmas =
+  rmaHistory.filter(
+    (rma) =>
+      Boolean(rma.closedAt) ||
+      rma.status === "REJECTED" ||
+      rma.status === "RETURNED" ||
+      rma.status === "REPLACED",
+  );
+
+const activeRmaUnitIds =
+  new Set(
+    activeRmas
+      .map(
+        (rma) =>
+          rma.equipmentUnitId,
+      )
+      .filter(
+        (
+          equipmentUnitId,
+        ): equipmentUnitId is string =>
+          Boolean(
+            equipmentUnitId,
+          ),
+      ),
+  );
+
+const availableDamagedUnits =
+  damagedUnits.filter(
+    (unit) =>
+      !activeRmaUnitIds.has(
+        unit.id,
+      ),
+  );
+
+const canOpenRma =
+  canManage &&
+  activeRmas.length <
+    damagedQuantity;
+
+
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -194,6 +258,10 @@ export function EquipmentRmaManager({
 
               notes:
                 normalizedNotes,
+              
+              equipmentUnitId:
+                selectedEquipmentUnitId ||
+                null,
             }),
           },
         );
@@ -218,6 +286,7 @@ export function EquipmentRmaManager({
       setIsOpen(false);
       setReference("");
       setNotes("");
+      setSelectedEquipmentUnitId("");
 
       router.refresh();
     } catch (requestError) {
@@ -235,6 +304,7 @@ export function EquipmentRmaManager({
   }
 
 async function executeRmaAction(
+  rmaId: string,
   action: RmaAction,
   options?: {
     resolutionNotes?: string;
@@ -261,16 +331,18 @@ async function executeRmaAction(
             },
 
             body: JSON.stringify({
-            action,
+              rmaId,
 
-            resolutionNotes:
-              options?.resolutionNotes ??
-              null,
+              action,
 
-            replacementSerialNumber:
-              options?.replacementSerialNumber ??
-              null,
-          }),
+              resolutionNotes:
+                options?.resolutionNotes ??
+                null,
+
+              replacementSerialNumber:
+                options?.replacementSerialNumber ??
+                null,
+            }),
           },
         );
 
@@ -311,7 +383,9 @@ async function executeRmaAction(
     }
   }
 
-  async function handleSendRma() {
+  async function handleSendRma(
+  rmaId: string,
+) {
     const confirmed =
       window.confirm(
         "Confirmar que este equipamento foi enviado para RMA?",
@@ -322,11 +396,14 @@ async function executeRmaAction(
     }
 
     await executeRmaAction(
+      rmaId,
       "SEND",
     );
   }
 
-  async function handleApproveRma() {
+  async function handleApproveRma(
+    rmaId: string,
+  ) {
     const confirmed =
       window.confirm(
         "Confirmar que o fabricante aprovou este RMA?",
@@ -337,11 +414,14 @@ async function executeRmaAction(
     }
 
     await executeRmaAction(
+      rmaId,
       "APPROVE",
     );
   }
 
-  async function handleReturnRma() {
+  async function handleReturnRma(
+    rmaId: string,
+  ) {
   const confirmed =
     window.confirm(
       "Confirmar que a peça retornou reparada do RMA?",
@@ -352,15 +432,17 @@ async function executeRmaAction(
   }
 
   await executeRmaAction(
-  "RETURN",
-  {
-    resolutionNotes:
-      "Peça retornou reparada do fabricante.",
-  },
-);
+    rmaId,
+    "RETURN",
+    {
+      resolutionNotes:
+        "Peça retornou reparada do fabricante.",
+    },
+  );
 }
 
   async function handleRejectRma(
+    rmaId: string,
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
@@ -378,13 +460,14 @@ async function executeRmaAction(
     }
 
     const success =
-  await executeRmaAction(
-    "REJECT",
-    {
-      resolutionNotes:
-        normalizedNotes,
-    },
-  );
+      await executeRmaAction(
+        rmaId,
+        "REJECT",
+        {
+          resolutionNotes:
+            normalizedNotes,
+        },
+      );
 
     if (!success) {
       return;
@@ -395,8 +478,9 @@ async function executeRmaAction(
   }
 
   async function handleReplaceRma(
-  event: FormEvent<HTMLFormElement>,
-) {
+    rmaId: string,
+    event: FormEvent<HTMLFormElement>,
+  ) {
   event.preventDefault();
 
   const normalizedSerialNumber =
@@ -411,6 +495,7 @@ async function executeRmaAction(
 
   const success =
     await executeRmaAction(
+      rmaId,
       "REPLACE",
       {
         replacementSerialNumber:
@@ -454,255 +539,348 @@ async function executeRmaAction(
                 </p>
               </div>
             </div>
-
-            {rmaStatus !==
-            "NONE" ? (
-              <span
-                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${rmaStatusStyles[rmaStatus]}`}
-              >
-                {
-                  rmaStatusLabels[
-                    rmaStatus
-                  ]
-                }
-              </span>
-            ) : null}
           </div>
         </header>
 
-        <div className="space-y-4 p-5">
-          {rmaStatus ===
-          "NONE" ? (
-            <>
-              <div className="rounded-lg border border-red-100 bg-red-50 p-3">
-                <div className="flex gap-2">
-                  <AlertTriangle
-                    size={17}
-                    className="mt-0.5 shrink-0 text-red-600"
-                  />
+       <div className="space-y-4 p-5">
+  <div className="rounded-lg border border-red-100 bg-red-50 p-3">
+    <div className="flex gap-2">
+      <AlertTriangle
+        size={17}
+        className="mt-0.5 shrink-0 text-red-600"
+      />
 
-                  <p className="text-sm leading-5 text-red-700">
-                    {damagedQuantity}{" "}
-                    {damagedQuantity ===
-                    1
-                      ? "unidade danificada pode"
-                      : "unidades danificadas podem"}{" "}
-                    ser encaminhada para
-                    RMA.
-                  </p>
-                </div>
+      <p className="text-sm leading-5 text-red-700">
+        {damagedQuantity}{" "}
+        {damagedQuantity === 1
+          ? "unidade danificada"
+          : "unidades danificadas"}{" "}
+        no momento.
+      </p>
+    </div>
+  </div>
+
+  {activeRmas.length > 0 ? (
+    <div className="space-y-4">
+      {activeRmas.map((rma) => (
+        <div
+          key={rma.id}
+          className="rounded-xl border border-zinc-200 p-4"
+        >
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-zinc-900">
+                {rma.serialNumber
+                  ? `S/N ${rma.serialNumber}`
+                  : "Unidade sem S/N"}
+              </p>
+
+              {rma.reference ? (
+                <p className="mt-1 text-xs text-zinc-500">
+                  {rma.reference}
+                </p>
+              ) : null}
+            </div>
+
+            <span
+              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${rmaStatusStyles[rma.status]}`}
+            >
+              {rmaStatusLabels[rma.status]}
+            </span>
+          </div>
+
+          <dl className="space-y-3">
+            <RmaDetail
+              label="Status"
+              value={
+                rmaStatusLabels[
+                  rma.status
+                ]
+              }
+            />
+
+            {rma.serialNumber ? (
+              <RmaDetail
+                label="Unidade / S/N"
+                value={
+                  rma.serialNumber
+                }
+              />
+            ) : null}
+
+            <RmaDetail
+              label="Referência"
+              value={
+                rma.reference ||
+                "Não informada"
+              }
+            />
+
+            <RmaDetail
+              label="Aberto em"
+              value={dateTimeFormatter.format(
+                new Date(
+                  rma.openedAt,
+                ),
+              )}
+            />
+
+            {rma.notes ? (
+              <RmaDetail
+                label="Observações da abertura"
+                value={rma.notes}
+              />
+            ) : null}
+
+            {rma.resolutionNotes ? (
+              <RmaDetail
+                label="Observações da resolução"
+                value={
+                  rma.resolutionNotes
+                }
+              />
+            ) : null}
+          </dl>
+
+          {canManage &&
+          rma.status === "PENDING" ? (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                void handleSendRma(
+                  rma.id,
+                );
+              }}
+              className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading
+                ? "Enviando..."
+                : "Marcar como enviado"}
+            </button>
+          ) : null}
+
+          {canManage &&
+          rma.status === "SENT" ? (
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => {
+                  setSelectedRmaId(
+                    rma.id,
+                  );
+                  setError(null);
+                  setIsRejectOpen(
+                    true,
+                  );
+                }}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <XCircle
+                  size={17}
+                />
+
+                Rejeitar RMA
+              </button>
+
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => {
+                  void handleApproveRma(
+                    rma.id,
+                  );
+                }}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <CheckCircle2
+                  size={17}
+                />
+
+                {loading
+                  ? "Processando..."
+                  : "Aprovar RMA"}
+              </button>
+            </div>
+          ) : null}
+
+          {rma.status ===
+          "APPROVED" ? (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-5 text-emerald-800">
+                O RMA foi aprovado.
+                Informe como o fabricante
+                resolveu o processo quando
+                houver o retorno físico.
               </div>
 
-              {canOpenRma ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setError(null);
-                    setIsOpen(true);
-                  }}
-                  className="inline-flex h-10 w-full items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
-                >
-                  Abrir RMA
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <dl className="space-y-3">
-                <RmaDetail
-                  label="Status"
-                  value={
-                    rmaStatusLabels[
-                      rmaStatus
-                    ]
-                  }
-                />
-
-                <RmaDetail
-                  label="Referência"
-                  value={
-                    rmaReference ||
-                    "Não informada"
-                  }
-                />
-
-                <RmaDetail
-                  label="Aberto em"
-                  value={
-                    rmaOpenedAt
-                      ? dateTimeFormatter.format(
-                          new Date(
-                            rmaOpenedAt,
-                          ),
-                        )
-                      : "Não informado"
-                  }
-                />
-
-                {rmaNotes ? (
-                  <RmaDetail
-                    label="Observações da abertura"
-                    value={
-                      rmaNotes
-                    }
-                  />
-                ) : null}
-
-                {rmaResolutionNotes ? (
-                  <RmaDetail
-                    label="Observações da resolução"
-                    value={
-                      rmaResolutionNotes
-                    }
-                  />
-                ) : null}
-
-                {rmaClosedAt ? (
-                  <RmaDetail
-                    label="Encerrado em"
-                    value={dateTimeFormatter.format(
-                      new Date(
-                        rmaClosedAt,
-                      ),
-                    )}
-                  />
-                ) : null}
-              </dl>
-
-              {error &&
-              !isOpen &&
-              !isRejectOpen ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
-                  {error}
-                </div>
-              ) : null}
-
-              {canManage &&
-              rmaStatus ===
-                "PENDING" ? (
-                <button
-                  type="button"
-                  onClick={
-                    handleSendRma
-                  }
-                  disabled={loading}
-                  className="inline-flex h-10 w-full items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loading
-                    ? "Enviando..."
-                    : "Marcar como enviado"}
-                </button>
-              ) : null}
-
-              {canManage &&
-              rmaStatus === "SENT" ? (
-                /*
-                 * Aprovar ou rejeitar representa apenas a
-                 * decisão administrativa do fabricante.
-                 * Nenhuma dessas ações movimenta estoque.
-                 */
-                <div className="grid gap-2 sm:grid-cols-2">
+              {canManage ? (
+                <div className="grid gap-2">
                   <button
                     type="button"
-                    disabled={
-                      loading
-                    }
+                    disabled={loading}
                     onClick={() => {
-                      setError(
-                        null,
-                      );
-                      setIsRejectOpen(
-                        true,
+                      void handleReturnRma(
+                        rma.id,
                       );
                     }}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <XCircle
-                      size={17}
-                    />
-
-                    Rejeitar RMA
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={
-                      loading
-                    }
-                    onClick={
-                      handleApproveRma
-                    }
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <CheckCircle2
+                    <RotateCcw
                       size={17}
                     />
 
                     {loading
                       ? "Processando..."
-                      : "Aprovar RMA"}
+                      : "Mesma peça retornou reparada"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      setSelectedRmaId(
+                        rma.id,
+                      );
+                      setError(null);
+                      setIsReplaceOpen(
+                        true,
+                      );
+                    }}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-4 text-sm font-semibold text-purple-700 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <RotateCcw
+                      size={17}
+                    />
+
+                    Recebemos uma peça
+                    substituta
                   </button>
                 </div>
               ) : null}
-
-              {rmaStatus === "APPROVED" ? (
-                <div className="space-y-3">
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-5 text-emerald-800">
-                    O RMA foi aprovado. Informe como o
-                    fabricante resolveu o processo quando
-                    houver o retorno físico.
-                  </div>
-
-                  {canManage ? (
-                    /*
-                    * Após a aprovação existem dois resultados físicos:
-                    * a mesma peça pode retornar reparada ou o fabricante
-                    * pode entregar outra peça com uma nova identidade.
-                    */
-                    <div className="grid gap-2">
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={handleReturnRma}
-                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <RotateCcw size={17} />
-
-                        {loading
-                          ? "Processando..."
-                          : "Mesma peça retornou reparada"}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => {
-                          setError(null);
-                          setIsReplaceOpen(true);
-                        }}
-                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-4 text-sm font-semibold text-purple-700 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <RotateCcw size={17} />
-
-                        Recebemos uma peça substituta
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {rmaStatus ===
-              "REJECTED" ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm leading-5 text-red-800">
-                  O RMA foi rejeitado. A
-                  rejeição não devolve a
-                  peça ao estoque
-                  operacional.
-                </div>
-              ) : null}
-            </>
-          )}
+            </div>
+          ) : null}
         </div>
+      ))}
+    </div>
+  ) : (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-600">
+      Nenhum RMA ativo para este
+      equipamento.
+    </div>
+  )}
+
+  {closedRmas.length > 0 ? (
+  <div className="space-y-3 border-t border-zinc-200 pt-4">
+    <div>
+      <p className="text-sm font-semibold text-zinc-900">
+        Histórico de RMA
+      </p>
+
+      <p className="mt-0.5 text-xs text-zinc-500">
+        Processos já encerrados para este equipamento.
+      </p>
+    </div>
+
+    {closedRmas.map((rma) => (
+      <div
+        key={rma.id}
+        className="rounded-xl border border-zinc-200 bg-zinc-50 p-4"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-zinc-900">
+              {rma.serialNumber
+                ? `S/N ${rma.serialNumber}`
+                : "Unidade sem S/N"}
+            </p>
+
+            {rma.reference ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                {rma.reference}
+              </p>
+            ) : null}
+          </div>
+
+          <span
+            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${rmaStatusStyles[rma.status]}`}
+          >
+            {rmaStatusLabels[rma.status]}
+          </span>
+        </div>
+
+        <dl className="mt-3 space-y-3">
+          <RmaDetail
+            label="Aberto em"
+            value={dateTimeFormatter.format(
+              new Date(rma.openedAt),
+            )}
+          />
+
+          {rma.closedAt ? (
+            <RmaDetail
+              label="Encerrado em"
+              value={dateTimeFormatter.format(
+                new Date(rma.closedAt),
+              )}
+            />
+          ) : null}
+
+          {rma.notes ? (
+            <RmaDetail
+              label="Observações da abertura"
+              value={rma.notes}
+            />
+          ) : null}
+
+          {rma.resolutionNotes ? (
+            <RmaDetail
+              label="Observações da resolução"
+              value={rma.resolutionNotes}
+            />
+          ) : null}
+
+          {rma.status === "REPLACED" &&
+          rma.replacementSerialNumber ? (
+            <RmaDetail
+              label="S/N da peça substituta"
+              value={
+                rma.replacementSerialNumber
+              }
+            />
+          ) : null}
+        </dl>
+      </div>
+    ))}
+  </div>
+) : null}
+
+  {error &&
+  !isOpen &&
+  !isRejectOpen &&
+  !isReplaceOpen ? (
+    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+      {error}
+    </div>
+  ) : null}
+
+  {canOpenRma ? (
+    <button
+      type="button"
+      onClick={() => {
+        setError(null);
+        setSelectedEquipmentUnitId(
+          "",
+        );
+        setIsOpen(true);
+      }}
+      className="inline-flex h-10 w-full items-center justify-center rounded-lg bg-[#F57B00] px-4 text-sm font-semibold text-white transition hover:bg-[#DD6F00]"
+    >
+      Abrir novo RMA
+    </button>
+  ) : null}
+</div>
       </section>
 
       {isOpen ? (
@@ -741,7 +919,46 @@ async function executeRmaAction(
               }
             >
               <div className="space-y-4 p-5">
-                <div>
+                  {availableDamagedUnits.length > 0 ? (
+                    <div>
+                      <label
+                        htmlFor="rma-equipment-unit"
+                        className="text-sm font-semibold text-zinc-700"
+                      >
+                        Unidade / S/N
+                      </label>
+
+                      <select
+                        id="rma-equipment-unit"
+                        value={selectedEquipmentUnitId}
+                        onChange={(event) =>
+                          setSelectedEquipmentUnitId(
+                            event.target.value,
+                          )
+                        }
+                        className="mt-2 h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
+                      >
+                        <option value="">
+                          Selecione uma unidade
+                        </option>
+
+                        {availableDamagedUnits.map((unit) => (
+                          <option
+                            key={unit.id}
+                            value={unit.id}
+                          >
+                            {unit.serialNumber}
+                          </option>
+                        ))}
+                      </select>
+
+                      <p className="mt-1 text-xs text-zinc-400">
+                        Selecione o número de série da unidade
+                        danificada que será enviada para RMA.
+                      </p>
+                    </div>
+                  ) : null}
+                  <div>
                   <label
                     htmlFor="rma-reference"
                     className="text-sm font-semibold text-zinc-700"
@@ -881,9 +1098,17 @@ async function executeRmaAction(
             </header>
 
             <form
-              onSubmit={
-                handleRejectRma
-              }
+              onSubmit={(event) => {
+                if (!selectedRmaId) {
+                  event.preventDefault();
+                  return;
+                }
+
+                void handleRejectRma(
+                  selectedRmaId,
+                  event,
+                );
+              }}
             >
               <div className="space-y-4 p-5">
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm leading-5 text-red-800">
@@ -991,16 +1216,23 @@ async function executeRmaAction(
       </header>
 
       <form
-        onSubmit={
-          handleReplaceRma
-        }
+        onSubmit={(event) => {
+          if (!selectedRmaId) {
+            event.preventDefault();
+            return;
+          }
+
+          void handleReplaceRma(
+            selectedRmaId,
+            event,
+          );
+        }}
       >
         <div className="space-y-4 p-5">
           <div className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-3 text-sm leading-5 text-purple-800">
-            A peça recebida será cadastrada como
-            um novo equipamento disponível no
-            inventário. O serial da peça defeituosa
-            será preservado no histórico do RMA.
+            A peça recebida será registrada como uma nova
+            unidade física deste equipamento. O S/N da peça
+            defeituosa será preservado no histórico do RMA.
           </div>
 
           <div>

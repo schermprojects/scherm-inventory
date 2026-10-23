@@ -427,6 +427,43 @@ const shortage =
                 unit.serialNumber,
             );
 
+          const availableEquipmentUnits =
+  item.equipmentUnits
+    .filter((unit) => {
+      if (
+        unit.condition !==
+        "OPERATIONAL"
+      ) {
+        return false;
+      }
+
+      if (
+        unit.movements[0]?.type ===
+        "EXIT"
+      ) {
+        return false;
+      }
+
+      const projectAssignment =
+        unit.projectAssignment;
+
+      if (!projectAssignment) {
+        return true;
+      }
+
+      return !ACTIVE_PROJECT_STATUSES.includes(
+        projectAssignment
+          .projectEquipment
+          .project
+          .status,
+      );
+    })
+    .map((unit) => ({
+      id: unit.id,
+      serialNumber:
+        unit.serialNumber,
+    }));
+
         return {
           id: item.id,
           name: item.name,
@@ -435,18 +472,21 @@ const shortage =
           model: item.model,
           serialNumber: item.serialNumber,
 
-          serialNumbers:
-            item.equipmentUnits
-              .filter(
-                (unit) =>
-                  unit.condition === "OPERATIONAL" &&
-                  unit.movements[0]?.type !== "EXIT",
-              )
-              .map(
-                (unit) => unit.serialNumber,
-              ),
+serialNumbers:
+  item.equipmentUnits
+    .filter(
+      (unit) =>
+        unit.condition !== "REPLACED" &&
+        unit.movements[0]?.type !== "EXIT",
+    )
+    .map(
+      (unit) =>
+        unit.serialNumber,
+    ),
 
-          assignedSerialNumbers,
+availableEquipmentUnits,
+
+assignedSerialNumbers,
 
           damagedSerialNumbers:
             item.equipmentUnits

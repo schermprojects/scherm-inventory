@@ -45,6 +45,7 @@ model Equipment {
   machineComponents MachineComponent[]
   machines          Machine[]           @relation("MachineEquipment")
   equipmentUnits    EquipmentUnit[]
+  rmas              EquipmentRma[]
 
   @@index([name])
   @@index([category])
@@ -65,14 +66,47 @@ model EquipmentUnit {
 
   condition EquipmentUnitCondition @default(OPERATIONAL)
 
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  movements         EquipmentUnitMovement[]
-  projectAssignment ProjectEquipmentUnit?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  movements          EquipmentUnitMovement[]
+  projectAssignment  ProjectEquipmentUnit?
+  rmas               EquipmentRma[]          @relation("EquipmentUnitRmas")
+  replacementForRmas EquipmentRma[]          @relation("EquipmentRmaReplacementUnit")
 
   @@index([equipmentId])
   @@index([condition])
   @@map("equipment_units")
+}
+
+model EquipmentRma {
+  id String @id @default(cuid())
+
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+
+  equipmentUnitId String?
+  equipmentUnit   EquipmentUnit? @relation("EquipmentUnitRmas", fields: [equipmentUnitId], references: [id], onDelete: Restrict)
+
+  replacementEquipmentUnitId String?
+  replacementEquipmentUnit   EquipmentUnit? @relation("EquipmentRmaReplacementUnit", fields: [replacementEquipmentUnitId], references: [id], onDelete: Restrict)
+
+  status EquipmentRmaStatus @default(PENDING)
+
+  reference       String?
+  notes           String
+  resolutionNotes String?
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([equipmentId])
+  @@index([equipmentUnitId])
+  @@index([replacementEquipmentUnitId])
+  @@index([status])
+  @@map("equipment_rmas")
 }
 
 model EquipmentImage {
@@ -277,8 +311,8 @@ model EquipmentUnitMovement {
   equipmentUnitId String
   equipmentUnit   EquipmentUnit @relation(fields: [equipmentUnitId], references: [id], onDelete: Restrict)
 
-projectId String?
-project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now())
 
   @@index([equipmentUnitId])
@@ -474,6 +508,7 @@ enum EquipmentUnitMovementType {
 enum EquipmentUnitCondition {
   OPERATIONAL
   DAMAGED
+  REPLACED
 }
 
 enum MachineStatus {
@@ -531,6 +566,7 @@ enum AuditEntity {
   PURCHASE
   MOVEMENT
 }
+
 enum PurchaseStatus {
   REQUESTED
   ACQUIRED

@@ -98,6 +98,12 @@ type ProjectEquipment = {
   hasAllocatedQuantity: boolean;
   availableEquipmentUnits: AvailableEquipmentUnit[];
   returnableEquipmentUnits: AvailableEquipmentUnit[];
+  equipmentUnits?: {
+  equipmentUnit: {
+    id: string;
+    serialNumber: string;
+  };
+}[];
   genericAvailableQuantity: number;
 
   notes: string | null;
@@ -2188,58 +2194,80 @@ return (
                             : ""}
                         </p>
 
-                        {item.allocatedQuantity > 0 ? (
-  <div className="mt-2 flex flex-wrap items-center gap-2">
-    <span className="inline-flex rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
-      {item.allocatedQuantity}{" "}
-      {item.allocatedQuantity === 1
-        ? "unidade já baixada"
-        : "unidades já baixadas"}
-    </span>
+                        {item.equipmentUnits &&
+                          item.equipmentUnits.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {item.equipmentUnits.map(
+                                (assignment) => (
+                                  <span
+                                    key={
+                                      assignment.equipmentUnit.id
+                                    }
+                                    className="inline-flex rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700"
+                                  >
+                                    S/N:{" "}
+                                    {
+                                      assignment.equipmentUnit
+                                        .serialNumber
+                                    }
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          ) : null}
 
-    {item.pendingAllocationQuantity >
-    0 ? (
-      <span className="inline-flex rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
-        {item.pendingAllocationQuantity}{" "}
-        {item.pendingAllocationQuantity ===
-        1
-          ? "unidade pendente"
-          : "unidades pendentes"}
-      </span>
-    ) : null}
-  </div>
-) : null}
+                        {item.allocatedQuantity > 0 ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className="inline-flex rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+                              {item.allocatedQuantity}{" "}
+                              {item.allocatedQuantity === 1
+                                ? "unidade já baixada"
+                                : "unidades já baixadas"}
+                            </span>
+
+                            {item.pendingAllocationQuantity >
+                            0 ? (
+                              <span className="inline-flex rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                                {item.pendingAllocationQuantity}{" "}
+                                {item.pendingAllocationQuantity ===
+                                1
+                                  ? "unidade pendente"
+                                  : "unidades pendentes"}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
 
                         {item.hasShortage ? (
-  <div className="mt-3">
-    <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
-      <AlertTriangle
-        size={16}
-        aria-hidden="true"
-      />
+                          <div className="mt-3">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
+                              <AlertTriangle
+                                size={16}
+                                aria-hidden="true"
+                              />
 
-      {item.shortage === 1
-        ? "Falta 1 unidade"
-        : `Faltam ${item.shortage} unidades`}
-    </div>
+                              {item.shortage === 1
+                                ? "Falta 1 unidade"
+                                : `Faltam ${item.shortage} unidades`}
+                            </div>
 
-    <p className="mt-1 text-xs text-zinc-500">
-      Disponível:{" "}
-      <strong className="text-zinc-700">
-        {item.availableForProject}
-      </strong>
+                            <p className="mt-1 text-xs text-zinc-500">
+                              Disponível:{" "}
+                              <strong className="text-zinc-700">
+                                {item.availableForProject}
+                              </strong>
 
-      <span className="mx-1.5 text-zinc-300">
-        •
-      </span>
+                              <span className="mx-1.5 text-zinc-300">
+                                •
+                              </span>
 
-      Necessário:{" "}
-      <strong className="text-zinc-700">
-        {item.needed}
-      </strong>
-    </p>
-  </div>
-) : null}
+                              Necessário:{" "}
+                              <strong className="text-zinc-700">
+                                {item.needed}
+                              </strong>
+                            </p>
+                          </div>
+                        ) : null}
                         {item.notes ? (
                           <p className="mt-2 text-sm text-zinc-500">
                             {item.notes}
@@ -2247,21 +2275,21 @@ return (
                         ) : null}
                       </div>
 
-<div className="flex items-center gap-2">
-  <div
-    className={[
-      "rounded-lg px-2 py-1.5 text-sm font-semibold",
-      item.hasShortage
-        ? "bg-red-100 text-red-700"
-        : "bg-zinc-100 text-zinc-700",
-    ].join(" ")}
-  >
-    {item.quantity}{" "}
-    {item.quantity === 1
-      ? "unidade"
-      : "unidades"}
-  </div>
-</div>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={[
+                              "rounded-lg px-2 py-1.5 text-sm font-semibold",
+                              item.hasShortage
+                                ? "bg-red-100 text-red-700"
+                                : "bg-zinc-100 text-zinc-700",
+                            ].join(" ")}
+                          >
+                            {item.quantity}{" "}
+                            {item.quantity === 1
+                              ? "unidade"
+                              : "unidades"}
+                          </div>
+                        </div>
                     </div>
                   ),
                 )}

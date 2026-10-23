@@ -138,6 +138,12 @@ type EquipmentOption = {
   manufacturer?: string | null;
   model?: string | null;
   serialNumber?: string | null;
+  serialNumbers?: string[];
+
+  availableEquipmentUnits?: {
+    id: string;
+    serialNumber: string;
+  }[];
 
   quantity: number;
   minimumStock?: number;
@@ -158,6 +164,7 @@ type ProjectEquipmentFormItem = {
   equipmentId: string;
   quantity: string;
   notes: string;
+  equipmentUnitIds: string[];
 };
 
 type ProjectsResponse = {
@@ -368,6 +375,7 @@ function createEquipmentRow(
     equipmentId,
     quantity: "1",
     notes: "",
+    equipmentUnitIds: [],
   };
 }
 
@@ -653,6 +661,13 @@ const canManageProjects =
   ] = useState<
     Record<string, number>
   >({});
+
+  const [
+  equipmentPickerUnitIds,
+  setEquipmentPickerUnitIds,
+] = useState<
+  Record<string, string[]>
+>({});
 
   const [form, setForm] =
     useState<ProjectFormState>(
@@ -1447,6 +1462,24 @@ const activeProjects =
       quantities,
     );
 
+    const unitIds: Record<
+  string,
+  string[]
+> = {};
+
+for (const item of form.equipment) {
+  if (!item.equipmentId) {
+    continue;
+  }
+
+  unitIds[item.equipmentId] =
+    item.equipmentUnitIds;
+}
+
+setEquipmentPickerUnitIds(
+  unitIds,
+);
+
     setEquipmentPickerOpen(
       true,
     );
@@ -1472,34 +1505,56 @@ const activeProjects =
     );
   }
 
-  function setPickerQuantity(
-    equipmentId: string,
-    quantity: number,
-  ) {
-    const normalizedQuantity =
-      Math.min(
-        Math.max(
-          Math.trunc(
-            Number.isFinite(
-              quantity,
-            )
-              ? quantity
-              : 1,
-          ),
-          1,
+function setPickerQuantity(
+  equipmentId: string,
+  quantity: number,
+) {
+  const normalizedQuantity =
+    Math.min(
+      Math.max(
+        Math.trunc(
+          Number.isFinite(
+            quantity,
+          )
+            ? quantity
+            : 1,
         ),
-        MAX_EQUIPMENT_QUANTITY,
-      );
+        1,
+      ),
+      MAX_EQUIPMENT_QUANTITY,
+    );
 
     setEquipmentPickerQuantities(
-      (current) => ({
+    (current) => ({
+      ...current,
+      [equipmentId]:
+        normalizedQuantity,
+    }),
+  );
+
+  setEquipmentPickerUnitIds(
+    (current) => {
+      const selected =
+        current[equipmentId] ?? [];
+
+      if (
+        selected.length <=
+        normalizedQuantity
+      ) {
+        return current;
+      }
+
+      return {
         ...current,
         [equipmentId]:
-          normalizedQuantity,
-      }),
-    );
-  }
-
+          selected.slice(
+            0,
+            normalizedQuantity,
+          ),
+      };
+    },
+  );
+}
   function changePickerQuantity(
     equipmentId: string,
     difference: number,
@@ -1516,6 +1571,54 @@ const activeProjects =
     );
   }
 
+  function togglePickerEquipmentUnit(
+  equipmentId: string,
+  equipmentUnitId: string,
+) {
+  const quantity =
+    getPickerQuantity(
+      equipmentId,
+    );
+
+  setEquipmentPickerUnitIds(
+    (current) => {
+      const selected =
+        current[equipmentId] ?? [];
+
+      if (
+        selected.includes(
+          equipmentUnitId,
+        )
+      ) {
+        return {
+          ...current,
+          [equipmentId]:
+            selected.filter(
+              (id) =>
+                id !==
+                equipmentUnitId,
+            ),
+        };
+      }
+
+      if (
+        selected.length >=
+        quantity
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [equipmentId]: [
+          ...selected,
+          equipmentUnitId,
+        ],
+      };
+    },
+  );
+}
+
   function saveEquipmentFromPicker(
     equipment: EquipmentOption,
   ) {
@@ -1523,6 +1626,11 @@ const activeProjects =
       getPickerQuantity(
         equipment.id,
       );
+
+    const equipmentUnitIds =
+  equipmentPickerUnitIds[
+    equipment.id
+  ] ?? [];
 
     setForm((current) => {
       const existing =
@@ -1543,9 +1651,8 @@ const activeProjects =
                   ? {
                       ...item,
                       quantity:
-                        String(
-                          quantity,
-                        ),
+                        String(quantity),
+                      equipmentUnitIds,
                     }
                   : item,
             ),
@@ -1562,6 +1669,7 @@ const activeProjects =
             ),
             quantity:
               String(quantity),
+            equipmentUnitIds,
           },
         ],
       };
@@ -1581,7 +1689,7 @@ const activeProjects =
         ),
     }));
 
-    setEquipmentPickerQuantities(
+    setEquipmentPickerUnitIds(
       (current) => {
         const next = {
           ...current,
@@ -1720,20 +1828,22 @@ const activeProjects =
   }
 
   function validateEquipmentRows():
-    | {
-        equipmentId: string;
-        quantity: number;
-        notes: string | null;
-      }[]
-    | null {
+  | {
+      equipmentId: string;
+      quantity: number;
+      notes: string | null;
+      equipmentUnitIds: string[];
+    }[]
+  | null {
     const selectedIds =
       new Set<string>();
 
     const normalized: {
-      equipmentId: string;
-      quantity: number;
-      notes: string | null;
-    }[] = [];
+  equipmentId: string;
+  quantity: number;
+  notes: string | null;
+  equipmentUnitIds: string[];
+}[] = [];
 
     for (
       let index = 0;
@@ -1820,6 +1930,21 @@ if (
         return null;
       }
 
+      if (
+        item.equipmentUnitIds.length >
+        quantity
+      ) {
+        setFeedback({
+          type: "error",
+          message:
+            `A quantidade de S/N selecionados na linha ${
+              index + 1
+            } não pode ser maior que a quantidade solicitada.`,
+        });
+
+        return null;
+      }
+
       selectedIds.add(
         item.equipmentId,
       );
@@ -1831,6 +1956,8 @@ if (
         notes:
           item.notes.trim() ||
           null,
+        equipmentUnitIds:
+          item.equipmentUnitIds,
       });
     }
 
@@ -3549,6 +3676,15 @@ if (
                         equipment.id,
                       );
 
+                    const selectedUnitIds =
+                      equipmentPickerUnitIds[
+                        equipment.id
+                      ] ?? [];
+
+                    const availableUnits =
+                      equipment.availableEquipmentUnits ??
+                      [];
+
                     const physicalStock =
                       getPhysicalStock(
                         equipment,
@@ -3562,12 +3698,12 @@ if (
                       );
 
                     const availableStock =
-  Math.max(
-    equipment.availableStock ??
-      equipment.quantity ??
-      0,
-    0,
-  );
+                      Math.max(
+                        equipment.availableStock ??
+                          equipment.quantity ??
+                          0,
+                        0,
+                      );
 
                     const requestedShortage =
                       Math.max(
@@ -3693,6 +3829,65 @@ if (
                               >
                                 Quantidade
                               </label>
+
+                              {availableUnits.length > 0 ? (
+                                <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                    S/N disponíveis
+                                  </p>
+
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {availableUnits.map(
+                                      (unit) => {
+                                        const checked =
+                                          selectedUnitIds.includes(
+                                            unit.id,
+                                          );
+
+                                        const disabled =
+                                          !checked &&
+                                          selectedUnitIds.length >=
+                                            quantity;
+
+                                        return (
+                                          <label
+                                            key={unit.id}
+                                            className={[
+                                              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+                                              checked
+                                                ? "border-orange-300 bg-orange-50 text-orange-800"
+                                                : "border-zinc-200 bg-white text-zinc-700",
+                                              disabled
+                                                ? "cursor-not-allowed opacity-50"
+                                                : "",
+                                            ].join(" ")}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              disabled={disabled}
+                                              onChange={() =>
+                                                togglePickerEquipmentUnit(
+                                                  equipment.id,
+                                                  unit.id,
+                                                )
+                                              }
+                                            />
+
+                                            {unit.serialNumber}
+                                          </label>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+
+                                  <p className="mt-2 text-xs text-zinc-500">
+                                    {selectedUnitIds.length} de{" "}
+                                    {quantity} unidade(s) com S/N
+                                    selecionado.
+                                  </p>
+                                </div>
+                              ) : null}
 
                               <div className="flex h-10 overflow-hidden rounded-lg border border-zinc-200 bg-white">
                                 <button

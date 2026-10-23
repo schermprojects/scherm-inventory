@@ -61,12 +61,14 @@ type ProjectEquipmentBody = {
   equipmentId?: unknown;
   quantity?: unknown;
   notes?: unknown;
+  equipmentUnitIds?: unknown;
 };
 
 type NormalizedProjectEquipment = {
   equipmentId: string;
   quantity: number;
   notes: string | null;
+  equipmentUnitIds: string[];
 };
 
 type ProjectBody = {
@@ -403,6 +405,20 @@ function parseProjectEquipment(
           item.notes,
         );
 
+      const equipmentUnitIds =
+        parseEquipmentUnitIds(
+          item.equipmentUnitIds,
+        );
+
+      if (
+        equipmentUnitIds.length >
+        quantity
+      ) {
+        throw new Error(
+          "A quantidade de S/N selecionados não pode ser maior que a quantidade solicitada.",
+        );
+      }
+
       const existingItem =
         equipmentMap.get(
           equipmentId,
@@ -433,6 +449,13 @@ function parseProjectEquipment(
             notes:
               existingItem.notes ??
               notes,
+
+              equipmentUnitIds: [
+                ...new Set([
+                  ...existingItem.equipmentUnitIds,
+                  ...equipmentUnitIds,
+                ]),
+              ],
           },
         );
 
@@ -445,6 +468,7 @@ function parseProjectEquipment(
           equipmentId,
           quantity,
           notes,
+          equipmentUnitIds,
         },
       );
     },
@@ -453,6 +477,42 @@ function parseProjectEquipment(
   return Array.from(
     equipmentMap.values(),
   );
+}
+
+function parseEquipmentUnitIds(
+  value: unknown,
+): string[] {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      'O campo "equipmentUnitIds" deve ser uma lista.',
+    );
+  }
+
+  const ids = value.map(
+    (item) => {
+      if (
+        typeof item !== "string" ||
+        !item.trim()
+      ) {
+        throw new Error(
+          "As unidades físicas selecionadas são inválidas.",
+        );
+      }
+
+      return item.trim();
+    },
+  );
+
+  return [
+    ...new Set(ids),
+  ];
 }
 
 async function validateActiveUser(
@@ -1894,6 +1954,19 @@ for (
                                         item.equipmentId,
                                     },
                                 },
+                               equipmentUnits:
+                                  item.equipmentUnitIds.length > 0
+                                    ? {
+                                        create:
+                                          item.equipmentUnitIds.map(
+                                            (
+                                              equipmentUnitId,
+                                            ) => ({
+                                              equipmentUnitId,
+                                            }),
+                                          ),
+                                      }
+                                    : undefined, 
                             }),
                           ),
                       }
