@@ -8,11 +8,17 @@ type ProjectStatus =
   | "COMPLETED"
   | "CANCELLED";
 
+type PurchaseStatus =
+  | "REQUESTED"
+  | "ACQUIRED"
+  | null;
+
 type PurchaseProject = {
   id: string;
   name: string;
   clientName: string | null;
   status: ProjectStatus;
+  purchaseStatus: PurchaseStatus;
   quantity: number;
 };
 
@@ -57,6 +63,24 @@ const statusLabels: Record<
   CANCELLED: "Cancelado",
 };
 
+const purchaseStatusLabels: Record<
+  Exclude<PurchaseStatus, null>,
+  string
+> = {
+  REQUESTED: "Solicitado",
+  ACQUIRED: "Adquirido",
+};
+
+function getPurchaseStatusLabel(
+  status: PurchaseStatus,
+): string {
+  if (status === null) {
+    return "Não solicitado";
+  }
+
+  return purchaseStatusLabels[status];
+}
+
 function formatDescription(
   item: PurchasePrintItem,
 ): string {
@@ -72,9 +96,9 @@ function formatDescription(
     const projectIds =
       new Set<string>();
 
-    let totalUnits = 0;
-    let outOfStock = 0;
-    let totalNeeded = 0;
+      let totalUnits = 0;
+      let notRequestedUnits = 0;
+      let totalNeeded = 0;
 
     for (const item of items) {
       totalUnits +=
@@ -83,11 +107,12 @@ function formatDescription(
       totalNeeded +=
         item.totalNeeded;
 
-      if (item.isOutOfStock) {
-        outOfStock += 1;
-      }
-
       for (const project of item.projects) {
+        if (project.purchaseStatus === null) {
+          notRequestedUnits +=
+            project.quantity;
+        }
+
         projectIds.add(project.id);
       }
     }
@@ -96,7 +121,7 @@ function formatDescription(
       equipment: items.length,
       totalUnits,
       projects: projectIds.size,
-      outOfStock,
+      notRequestedUnits,
       totalNeeded,
     };
   }, [items]);
@@ -164,31 +189,21 @@ function formatDescription(
     `}</style>
 
     <article className="purchase-print-document hidden bg-white font-sans text-zinc-900 print:block">
-       <header className="purchase-print-header">
+<header className="purchase-print-header">
   <div className="h-1.5 w-full bg-[#F57B00]" />
 
   <div className="flex items-center justify-between gap-8 border-b-2 border-zinc-800 px-1 py-5">
-    <div className="flex items-center gap-5">
-      <img
-        src="/logo/scherm-logo-clara.png"
-        alt="Scherm"
-        className="h-14 w-auto max-w-[230px] object-contain"
-      />
+    <div className="flex min-w-0 items-center">
+  <div className="rounded-md bg-zinc-900 px-4 py-3">
+    <img
+      src="/logo/Logo3.png"
+      alt="Schermix"
+      className="h-12 w-auto max-w-[300px] object-contain object-left"
+    />
+  </div>
+</div>
 
-      <div className="border-l border-zinc-300 pl-5">
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-600">
-          Scherm Inventory
-        </p>
-
-        <p className="mt-1 text-[9px] text-zinc-500">
-          Controle interno de equipamentos e projetos
-        </p>
-
-        <div className="mt-3 h-0.5 w-28 rounded-full bg-[#F57B00]" />
-      </div>
-    </div>
-
-    <div className="text-right">
+    <div className="shrink-0 text-right">
       <p className="text-[16px] font-bold uppercase tracking-wide text-[#F57B00]">
         Lista de compras
       </p>
@@ -226,7 +241,17 @@ function formatDescription(
       </p>
 
       <p className="mt-1 text-[10px] font-semibold text-zinc-700">
-        {issuedAt || "—"}
+        {issuedAt
+          ? new Intl.DateTimeFormat(
+              "pt-BR",
+              {
+                dateStyle: "short",
+                timeStyle: "short",
+              },
+            ).format(
+              new Date(issuedAt),
+            )
+          : "—"}
       </p>
     </div>
   </div>
@@ -261,12 +286,12 @@ function formatDescription(
           />
 
           <PrintMetric
-            label="Sem estoque"
-            value={summary.outOfStock}
-            suffix="item(ns)"
+            label="Não solicitadas"
+            value={summary.notRequestedUnits}
+            suffix="unidade(s)"
             tone={
-              summary.outOfStock > 0
-                ? "red"
+              summary.notRequestedUnits > 0
+                ? "orange"
                 : "green"
             }
           />
@@ -401,13 +426,21 @@ function formatDescription(
                                     </p>
                                   </div>
 
-                                  <span className="shrink-0 text-[7px] font-semibold text-zinc-500">
-                                    {
-                                      statusLabels[
-                                        project.status
-                                      ]
-                                    }
-                                  </span>
+                                 <div className="shrink-0 text-right">
+                                    <p className="text-[7px] font-semibold text-zinc-500">
+                                      {statusLabels[project.status]}
+                                    </p>
+
+                                    <p className="mt-0.5 text-[7px] font-bold text-zinc-700">
+                                      {getPurchaseStatusLabel(
+                                        project.purchaseStatus,
+                                      )}
+                                    </p>
+
+                                    <p className="mt-0.5 text-[7px] text-zinc-500">
+                                      {project.quantity} unidade(s)
+                                    </p>
+                                  </div>
                                 </div>
                               </div>
                             ),
@@ -442,7 +475,7 @@ function formatDescription(
 
         <footer className="mt-8 flex items-center justify-between border-t border-zinc-300 pt-3 text-[8px] text-zinc-400">
           <p>
-            SCHERM Inventory · Documento interno
+            Schermix · Documento interno
           </p>
 
           <p>

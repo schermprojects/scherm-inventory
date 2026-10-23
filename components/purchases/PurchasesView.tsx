@@ -181,6 +181,13 @@ export function PurchasesView({
   ] = useState("");
 
   const [
+  selectedPurchaseStatus,
+  setSelectedPurchaseStatus,
+] = useState<
+  "ALL" | "NONE" | "REQUESTED" | "ACQUIRED"
+>("ALL");
+
+  const [
     onlyShortages,
     setOnlyShortages,
   ] = useState(true);
@@ -209,9 +216,10 @@ export function PurchasesView({
       null,
     );
 
-  const [issuedAt] = useState(
-  () => new Date().toISOString(),
-);
+const [
+  issuedAt,
+  setIssuedAt,
+] = useState("");
 
   const loadPurchases =
     useCallback(
@@ -296,6 +304,12 @@ export function PurchasesView({
     void loadPurchases();
   }, [loadPurchases]);
 
+  useEffect(() => {
+  setIssuedAt(
+    new Date().toISOString(),
+  );
+}, []);
+
   const visibleCategories =
     useMemo(() => {
       if (onlyShortages) {
@@ -359,6 +373,28 @@ export function PurchasesView({
               selectedCategory
           ) {
             return false;
+          }
+
+          if (selectedPurchaseStatus !== "ALL") {
+            const hasMatchingStatus =
+              item.projects.some((project) => {
+                if (
+                  selectedPurchaseStatus === "NONE"
+                ) {
+                  return (
+                    project.purchaseStatus === null
+                  );
+                }
+
+                return (
+                  project.purchaseStatus ===
+                  selectedPurchaseStatus
+                );
+              });
+
+            if (!hasMatchingStatus) {
+              return false;
+            }
           }
 
           if (!normalizedSearch) {
@@ -449,6 +485,7 @@ export function PurchasesView({
       onlyShortages,
       search,
       selectedCategory,
+      selectedPurchaseStatus,
       sort,
     ]);
 
@@ -461,26 +498,35 @@ export function PurchasesView({
         filteredItems.reduce(
           (accumulator, item) => {
             accumulator.items += 1;
-            accumulator.needed +=
-              item.totalNeeded;
+
             accumulator.toPurchase +=
               item.purchaseQuantity;
 
-            for (const project of item.projects) {
-              projectIds.add(
-                project.id,
-              );
-            }
-
-            return accumulator;
-          },
-          {
-            items: 0,
-            projects: 0,
-            needed: 0,
-            toPurchase: 0,
-          },
+            accumulator.notRequested +=
+        item.projects.reduce(
+          (total, project) =>
+            total +
+            (project.purchaseStatus === null
+              ? project.quantity
+              : 0),
+          0,
         );
+
+      for (const project of item.projects) {
+        projectIds.add(
+          project.id,
+        );
+      }
+
+      return accumulator;
+    },
+    {
+      items: 0,
+      projects: 0,
+      toPurchase: 0,
+      notRequested: 0,
+    },
+  );
 
       values.projects =
         projectIds.size;
@@ -488,15 +534,17 @@ export function PurchasesView({
       return values;
     }, [filteredItems]);
 
-  const hasChangedFilters =
-    Boolean(search.trim()) ||
-    Boolean(selectedCategory) ||
-    !onlyShortages ||
-    sort !== "shortage-desc";
+const hasChangedFilters =
+  Boolean(search.trim()) ||
+  Boolean(selectedCategory) ||
+  selectedPurchaseStatus !== "ALL" ||
+  !onlyShortages ||
+  sort !== "shortage-desc";
 
   function clearFilters() {
     setSearch("");
     setSelectedCategory("");
+    setSelectedPurchaseStatus("ALL");
     setOnlyShortages(true);
     setSort("shortage-desc");
   }
@@ -599,6 +647,25 @@ async function updatePurchaseStatus(
   window.print();
 }
 
+const notRequestedItems =
+  useMemo(
+    () =>
+      items.reduce(
+        (total, item) =>
+          total +
+          item.projects.reduce(
+            (projectTotal, project) =>
+              projectTotal +
+              (project.purchaseStatus === null
+                ? project.quantity
+                : 0),
+            0,
+          ),
+        0,
+      ),
+    [items],
+  );
+
  return (
   <>
     <PurchasesPrintView
@@ -661,10 +728,17 @@ async function updatePurchaseStatus(
 
   <p className="mt-1 text-xs text-zinc-500">
     Emitido em{" "}
-{new Intl.DateTimeFormat("pt-BR", {
-  dateStyle: "short",
-  timeStyle: "short",
-}).format(new Date(issuedAt))}
+    {issuedAt
+      ? new Intl.DateTimeFormat(
+          "pt-BR",
+          {
+            dateStyle: "short",
+            timeStyle: "short",
+          },
+        ).format(
+          new Date(issuedAt),
+        )
+      : "—"}
   </p>
 </div>
 
@@ -746,25 +820,25 @@ async function updatePurchaseStatus(
         />
 
         <SummaryCard
-          title="Sem estoque"
-          value={summary.outOfStock}
-          suffix="itens"
+          title="Itens não solicitados"
+          value={notRequestedItems}
+          suffix="pendentes"
           icon={
             <PackageOpen
               size={20}
             />
           }
           tone={
-            summary.outOfStock > 0
-              ? "red"
-              : "zinc"
+            notRequestedItems > 0
+              ? "orange"
+              : "green"
           }
         />
       </section>
 
       <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <div className="print-hidden border-b border-zinc-200 p-4">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_220px_210px_auto]">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_190px_180px_190px_auto]">
             <label className="relative">
               <span className="sr-only">
                 Buscar
@@ -814,6 +888,37 @@ async function updatePurchaseStatus(
                   </option>
                 ),
               )}
+            </select>
+
+            <select
+              value={selectedPurchaseStatus}
+              onChange={(event) =>
+                setSelectedPurchaseStatus(
+                  event.target.value as
+                    | "ALL"
+                    | "NONE"
+                    | "REQUESTED"
+                    | "ACQUIRED",
+                )
+              }
+              aria-label="Status da compra"
+              className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-[#F57B00] focus:ring-2 focus:ring-orange-100"
+            >
+              <option value="ALL">
+                Todos os status
+              </option>
+
+              <option value="NONE">
+                Não solicitado
+              </option>
+
+              <option value="REQUESTED">
+                Solicitado
+              </option>
+
+              <option value="ACQUIRED">
+                Adquirido
+              </option>
             </select>
 
             <select
@@ -898,9 +1003,9 @@ async function updatePurchaseStatus(
             />
 
             <FilterMetric
-              label="Necessário"
+              label="Itens não solicitados"
               value={
-                filteredSummary.needed
+                filteredSummary.notRequested
               }
             />
 
